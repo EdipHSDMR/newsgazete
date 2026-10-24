@@ -621,7 +621,7 @@ fun KompaktHavaKarti(
                     )
                     Column {
                         Text(
-                            text = "${weather.currentTempC}°C",
+                            text = if (weather.lastUpdated == "Veri bekleniyor") "--°C" else "${weather.currentTempC}°C",
                             style = MaterialTheme.typography.headlineMedium.copy(
                                 fontWeight = FontWeight.Bold,
                                 letterSpacing = (-0.5).sp,
@@ -641,7 +641,7 @@ fun KompaktHavaKarti(
                     verticalArrangement = Arrangement.spacedBy(2.dp),
                 ) {
                     Text(
-                        text = "Hissedilen: ${weather.feelsLikeC}°C",
+                        text = if (weather.lastUpdated == "Veri bekleniyor") "Hissedilen: --°C" else "Hissedilen: ${weather.feelsLikeC}°C",
                         style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -736,7 +736,7 @@ fun MiniWeatherCard(
                 Column {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         Text(
-                            text = "${weather.currentTempC}°",
+                            text = if (weather.lastUpdated == "Veri bekleniyor") "--°" else "${weather.currentTempC}°",
                             style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
                             color = MaterialTheme.colorScheme.primary,
                         )
@@ -747,7 +747,7 @@ fun MiniWeatherCard(
                         )
                     }
                     Text(
-                        text = "${weather.condition} · Yağış ihtimali %${weather.rainChancePct}",
+                        text = if (weather.lastUpdated == "Veri bekleniyor") weather.condition else "${weather.condition} · Yağış ihtimali %${weather.rainChancePct}",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
