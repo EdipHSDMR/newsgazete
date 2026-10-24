@@ -173,10 +173,10 @@ class MarketApiService(private val httpClient: OkHttpClient) {
             name: String,
             symbol: String,
             price: Double,
-            changePct: Double = 0.0,
+            changePct: Double? = null,
             unit: String = "₺",
-            high: Double = price,
-            low: Double = price,
+            high: Double? = null,
+            low: Double? = null,
         ) {
             if (price > 0.0 && price.isFinite()) {
                 assets.add(
