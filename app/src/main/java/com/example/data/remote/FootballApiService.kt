@@ -18,8 +18,6 @@ class FootballApiService(private val httpClient: OkHttpClient) {
     private val apiKey = BuildConfig.API_FOOTBALL_KEY.trim()
     private val baseUrl = "https://v3.football.api-sports.io"
 
-    private val baseUrl = "https://v3.football.api-sports.io"
-
     private fun leagueId(competition: String): Int = when (competition) {
         "UEFA Şampiyonlar Ligi" -> 2
         "İngiltere Premier Lig" -> 39
