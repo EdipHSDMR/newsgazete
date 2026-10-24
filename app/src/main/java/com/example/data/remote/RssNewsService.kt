@@ -113,19 +113,9 @@ class RssNewsService(private val httpClient: OkHttpClient) {
             }
         }
 
-        // Also add historical archive stories spanning 2024, 2023, 2022
-        val archiveStories = getArchiveStories()
-        for (archiveItem in archiveStories) {
-            val simplified = archiveItem.title.lowercase().replace("[^a-zçğışöü0-9]".toRegex(), "").take(25)
-            if (simplified !in seenTitles) {
-                seenTitles.add(simplified)
-                uniqueStories.add(archiveItem)
-            }
-        }
-
         // Make the first item a Manset
         if (uniqueStories.isNotEmpty()) {
-            uniqueStories[0] = uniqueStories[0].copy(isManset = true, isBreaking = true)
+            uniqueStories[0] = uniqueStories[0].copy(isManset = true)
         }
         uniqueStories
     }
@@ -175,6 +165,8 @@ class RssNewsService(private val httpClient: OkHttpClient) {
                         .filter { it.isNotBlank() }
                         .map { it.trim().removeSuffix(".") + "." }
                 } else {
+                    listOf(cleanTitle, cleanDesc).filter { it.isNotBlank() }
+                } else {
                     listOf(
                         cleanTitle,
                         if (cleanDesc.isNotBlank()) cleanDesc else "Haberin detayları ve resmi açıklamalar kurum bülteninde aktarılmaktadır.",
@@ -192,26 +184,20 @@ class RssNewsService(private val httpClient: OkHttpClient) {
                         publishedAt = timeAgo,
                         readTimeMin = readMin,
                         imageUrl = imageUrl,
-                        isBreaking = cleanTitle.contains("son dakika", ignoreCase = true) || counter == 0,
+                        isBreaking = cleanTitle.contains("son dakika", ignoreCase = true),
                         isManset = false,
-                        sourceCount = if (cleanTitle.length % 2 == 0) 3 else 2,
                         whatHappened = cleanTitle,
-                        whyItMatters = cleanDesc.take(140).ifBlank { "Gelişmeler kamuoyu ve uzmanlar tarafından yakından izlenmektedir." },
-                        whatIsUnknown = "Uygulama aşaması ve resmi kurum açıklamalarının takvimi.",
+                        whyItMatters = cleanDesc.take(140),
+                        whatIsUnknown = "",
                         fullText = cleanDesc.ifBlank { cleanTitle },
                         paragraphs = paragraphs,
                         comparisons = listOf(
                             SourceComparison(
                                 publisher = publisher,
                                 headline = cleanTitle,
-                                angle = "Haber metni ve ajans bülteni",
+                                angle = "Kaynağın yayımladığı haber",
                                 publishedTime = timeAgo,
-                            ),
-                            SourceComparison(
-                                publisher = "Anadolu Ajansı",
-                                headline = "$cleanTitle hakkında gelişmeler",
-                                angle = "Resmi teyit ve sahadan aktarım",
-                                publishedTime = timeAgo,
+                                url = rawLink,
                             )
                         ),
                         canonicalUrl = rawLink,
@@ -379,100 +365,5 @@ class RssNewsService(private val httpClient: OkHttpClient) {
         return "Bugün"
     }
 
-    private fun getArchiveStories(): List<Story> {
-        return listOf(
-            Story(
-                id = "archive-2024-siyaset",
-                title = "2024 Arşiv: TBMM'de 8. Yargı Paketi kabul edildi, Adalet Komisyonu çalışmalarını tamamladı",
-                summary = "Meclis Genel Kurulu'nda kabul edilen reform paketiyle ceza adaleti sisteminde yeni tazminat komisyonu kuruldu, noterlik ve infaz maddelerinde köklü değişiklikler yasalaştı.",
-                topic = "Siyaset",
-                publisher = "TRT Haber",
-                publishedAt = "12 Mart 2024",
-                readTimeMin = 3,
-                imageUrl = "https://images.unsplash.com/photo-1541872703-74c5e44368f9?auto=format&fit=crop&w=800&q=80",
-                isBreaking = false,
-                isManset = false,
-                sourceCount = 4,
-                whatHappened = "TBMM Genel Kurulu'nda kabul edilen 8. Yargı Paketi yürürlüğe girdi.",
-                whyItMatters = "Yargı reformu strateji belgesi hedefleri doğrultusunda adalet hizmetlerinin hızlandırılması amaçlandı.",
-                whatIsUnknown = "İkincil mevzuat ve yönetmeliklerin uygulanma süreçleri.",
-                fullText = "Türkiye Büyük Millet Meclisi'nde haftalardır görüşülen 8. Yargı Paketi, Genel Kurul'da kabul edilerek yasalaştı. Düzenleme ile hak arama hürriyetinin genişletilmesi ve infaz sürelerinin netleştirilmesi hedefleniyor.",
-                paragraphs = listOf(
-                    "Türkiye Büyük Millet Meclisi'nde haftalardır görüşülen 8. Yargı Paketi, Genel Kurul'da kabul edilerek yasalaştı.",
-                    "Düzenleme ile hak arama hürriyetinin genişletilmesi ve infaz sürelerinin netleştirilmesi hedefleniyor.",
-                    "Yeni kanunla birlikte Anayasa Mahkemesi iptal kararları doğrultusunda gerekli yasal uyumlar sağlandı."
-                ),
-                canonicalUrl = "https://www.trthaber.com/arsiv-2024",
-            ),
-            Story(
-                id = "archive-2024-1",
-                title = "2024 Arşiv: Filenin Sultanları Paris Olimpiyat Oyunları'nda yarı finale yükseldi",
-                summary = "A Milli Kadın Voleybol Takımımız, Çin karşısında nefes kesen beş setlik mücadeleyi 3-2 kazanarak tarihinde ilk kez olimpiyat yarı finaline adını yazdırdı.",
-                topic = "Spor",
-                publisher = "TRT Spor",
-                publishedAt = "6 Ağustos 2024",
-                readTimeMin = 3,
-                imageUrl = "https://images.unsplash.com/photo-1612872087720-bb876e2e67d1?auto=format&fit=crop&w=800&q=80",
-                isBreaking = false,
-                isManset = false,
-                sourceCount = 4,
-                whatHappened = "Voleybol tarihimizin en büyük olimpiyat başarılarından biri olan çeyrek final zaferi elde edildi.",
-                whyItMatters = "Türkiye kadın voleybolunun dünya zirvesindeki yerini perçinleyen tarihi bir karşılaşma oldu.",
-                whatIsUnknown = "Gelecek turnuvalardaki kadro yapılanması ve altyapı takviyeleri.",
-                fullText = "A Milli Kadın Voleybol Takımımız, Paris 2024 Olimpiyat Oyunları çeyrek finalinde Çin ile karşılaştı. Vargas'ın 42 sayılık olağanüstü performans sergilediği maçta Filenin Sultanları rakibini 3-2 mağlup ederek yarı finalist oldu.",
-                paragraphs = listOf(
-                    "A Milli Kadın Voleybol Takımımız, Paris 2024 Olimpiyat Oyunları çeyrek finalinde Çin ile karşılaştı.",
-                    "Vargas'ın 42 sayılık olağanüstü performans sergilediği maçta Filenin Sultanları rakibini 3-2 mağlup ederek yarı finalist oldu.",
-                    "Kaptan Eda Erdem ve Gizem Örge'nin savunmadaki direnci Türkiye'ye tarihi yarı final kapısını araladı."
-                ),
-                canonicalUrl = "https://www.trthaber.com/arsiv-2024",
-            ),
-            Story(
-                id = "archive-2023-1",
-                title = "2023 Arşiv: Türkiye'nin ilk astronotu Alper Gezeravcı Axiom-3 görevi için uzay üssüne vardı",
-                summary = "Milli Uzay Programı kapsamında Türk bayrağını Uluslararası Uzay İstasyonu'na taşıyacak olan ilk Türk astronot Alper Gezeravcı, Kennedy Uzay Merkezi'ndeki son karantina ve test sürecini tamamladı.",
-                topic = "Teknoloji",
-                publisher = "Anadolu Ajansı",
-                publishedAt = "15 Aralık 2023",
-                readTimeMin = 4,
-                imageUrl = "https://images.unsplash.com/photo-1451187580459-43490279c0fa?auto=format&fit=crop&w=800&q=80",
-                isBreaking = false,
-                isManset = false,
-                sourceCount = 5,
-                whatHappened = "İlk Türk uzay yolcusu Alper Gezeravcı fırlatma rampasına ulaştı.",
-                whyItMatters = "Türkiye'nin uzay bilimleri alanındaki vizyonu açısından bir dönüm noktası.",
-                whatIsUnknown = "İstasyonda gerçekleştirilecek 13 bilimsel deneyin tamamlanma süresi.",
-                fullText = "Türkiye'nin ilk astronotu Alper Gezeravcı, Florida'daki Kennedy Uzay Merkezi'nde fırlatma öncesi son hazırlıklarını tamamladı. Uzay istasyonunda Türk üniversitelerince hazırlanan kritik biyolojik ve malzeme deneyleri gerçekleştirilecek.",
-                paragraphs = listOf(
-                    "Türkiye'nin ilk astronotu Alper Gezeravcı, Florida'daki Kennedy Uzay Merkezi'nde fırlatma öncesi son hazırlıklarını tamamladı.",
-                    "Uzay istasyonunda Türk üniversitelerince hazırlanan kritik biyolojik ve malzeme deneyleri gerçekleştirilecek.",
-                    "TÜBİTAK UZAY koordinesinde yürütülen görev genç nesillere uzay teknolojilerinde ilham kaynağı oldu."
-                ),
-                canonicalUrl = "https://www.aa.com.tr/arsiv-2023",
-            ),
-            Story(
-                id = "archive-2022-1",
-                title = "2022 Arşiv: 1915 Çanakkale Köprüsü açıldı: Asya ile Avrupa bir kez daha birbirine bağlandı",
-                summary = "Cumhuriyetin 100. yılına ithafen 2023 metrelik orta açıklığıyla dünyanın en uzun asma köprüsü unvanını kazanan 1915 Çanakkale Köprüsü, görkemli bir törenle hizmete girdi.",
-                topic = "Ekonomi",
-                publisher = "TRT Haber",
-                publishedAt = "18 Mart 2022",
-                readTimeMin = 3,
-                imageUrl = "https://images.unsplash.com/photo-1541432901042-2d8bd64b4a9b?auto=format&fit=crop&w=800&q=80",
-                isBreaking = false,
-                isManset = false,
-                sourceCount = 4,
-                whatHappened = "Marmara otoyol ringinin en kritik halkası olan Çanakkale Boğaz Köprüsü ulaşıma açıldı.",
-                whyItMatters = "Ege ve Marmara bölgeleri arasındaki lojistik ve ticaret hatlarında feribot bekleme çilesini 6 dakikalık konforlu geçişe indirdi.",
-                whatIsUnknown = "Bölgesel sanayi koridorunun çevre illere genişleme projeksiyonu.",
-                fullText = "1915 Çanakkale Köprüsü 18 Mart Şehitleri Anma Günü'nde hizmete açıldı. Mühendislik harikası köprü kırmızı beyaz kuleleriyle Çanakkale Zaferi'nin sembolü haline geldi.",
-                paragraphs = listOf(
-                    "1915 Çanakkale Köprüsü 18 Mart Şehitleri Anma Günü'nde hizmete açıldı.",
-                    "Mühendislik harikası köprü kırmızı beyaz kuleleriyle Çanakkale Zaferi'nin sembolü haline geldi.",
-                    "Boğaz geçiş süresi 6 dakikaya inerek ülke ekonomisine yıllık milyarlarca liralık yakıt ve zaman tasarrufu sağlandı."
-                ),
-                canonicalUrl = "https://www.trthaber.com/arsiv-2022",
-            )
-        )
-    }
+
 }
