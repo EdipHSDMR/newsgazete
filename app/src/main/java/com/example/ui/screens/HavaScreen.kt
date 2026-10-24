@@ -411,7 +411,7 @@ fun HavaScreen(
 
                     Row(verticalAlignment = Alignment.Bottom) {
                         Text(
-                            text = "${weather.currentTempC}°",
+                            text = if (weather.lastUpdated == "Veri bekleniyor") "--°" else "${weather.currentTempC}°",
                             fontSize = 68.sp,
                             fontWeight = FontWeight.Black,
                             color = Color.White,
@@ -594,7 +594,7 @@ fun HavaScreen(
         // Attribution Note
         item {
             Text(
-                text = "Hava tahminleri WeatherAPI üzerinden anlık canlı koordinatlarla çekilmektedir. Son güncelleme: ${weather.lastUpdated}",
+                text = if (weather.lastUpdated == "Veri bekleniyor") "Güncel hava verisi bekleniyor." else "Hava tahminleri WeatherAPI üzerinden alınır. Son güncelleme: ${weather.lastUpdated}",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center,
