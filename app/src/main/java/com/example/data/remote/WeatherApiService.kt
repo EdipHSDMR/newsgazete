@@ -1,5 +1,6 @@
 package com.example.data.remote
 
+import com.example.BuildConfig
 import com.example.model.DailyWeather
 import com.example.model.HourlyWeather
 import com.example.model.WeatherInfo
@@ -9,15 +10,18 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONObject
 import java.net.URLEncoder
+import java.time.LocalDate
+import java.time.format.TextStyle
+import java.util.Locale
 import java.nio.charset.StandardCharsets
 
 class WeatherApiService(private val httpClient: OkHttpClient) {
 
-    // User's provided WeatherAPI key
-    private val apiKey = "ab0580d539ff4d409a3191011262310"
+    private val apiKey = BuildConfig.WEATHER_API_KEY.trim()
 
     suspend fun fetchWeather(cityName: String): WeatherInfo? = withContext(Dispatchers.IO) {
         try {
+            if (apiKey.isBlank() || apiKey.startsWith("YOUR_")) return@withContext null
             val encodedCity = URLEncoder.encode(cityName, StandardCharsets.UTF_8.toString())
             val url = "https://api.weatherapi.com/v1/forecast.json?key=$apiKey&q=$encodedCity&days=5&aqi=no&alerts=yes"
 
@@ -29,6 +33,8 @@ class WeatherApiService(private val httpClient: OkHttpClient) {
             if (!response.isSuccessful) return@withContext null
 
             val jsonStr = response.body?.string() ?: return@withContext null
+            val current = JSONObject(jsonStr).optJSONObject("current")
+            if (current == null || !current.has("temp_c")) return@withContext null
             parseWeatherApiResponse(cityName, jsonStr)
         } catch (_: Exception) {
             null
@@ -64,7 +70,12 @@ class WeatherApiService(private val httpClient: OkHttpClient) {
 
             val hourArray = todayObj.optJSONArray("hour")
             if (hourArray != null) {
-                for (h in 0 until minOf(24, hourArray.length()) step 3) {
+                val currentEpoch = current.optLong("last_updated_epoch", 0L)
+                val futureHours = (0 until hourArray.length()).filter { index ->
+                    hourArray.getJSONObject(index).optLong("time_epoch", 0L) >= currentEpoch
+                }
+                for (position in futureHours.indices step 3) {
+                    val h = futureHours[position]
                     val hObj = hourArray.getJSONObject(h)
                     val timeStr = hObj.optString("time", "")
                     val hourLabel = timeStr.substringAfter(" ").take(5).ifBlank { "${h}:00" }
@@ -86,8 +97,6 @@ class WeatherApiService(private val httpClient: OkHttpClient) {
 
         // Parse daily forecast
         val dailyList = mutableListOf<DailyWeather>()
-        val dayNames = listOf("Bugün", "Yarın", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar")
-
         if (forecastDayArray != null) {
             for (d in 0 until forecastDayArray.length()) {
                 val fObj = forecastDayArray.getJSONObject(d)
@@ -97,7 +106,16 @@ class WeatherApiService(private val httpClient: OkHttpClient) {
                 val rain = dayObj.optInt("daily_chance_of_rain", 15)
                 val dayCond = translateCondition(dayObj.optJSONObject("condition")?.optString("text", "") ?: "")
 
-                val dayName = if (d < dayNames.size) dayNames[d] else "Gün ${d + 1}"
+                val dayName = when (d) {
+                    0 -> "Bugün"
+                    1 -> "Yarın"
+                    else -> runCatching {
+                        LocalDate.parse(fObj.optString("date"))
+                            .dayOfWeek
+                            .getDisplayName(TextStyle.FULL, Locale.forLanguageTag("tr-TR"))
+                            .replaceFirstChar { it.titlecase(Locale.forLanguageTag("tr-TR")) }
+                    }.getOrDefault("Gün ${d + 1}")
+                }
                 dailyList.add(
                     DailyWeather(
                         dayName = dayName,
@@ -122,7 +140,7 @@ class WeatherApiService(private val httpClient: OkHttpClient) {
             summary = "$resolvedCity genelinde $condition. Sıcaklık $tempC°C, hissedilen $feelsLikeC°C. Rüzgar $windKmh km/s hızında esiyor.",
             hourly = hourlyList,
             daily = dailyList,
-            lastUpdated = "WeatherAPI Canlı",
+            lastUpdated = current.optString("last_updated", "WeatherAPI Canlı"),
         )
     }
 
