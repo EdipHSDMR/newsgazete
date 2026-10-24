@@ -11,28 +11,79 @@ import org.json.JSONObject
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 
-class WeatherApiService(private val httpClient: OkHttpClient) {
+import com.example.BuildConfig
 
-    // User's provided WeatherAPI key
-    private val apiKey = "ab0580d539ff4d409a3191011262310"
+class WeatherApiService(
+    private val httpClient: OkHttpClient,
+    private val apiKeyProvider: () -> String = { "" },
+) {
+
+    // WeatherAPI key: Priority 1: User-entered key in app settings, Priority 2: BuildConfig / .env, Priority 3: Fallback
+    private fun getApiKey(): String {
+        val userKey = apiKeyProvider().trim()
+        if (userKey.isNotBlank()) return userKey
+        val buildKey = BuildConfig.WEATHER_API_KEY.trim()
+        if (buildKey.isNotBlank()) return buildKey
+        return "ab0580d539ff4d409a3191011262310"
+    }
 
     suspend fun fetchWeather(cityName: String): WeatherInfo? = withContext(Dispatchers.IO) {
+        val apiKey = getApiKey()
+        // 1. Try original city query
+        var result = tryFetchWeatherApi(apiKey, cityName, days = 5)
+        if (result != null) return@withContext result
+
+        // 2. Try sanitized ASCII name (WeatherAPI works best with ascii e.g. Istanbul, Diyarbakir)
+        val sanitized = sanitizeTurkishChars(cityName)
+        if (sanitized != cityName) {
+            result = tryFetchWeatherApi(apiKey, sanitized, days = 3)
+            if (result != null) return@withContext result
+        }
+
+        // 3. If district was included ("Kadikoy, Istanbul"), try just main city
+        if (cityName.contains(",")) {
+            val mainCity = cityName.substringAfter(",").trim()
+            result = tryFetchWeatherApi(apiKey, sanitizeTurkishChars(mainCity), days = 3)
+            if (result != null) return@withContext result
+        }
+
+        null
+    }
+
+    private fun tryFetchWeatherApi(apiKey: String, query: String, days: Int): WeatherInfo? {
         try {
-            val encodedCity = URLEncoder.encode(cityName, StandardCharsets.UTF_8.toString())
-            val url = "https://api.weatherapi.com/v1/forecast.json?key=$apiKey&q=$encodedCity&days=5&aqi=no&alerts=yes"
+            val encoded = URLEncoder.encode(query, StandardCharsets.UTF_8.toString())
+            val url = "https://api.weatherapi.com/v1/forecast.json?key=$apiKey&q=$encoded&days=$days&aqi=no&alerts=no"
 
             val request = Request.Builder()
                 .url(url)
                 .build()
 
             val response = httpClient.newCall(request).execute()
-            if (!response.isSuccessful) return@withContext null
+            if (!response.isSuccessful) return null
 
-            val jsonStr = response.body?.string() ?: return@withContext null
-            parseWeatherApiResponse(cityName, jsonStr)
+            val jsonStr = response.body?.string() ?: return null
+            return parseWeatherApiResponse(query, jsonStr)
         } catch (_: Exception) {
-            null
+            return null
         }
+    }
+
+    private fun sanitizeTurkishChars(input: String): String {
+        return input
+            .replace("İ", "I")
+            .replace("ı", "i")
+            .replace("ğ", "g")
+            .replace("Ğ", "G")
+            .replace("ü", "u")
+            .replace("Ü", "U")
+            .replace("ş", "s")
+            .replace("Ş", "S")
+            .replace("ö", "o")
+            .replace("Ö", "O")
+            .replace("ç", "c")
+            .replace("Ç", "C")
+            .trim()
     }
 
     private fun parseWeatherApiResponse(requestedCity: String, jsonStr: String): WeatherInfo {

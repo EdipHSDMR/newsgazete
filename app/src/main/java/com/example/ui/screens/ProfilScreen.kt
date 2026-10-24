@@ -26,12 +26,15 @@ import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.SportsSoccer
 import androidx.compose.material.icons.filled.Topic
+import androidx.compose.material.icons.filled.VpnKey
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
@@ -71,6 +74,7 @@ fun ProfilScreen(
     var showFontSizeDialog by remember { mutableStateOf(false) }
     var showClearDataDialog by remember { mutableStateOf(false) }
     var showAboutDialog by remember { mutableStateOf(false) }
+    var showApiKeysDialog by remember { mutableStateOf(false) }
 
     LazyColumn(
         modifier = modifier
@@ -218,6 +222,26 @@ fun ProfilScreen(
             }
         }
 
+        // Section: Canlı API ve Veri Bağlantıları
+        item {
+            SettingSectionHeader("CANLI APİ VE VERİ BAĞLANTILARI")
+        }
+
+        item {
+            SettingCard {
+                SettingNavigationRow(
+                    icon = Icons.Default.VpnKey,
+                    title = "Canlı API Ayarları (Spor & Hava Durumu)",
+                    subtitle = if (prefs.footballApiKey.isNotBlank() || prefs.weatherApiKey.isNotBlank()) {
+                        "Özel API Anahtarları Kayıtlı ve Aktif"
+                    } else {
+                        "api-football.com & weatherapi.com yapılandırması"
+                    },
+                    onClick = { showApiKeysDialog = true },
+                )
+            }
+        }
+
         // Section: Gizlilik ve Hakkında
         item {
             SettingSectionHeader("GİZLİLİK VE VERİ")
@@ -358,6 +382,117 @@ fun ProfilScreen(
             confirmButton = {
                 TextButton(onClick = { showAboutDialog = false }) { Text("Anladım") }
             },
+        )
+    }
+
+    // Live API Keys Configuration Dialog
+    if (showApiKeysDialog) {
+        var footballInput by remember { mutableStateOf(prefs.footballApiKey) }
+        var weatherInput by remember { mutableStateOf(prefs.weatherApiKey) }
+        var statusMsg by remember { mutableStateOf("") }
+
+        AlertDialog(
+            onDismissRequest = { showApiKeysDialog = false },
+            title = {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.VpnKey,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                    )
+                    Text("Canlı API Yapılandırması", fontWeight = FontWeight.Bold)
+                }
+            },
+            text = {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(14.dp),
+                ) {
+                    Text(
+                        text = "Kendi hesaplarınızdan aldığınız API anahtarlarını buraya girerek doğrudan canlı veri çekebilirsiniz.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+
+                    // 1. Football API Key
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(
+                            text = "⚽ API-Football (api-sports.io)",
+                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                        Text(
+                            text = "dashboard.api-football.com/profile?access",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontSize = 11.sp,
+                        )
+                        OutlinedTextField(
+                            value = footballInput,
+                            onValueChange = { footballInput = it },
+                            placeholder = { Text("API-Football anahtarınızı girin") },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true,
+                        )
+                    }
+
+                    // 2. Weather API Key
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(
+                            text = "☀️ WeatherAPI (weatherapi.com)",
+                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                        Text(
+                            text = "weatherapi.com/my/upgrade.aspx",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontSize = 11.sp,
+                        )
+                        OutlinedTextField(
+                            value = weatherInput,
+                            onValueChange = { weatherInput = it },
+                            placeholder = { Text("WeatherAPI anahtarınızı girin") },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true,
+                        )
+                    }
+
+                    if (statusMsg.isNotBlank()) {
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = MaterialTheme.colorScheme.primaryContainer,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text(
+                                text = statusMsg,
+                                style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold),
+                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                modifier = Modifier.padding(10.dp),
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        repository.setCustomApiKeys(footballInput, weatherInput)
+                        statusMsg = "API anahtarları kaydedildi ve canlı akışlar güncellendi!"
+                        showApiKeysDialog = false
+                    }
+                ) {
+                    Text("Kaydet ve Yenile")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showApiKeysDialog = false }) {
+                    Text("Kapat")
+                }
+            }
         )
     }
 }

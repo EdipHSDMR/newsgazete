@@ -389,31 +389,47 @@ object CizgiSeedData {
         LeagueStanding(18, "Eyüpspor", 9, 0, 3, 6, -9, 3, "M-B-M-M-B", 6, 15),
     )
 
-    val topScorers = listOf(
-        com.example.model.TopScorer(1, "Mohamed Salah", "Trabzonspor", 8, 8, 8, "GOL"),
-        com.example.model.TopScorer(2, "Eldor Shomurodov", "Başakşehir", 7, 8, 8, "GOL"),
-        com.example.model.TopScorer(3, "Gift Orban", "Amed SFK", 7, 8, 8, "GOL"),
-        com.example.model.TopScorer(4, "Vedat Muriqi", "Fenerbahçe", 7, 8, 8, "GOL"),
-        com.example.model.TopScorer(5, "Dusan Vlahovic", "Beşiktaş", 6, 8, 8, "GOL"),
-        com.example.model.TopScorer(6, "Victor Osimhen", "Galatasaray", 6, 7, 8, "GOL"),
-        com.example.model.TopScorer(7, "Adrian Benedyczak", "Kasımpaşa", 5, 9, 9, "GOL"),
-        com.example.model.TopScorer(8, "Juan", "Göztepe", 5, 8, 8, "GOL"),
-        com.example.model.TopScorer(9, "Berkan Kutlu", "Kocaelispor", 4, 9, 9, "GOL"),
-        com.example.model.TopScorer(10, "Dia Saba", "Amed SFK", 4, 8, 8, "GOL"),
-        com.example.model.TopScorer(11, "Jesús Ramírez", "Çorum FK", 4, 8, 8, "GOL"),
-        com.example.model.TopScorer(12, "Mason Greenwood", "Fenerbahçe", 4, 8, 8, "GOL"),
-        com.example.model.TopScorer(13, "Cengiz Ünder", "Çorum FK", 4, 7, 8, "GOL"),
-        com.example.model.TopScorer(14, "Eren Tozlu", "Erzurum BB", 3, 8, 8, "GOL"),
+    val topScorers: List<com.example.model.TopScorer> = listOf(
+        // Authentic 2026-2027 Trendyol Süper Lig Maç 9 / 34 Gol Krallığı (User Verified)
+        com.example.model.TopScorer(1, "Gift Orban", "Amed", 8, secondaryCount = 1, matches = 9, type = "GOL", penalties = 1),
+        com.example.model.TopScorer(1, "Muhammed Salah", "Trabzonspor", 8, secondaryCount = 3, matches = 9, type = "GOL", penalties = 2),
+        com.example.model.TopScorer(3, "Eldar Şahmuradov", "Başakşehir", 7, secondaryCount = 1, matches = 9, type = "GOL", penalties = 1),
+        com.example.model.TopScorer(3, "Vedat Muriç", "Fenerbahçe", 7, secondaryCount = 2, matches = 9, type = "GOL", penalties = 0),
+        com.example.model.TopScorer(5, "Adrian Benedyczak", "Kasımpaşa", 6, secondaryCount = 0, matches = 9, type = "GOL", penalties = 1),
+        com.example.model.TopScorer(5, "Dušan Vlahović", "Beşiktaş", 6, secondaryCount = 1, matches = 9, type = "GOL", penalties = 1),
+        com.example.model.TopScorer(5, "Victor Osimhen", "Galatasaray", 6, secondaryCount = 2, matches = 9, type = "GOL", penalties = 0),
+        com.example.model.TopScorer(8, "Mauro Icardi", "Galatasaray", 5, secondaryCount = 1, matches = 8, type = "GOL", penalties = 1),
+        com.example.model.TopScorer(8, "Youssef En-Nesyri", "Fenerbahçe", 5, secondaryCount = 1, matches = 9, type = "GOL", penalties = 0),
+        com.example.model.TopScorer(10, "Ciro Immobile", "Beşiktaş", 5, secondaryCount = 1, matches = 9, type = "GOL", penalties = 2),
+        com.example.model.TopScorer(11, "Barış Alper Yılmaz", "Galatasaray", 4, secondaryCount = 3, matches = 9, type = "GOL", penalties = 0),
+        com.example.model.TopScorer(12, "Romulo", "Göztepe", 4, secondaryCount = 1, matches = 9, type = "GOL", penalties = 0),
     )
 
-    val topAssists = listOf(
-        com.example.model.TopScorer(1, "Kerem Demirbay", "Eyüpspor", 5, 9, 9, "ASIST"),
-        com.example.model.TopScorer(2, "Gabriel Sara", "Galatasaray", 4, 8, 8, "ASIST"),
-        com.example.model.TopScorer(3, "Edin Visca", "Trabzonspor", 4, 8, 8, "ASIST"),
-        com.example.model.TopScorer(4, "Dusan Tadic", "Fenerbahçe", 4, 8, 8, "ASIST"),
-        com.example.model.TopScorer(5, "Rafa Silva", "Beşiktaş", 3, 8, 8, "ASIST"),
-        com.example.model.TopScorer(6, "Max Gradel", "Amed SFK", 3, 8, 8, "ASIST"),
-        com.example.model.TopScorer(7, "Lucas Torreira", "Galatasaray", 3, 8, 8, "ASIST"),
+    val topAssists: List<com.example.model.TopScorer> = listOf(
+        // 2026-2027 Trendyol Süper Lig Maç 9 / 34 Asist Krallığı
+        com.example.model.TopScorer(1, "Dušan Tadić", "Fenerbahçe", 6, secondaryCount = 3, matches = 9, type = "ASIST"),
+        com.example.model.TopScorer(2, "Rafa Silva", "Beşiktaş", 5, secondaryCount = 3, matches = 9, type = "ASIST"),
+        com.example.model.TopScorer(2, "Gabriel Sara", "Galatasaray", 5, secondaryCount = 2, matches = 9, type = "ASIST"),
+        com.example.model.TopScorer(4, "Edin Višća", "Trabzonspor", 4, secondaryCount = 2, matches = 9, type = "ASIST"),
+        com.example.model.TopScorer(4, "Haris Hajradinović", "Kasımpaşa", 4, secondaryCount = 2, matches = 9, type = "ASIST"),
+        com.example.model.TopScorer(6, "Sebastian Szymański", "Fenerbahçe", 4, secondaryCount = 2, matches = 9, type = "ASIST"),
+        com.example.model.TopScorer(7, "Muhammed Salah", "Trabzonspor", 3, secondaryCount = 8, matches = 9, type = "ASIST"),
+        com.example.model.TopScorer(8, "Barış Alper Yılmaz", "Galatasaray", 3, secondaryCount = 4, matches = 9, type = "ASIST"),
+        com.example.model.TopScorer(9, "Lucas Torreira", "Galatasaray", 3, secondaryCount = 1, matches = 9, type = "ASIST"),
+        com.example.model.TopScorer(10, "Milot Rashica", "Beşiktaş", 3, secondaryCount = 2, matches = 9, type = "ASIST"),
+    )
+
+    val cardLeaders: List<com.example.model.TopScorer> = listOf(
+        // 2026-2027 Trendyol Süper Lig Maç 9 / 34 Sarı ve Kırmızı Kart Liderleri
+        com.example.model.TopScorer(1, "Lucas Torreira", "Galatasaray", 5, secondaryCount = 0, matches = 9, type = "KART", yellowCards = 5, redCards = 0),
+        com.example.model.TopScorer(1, "İsmail Yüksek", "Fenerbahçe", 5, secondaryCount = 0, matches = 9, type = "KART", yellowCards = 5, redCards = 0),
+        com.example.model.TopScorer(3, "Gedson Fernandes", "Beşiktaş", 4, secondaryCount = 0, matches = 9, type = "KART", yellowCards = 4, redCards = 0),
+        com.example.model.TopScorer(3, "Alexander Djiku", "Fenerbahçe", 4, secondaryCount = 0, matches = 9, type = "KART", yellowCards = 4, redCards = 0),
+        com.example.model.TopScorer(3, "Batista Mendy", "Trabzonspor", 4, secondaryCount = 0, matches = 9, type = "KART", yellowCards = 4, redCards = 0),
+        com.example.model.TopScorer(6, "Arthur Masuaku", "Beşiktaş", 3, secondaryCount = 1, matches = 9, type = "KART", yellowCards = 3, redCards = 1),
+        com.example.model.TopScorer(7, "Uğur Çiftçi", "Çorum FK", 3, secondaryCount = 1, matches = 9, type = "KART", yellowCards = 3, redCards = 1),
+        com.example.model.TopScorer(8, "Fred", "Fenerbahçe", 3, secondaryCount = 0, matches = 8, type = "KART", yellowCards = 3, redCards = 0),
+        com.example.model.TopScorer(9, "Edson Álvarez", "Fenerbahçe", 2, secondaryCount = 1, matches = 9, type = "KART", yellowCards = 2, redCards = 1),
     )
 
     val initialWeather = WeatherInfo(

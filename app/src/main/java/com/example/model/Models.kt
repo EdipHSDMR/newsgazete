@@ -77,10 +77,13 @@ data class TopScorer(
     val rank: Int,
     val player: String,
     val team: String,
-    val count: Int,             // Goals, assists or points
-    val secondaryCount: Int = 0, // Assists or rebounds
+    val count: Int,             // Goals, assists, yellow cards or points
+    val secondaryCount: Int = 0, // Assists, red cards or rebounds
     val matches: Int = 0,
-    val type: String = "GOL",    // "GOL", "ASIST", "SAYI"
+    val type: String = "GOL",    // "GOL", "ASIST", "KART", "SAYI"
+    val yellowCards: Int = 0,
+    val redCards: Int = 0,
+    val penalties: Int = 0,
 )
 
 data class FinancialAsset(
@@ -162,4 +165,6 @@ data class UserPreferences(
     val quietHoursEnabled: Boolean = true,
     val quietHoursStart: String = "23:00",
     val quietHoursEnd: String = "07:00",
+    val footballApiKey: String = "",
+    val weatherApiKey: String = "",
 )

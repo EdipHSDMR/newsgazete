@@ -6,12 +6,18 @@ import androidx.room.Room
 import androidx.room.RoomDatabase
 
 @Database(
-    entities = [SavedArticleEntity::class],
-    version = 1,
+    entities = [
+        SavedArticleEntity::class,
+        CachedStoryEntity::class,
+        CachedSportStatEntity::class,
+    ],
+    version = 2,
     exportSchema = false,
 )
 abstract class CizgiDatabase : RoomDatabase() {
     abstract fun savedArticleDao(): SavedArticleDao
+    abstract fun cachedStoryDao(): CachedStoryDao
+    abstract fun cachedSportStatDao(): CachedSportStatDao
 
     companion object {
         @Volatile

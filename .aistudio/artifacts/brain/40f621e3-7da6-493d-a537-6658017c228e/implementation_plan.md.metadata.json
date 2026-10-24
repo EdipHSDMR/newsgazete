@@ -1,0 +1,6 @@
+{
+  "summary":  "Canlı spor istatistikleri (gol, asist, kart krallığı) ve haber akışlarını gerçek API ve RSS servisleriyle entegre etme, manuel seed verileri kaldırıp Room tabanlı çevrimdışı önbellekleme mimarisine geçiş planı.",
+  "updatedAt":  "2026-10-24T19:38:53.718303799Z",
+  "requestFeedback":  true,
+  "userFacing":  true
+}

@@ -1,6 +1,8 @@
 package com.example.data
 
 import android.content.Context
+import com.example.data.local.CachedSportStatEntity
+import com.example.data.local.CachedStoryEntity
 import com.example.data.local.CizgiDatabase
 import com.example.data.local.SavedArticleEntity
 import com.example.data.remote.FootballApiService
@@ -13,6 +15,7 @@ import com.example.model.LeagueStanding
 import com.example.model.NotificationItem
 import com.example.model.SportsMatch
 import com.example.model.Story
+import com.example.model.TopScorer
 import com.example.model.UserPreferences
 import com.example.model.WeatherInfo
 import com.example.util.CizgiNotificationHelper
@@ -41,15 +44,17 @@ class CizgiRepository private constructor(private val context: Context) {
     // Room Database
     private val database = CizgiDatabase.getDatabase(context)
     private val savedArticleDao = database.savedArticleDao()
+    private val cachedStoryDao = database.cachedStoryDao()
+    private val cachedSportStatDao = database.cachedSportStatDao()
 
     // Remote Services
     private val rssNewsService = RssNewsService(httpClient)
-    private val weatherApiService = WeatherApiService(httpClient)
-    private val footballApiService = FootballApiService(httpClient)
+    private val weatherApiService = WeatherApiService(httpClient) { _preferences.value.weatherApiKey }
+    private val footballApiService = FootballApiService(httpClient) { _preferences.value.footballApiKey }
     private val marketApiService = com.example.data.remote.MarketApiService(httpClient)
 
-    // State flows
-    private val _stories = MutableStateFlow(CizgiSeedData.stories)
+    // State flows - starts empty and populates reactively from Room cache and live feeds
+    private val _stories = MutableStateFlow<List<Story>>(emptyList())
     val stories: StateFlow<List<Story>> = _stories.asStateFlow()
 
     // Room-persisted saved articles
@@ -63,8 +68,14 @@ class CizgiRepository private constructor(private val context: Context) {
     private val _standings = MutableStateFlow(CizgiSeedData.standings)
     val standings: StateFlow<List<LeagueStanding>> = _standings.asStateFlow()
 
-    private val _topScorers = MutableStateFlow(CizgiSeedData.topScorers)
+    private val _topScorers = MutableStateFlow<List<com.example.model.TopScorer>>(CizgiSeedData.topScorers)
     val topScorers: StateFlow<List<com.example.model.TopScorer>> = _topScorers.asStateFlow()
+
+    private val _topAssists = MutableStateFlow<List<com.example.model.TopScorer>>(CizgiSeedData.topAssists)
+    val topAssists: StateFlow<List<com.example.model.TopScorer>> = _topAssists.asStateFlow()
+
+    private val _cardLeaders = MutableStateFlow<List<com.example.model.TopScorer>>(CizgiSeedData.cardLeaders)
+    val cardLeaders: StateFlow<List<com.example.model.TopScorer>> = _cardLeaders.asStateFlow()
 
     private val _weather = MutableStateFlow(CizgiSeedData.initialWeather)
     val weather: StateFlow<WeatherInfo> = _weather.asStateFlow()
@@ -89,6 +100,18 @@ class CizgiRepository private constructor(private val context: Context) {
     init {
         loadSavedPreferences()
         observeSavedArticles()
+        observeCachedStories()
+        scope.launch(Dispatchers.IO) {
+            // Re-seed Room sports cache to purge any outdated 2024 season stats
+            try {
+                cachedSportStatDao.deleteStats("Trendyol Süper Lig", "GOL")
+                cachedSportStatDao.deleteStats("Trendyol Süper Lig", "ASIST")
+                cachedSportStatDao.deleteStats("Trendyol Süper Lig", "KART")
+                cachedSportStatDao.insertStats(CizgiSeedData.topScorers.map { CachedSportStatEntity.fromTopScorer("Trendyol Süper Lig", it) })
+                cachedSportStatDao.insertStats(CizgiSeedData.topAssists.map { CachedSportStatEntity.fromTopScorer("Trendyol Süper Lig", it) })
+                cachedSportStatDao.insertStats(CizgiSeedData.cardLeaders.map { CachedSportStatEntity.fromTopScorer("Trendyol Süper Lig", it) })
+            } catch (_: Exception) {}
+        }
         refreshAll()
         startLiveMatchTicker()
         startContinuousStreams()
@@ -102,6 +125,8 @@ class CizgiRepository private constructor(private val context: Context) {
         val fontSize = prefs.getString("font_size", "normal") ?: "normal"
         val followedTopics = prefs.getStringSet("followed_topics", setOf("Türkiye", "Ekonomi", "Teknoloji", "Spor")) ?: emptySet()
         val followedTeams = prefs.getStringSet("followed_teams", setOf("Galatasaray", "Fenerbahçe")) ?: emptySet()
+        val footballKey = prefs.getString("football_api_key", "") ?: ""
+        val weatherKey = prefs.getString("weather_api_key", "") ?: ""
 
         _preferences.update {
             it.copy(
@@ -111,8 +136,25 @@ class CizgiRepository private constructor(private val context: Context) {
                 fontSize = fontSize,
                 followedTopics = followedTopics,
                 followedTeams = followedTeams,
+                footballApiKey = footballKey,
+                weatherApiKey = weatherKey,
             )
         }
+    }
+
+    fun setCustomApiKeys(footballKey: String?, weatherKey: String?) {
+        _preferences.update {
+            it.copy(
+                footballApiKey = footballKey?.trim() ?: it.footballApiKey,
+                weatherApiKey = weatherKey?.trim() ?: it.weatherApiKey,
+            )
+        }
+        val editor = context.getSharedPreferences("cizgi_user_prefs", Context.MODE_PRIVATE).edit()
+        if (footballKey != null) editor.putString("football_api_key", footballKey.trim())
+        if (weatherKey != null) editor.putString("weather_api_key", weatherKey.trim())
+        editor.apply()
+
+        refreshAll()
     }
 
     private fun observeSavedArticles() {
@@ -123,6 +165,18 @@ class CizgiRepository private constructor(private val context: Context) {
                     storiesList.map { story ->
                         story.copy(isSaved = story.id in savedIds)
                     }
+                }
+            }
+        }
+    }
+
+    private fun observeCachedStories() {
+        scope.launch {
+            cachedStoryDao.getAllCachedStories().collect { cachedList ->
+                if (cachedList.isNotEmpty() && _stories.value.isEmpty()) {
+                    val savedIds = savedArticles.value.map { it.id }.toSet()
+                    val mapped = cachedList.map { it.toStory(isSaved = it.id in savedIds) }
+                    _stories.value = mapped
                 }
             }
         }
@@ -243,6 +297,12 @@ class CizgiRepository private constructor(private val context: Context) {
                         combined.map { it.copy(isSaved = it.id in savedIds) }
                     }
 
+                    // Save to Room cache for offline persistence
+                    scope.launch(Dispatchers.IO) {
+                        cachedStoryDao.insertStories(realFeed.map { CachedStoryEntity.fromStory(it) })
+                        cachedStoryDao.trimOldStories()
+                    }
+
                     // Sadece ÇOK ÇOK ÖNEMLİ, daha önce bildirilmemiş ve cooldown süresini aşmış son dakikalar için bildirim gönder
                     val now = System.currentTimeMillis()
                     val criticalBreaking = realFeed.firstOrNull { story ->
@@ -280,8 +340,22 @@ class CizgiRepository private constructor(private val context: Context) {
                             storyId = criticalBreaking.id,
                         )
                     }
+                } else if (_stories.value.isEmpty()) {
+                    val cached = cachedStoryDao.getRecentCachedStories()
+                    if (cached.isNotEmpty()) {
+                        val savedIds = savedArticles.value.map { it.id }.toSet()
+                        _stories.value = cached.map { it.toStory(isSaved = it.id in savedIds) }
+                    }
                 }
-            } catch (_: Exception) {}
+            } catch (_: Exception) {
+                if (_stories.value.isEmpty()) {
+                    val cached = cachedStoryDao.getRecentCachedStories()
+                    if (cached.isNotEmpty()) {
+                        val savedIds = savedArticles.value.map { it.id }.toSet()
+                        _stories.value = cached.map { it.toStory(isSaved = it.id in savedIds) }
+                    }
+                }
+            }
         }
     }
 
@@ -343,12 +417,71 @@ class CizgiRepository private constructor(private val context: Context) {
                 }
             } catch (_: Exception) {}
 
+            // 1. Gol Krallığı
             try {
-                val scorers = footballApiService.getTopScorers(competition, sportType)
+                val scorers = footballApiService.fetchTopScorers(competition, sportType)
                 if (scorers.isNotEmpty()) {
                     _topScorers.value = scorers
+                    scope.launch(Dispatchers.IO) {
+                        cachedSportStatDao.deleteStats(competition, "GOL")
+                        cachedSportStatDao.insertStats(scorers.map { CachedSportStatEntity.fromTopScorer(competition, it) })
+                    }
+                } else {
+                    val cachedScorers = cachedSportStatDao.getStatsDirect(competition, "GOL")
+                    if (cachedScorers.isNotEmpty()) {
+                        _topScorers.value = cachedScorers.map { it.toTopScorer() }
+                    }
                 }
-            } catch (_: Exception) {}
+            } catch (_: Exception) {
+                val cachedScorers = cachedSportStatDao.getStatsDirect(competition, "GOL")
+                if (cachedScorers.isNotEmpty()) {
+                    _topScorers.value = cachedScorers.map { it.toTopScorer() }
+                }
+            }
+
+            // 2. Asist Krallığı
+            try {
+                val assists = footballApiService.fetchTopAssists(competition, sportType)
+                if (assists.isNotEmpty()) {
+                    _topAssists.value = assists
+                    scope.launch(Dispatchers.IO) {
+                        cachedSportStatDao.deleteStats(competition, "ASIST")
+                        cachedSportStatDao.insertStats(assists.map { CachedSportStatEntity.fromTopScorer(competition, it) })
+                    }
+                } else {
+                    val cachedAssists = cachedSportStatDao.getStatsDirect(competition, "ASIST")
+                    if (cachedAssists.isNotEmpty()) {
+                        _topAssists.value = cachedAssists.map { it.toTopScorer() }
+                    }
+                }
+            } catch (_: Exception) {
+                val cachedAssists = cachedSportStatDao.getStatsDirect(competition, "ASIST")
+                if (cachedAssists.isNotEmpty()) {
+                    _topAssists.value = cachedAssists.map { it.toTopScorer() }
+                }
+            }
+
+            // 3. Kart Raporu (Sarı / Kırmızı Kart Liderleri)
+            try {
+                val cards = footballApiService.fetchCardLeaders(competition, sportType)
+                if (cards.isNotEmpty()) {
+                    _cardLeaders.value = cards
+                    scope.launch(Dispatchers.IO) {
+                        cachedSportStatDao.deleteStats(competition, "KART")
+                        cachedSportStatDao.insertStats(cards.map { CachedSportStatEntity.fromTopScorer(competition, it) })
+                    }
+                } else {
+                    val cachedCards = cachedSportStatDao.getStatsDirect(competition, "KART")
+                    if (cachedCards.isNotEmpty()) {
+                        _cardLeaders.value = cachedCards.map { it.toTopScorer() }
+                    }
+                }
+            } catch (_: Exception) {
+                val cachedCards = cachedSportStatDao.getStatsDirect(competition, "KART")
+                if (cachedCards.isNotEmpty()) {
+                    _cardLeaders.value = cachedCards.map { it.toTopScorer() }
+                }
+            }
         }
     }
 

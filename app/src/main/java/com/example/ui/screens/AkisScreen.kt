@@ -147,14 +147,18 @@ fun AkisScreen(
         if (mansetStory != null) filteredStories.filter { it.id != mansetStory.id } else filteredStories
     }
 
-    val dailyDigestPoints = remember {
-        listOf(
-            "TCMB Para Politikası Kurulu politika faizini yüzde 50'de sabit tuttu.",
-            "TÜBİTAK öncülüğünde Türkiye'nin ilk açık kaynak yapay zeka çip mimarisi tanıtıldı.",
-            "Trendyol Süper Lig'de lider Galatasaray ve Fenerbahçe haftayı galibiyetle kapattı.",
-            "Birleşmiş Milletler İklim Zirvesi'nde yenilenebilir enerji mutabakatı imzalandı.",
-            "Milli okçumuz Mete Gazoz Dünya Kupası finallerinde altın madalyanın sahibi oldu.",
-        )
+    val dailyDigestPoints = remember(stories) {
+        if (stories.isNotEmpty()) {
+            stories.take(5).map { it.title }
+        } else {
+            listOf(
+                "TCMB Para Politikası Kurulu politika faizini yüzde 50'de sabit tuttu.",
+                "TÜBİTAK öncülüğünde Türkiye'nin ilk açık kaynak yapay zeka çip mimarisi tanıtıldı.",
+                "Trendyol Süper Lig'de lider Galatasaray ve Fenerbahçe haftayı galibiyetle kapattı.",
+                "Birleşmiş Milletler İklim Zirvesi'nde yenilenebilir enerji mutabakatı imzalandı.",
+                "Milli okçumuz Mete Gazoz Dünya Kupası finallerinde altın madalyanın sahibi oldu.",
+            )
+        }
     }
 
     val nextMatch = remember(matches) {
