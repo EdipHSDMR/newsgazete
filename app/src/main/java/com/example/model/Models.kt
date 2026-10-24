@@ -1,0 +1,165 @@
+package com.example.model
+
+enum class MatchStatus {
+    LIVE,
+    UPCOMING,
+    FINISHED
+}
+
+data class SourceComparison(
+    val publisher: String,
+    val headline: String,
+    val angle: String,
+    val publishedTime: String,
+    val url: String = "",
+)
+
+data class Story(
+    val id: String,
+    val title: String,
+    val summary: String,
+    val topic: String,
+    val publisher: String,
+    val publishedAt: String,
+    val readTimeMin: Int = 2,
+    val imageUrl: String = "",
+    val isBreaking: Boolean = false,
+    val isManset: Boolean = false,
+    val sourceCount: Int = 1,
+    val whatHappened: String = "",
+    val whyItMatters: String = "",
+    val whatIsUnknown: String = "",
+    val fullText: String = "",
+    val paragraphs: List<String> = emptyList(),
+    val comparisons: List<SourceComparison> = emptyList(),
+    val canonicalUrl: String = "",
+    val isSaved: Boolean = false,
+)
+
+data class MatchEvent(
+    val minute: Int,
+    val team: String,
+    val player: String,
+    val type: String, // "GOL", "SARI", "KIRMIZI", "PENALTI"
+)
+
+data class SportsMatch(
+    val id: String,
+    val competition: String,
+    val round: String,
+    val homeTeam: String,
+    val awayTeam: String,
+    val homeScore: Int? = null,
+    val awayScore: Int? = null,
+    val minute: Int? = null,
+    val status: MatchStatus,
+    val statusLabel: String,
+    val kickoffTime: String,
+    val events: List<MatchEvent> = emptyList(),
+    val sportType: String = "FUTBOL", // "FUTBOL", "BASKETBOL", "VOLEYBOL"
+    val liveAction: String = "",       // e.g. "⚽ GOL! 78' Icardi"
+    val oddsHome: String = "1.75",
+    val oddsDraw: String = "3.40",
+    val oddsAway: String = "3.90",
+    val possessionHome: Int = 54,
+    val possessionAway: Int = 46,
+    val shotsHome: Int = 14,
+    val shotsAway: Int = 8,
+    val shotsOnTargetHome: Int = 6,
+    val shotsOnTargetAway: Int = 3,
+    val cornersHome: Int = 6,
+    val cornersAway: Int = 3,
+    val referee: String = "",
+    val stadium: String = "",
+)
+
+data class TopScorer(
+    val rank: Int,
+    val player: String,
+    val team: String,
+    val count: Int,             // Goals, assists or points
+    val secondaryCount: Int = 0, // Assists or rebounds
+    val matches: Int = 0,
+    val type: String = "GOL",    // "GOL", "ASIST", "SAYI"
+)
+
+data class FinancialAsset(
+    val code: String,          // e.g. "USD/TRY", "EUR/TRY", "GA", "BIST100", "BTC"
+    val name: String,          // e.g. "Dolar", "Euro", "Gram Altın", "BIST 100", "Bitcoin"
+    val symbol: String,        // "$", "€", "₺", "₿"
+    val currentPrice: Double,
+    val changePct: Double,     // +0.45, -0.22
+    val highPrice: Double,
+    val lowPrice: Double,
+    val unit: String = "₺",
+    val sparkline: List<Float> = emptyList(),
+)
+
+data class LeagueStanding(
+    val rank: Int,
+    val team: String,
+    val played: Int,
+    val won: Int,
+    val drawn: Int,
+    val lost: Int,
+    val goalDiff: Int,
+    val points: Int,
+    val form: String = "G-G-B-G-M",
+    val goalsFor: Int = 0,
+    val goalsAgainst: Int = 0,
+)
+
+data class HourlyWeather(
+    val hour: String,
+    val tempC: Int,
+    val condition: String,
+    val rainProbPct: Int,
+)
+
+data class DailyWeather(
+    val dayName: String,
+    val condition: String,
+    val maxTempC: Int,
+    val minTempC: Int,
+    val rainProbPct: Int,
+)
+
+data class WeatherInfo(
+    val cityName: String,
+    val condition: String,
+    val currentTempC: Int,
+    val feelsLikeC: Int,
+    val humidityPct: Int,
+    val windKmh: Int,
+    val uvIndex: Int,
+    val rainChancePct: Int,
+    val summary: String,
+    val hourly: List<HourlyWeather>,
+    val daily: List<DailyWeather>,
+    val lastUpdated: String = "Az önce",
+)
+
+data class NotificationItem(
+    val id: String,
+    val category: String, // "Son Dakika", "Spor", "Konular", "Gündem"
+    val title: String,
+    val body: String,
+    val timeAgo: String,
+    val isRead: Boolean = false,
+    val storyId: String? = null,
+)
+
+data class UserPreferences(
+    val themeMode: String = "light", // "light", "dark", "system"
+    val fontSize: String = "normal",  // "normal", "large"
+    val selectedCity: String = "İstanbul",
+    val selectedDistrict: String? = null,
+    val followedTopics: Set<String> = setOf("Türkiye", "Ekonomi", "Teknoloji", "Spor"),
+    val followedTeams: Set<String> = setOf("Galatasaray", "Fenerbahçe"),
+    val breakingAlerts: Boolean = true,
+    val matchAlerts: Boolean = true,
+    val dailyDigest: Boolean = true,
+    val quietHoursEnabled: Boolean = true,
+    val quietHoursStart: String = "23:00",
+    val quietHoursEnd: String = "07:00",
+)

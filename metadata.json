@@ -1,0 +1,6 @@
+{
+  "name": "Çizgi",
+  "description": "Gündemi gör. Günün içinde kal. Akış, keşif, canlı spor, hava, bildirimler ve kişisel kontrol için editoryal haber uygulaması.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
