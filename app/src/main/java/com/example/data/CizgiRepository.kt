@@ -101,6 +101,16 @@ class CizgiRepository private constructor(private val context: Context) {
 
     private val bistRetrofitApi = com.example.data.remote.BistRetrofitApi(httpClient)
 
+    private val refreshMutex = Mutex()
+    private val sentBreakingStoryIds = mutableSetOf<String>()
+    private val sentGoalAlertIds = mutableSetOf<String>()
+    private var lastBreakingNotifTimeMs = 0L
+
+    private var newsStreamJob: kotlinx.coroutines.Job? = null
+    private var marketStreamJob: kotlinx.coroutines.Job? = null
+    private var weatherStreamJob: kotlinx.coroutines.Job? = null
+    private var sportsStreamJob: kotlinx.coroutines.Job? = null
+
     init {
         loadSavedPreferences()
         observeSavedArticles()
@@ -141,11 +151,6 @@ class CizgiRepository private constructor(private val context: Context) {
             }
         }
     }
-
-    private var newsStreamJob: kotlinx.coroutines.Job? = null
-    private var marketStreamJob: kotlinx.coroutines.Job? = null
-    private var weatherStreamJob: kotlinx.coroutines.Job? = null
-    private var sportsStreamJob: kotlinx.coroutines.Job? = null
 
     private fun startContinuousStreams() {
         newsStreamJob?.cancel()
@@ -225,11 +230,6 @@ class CizgiRepository private constructor(private val context: Context) {
         val locationQuery = if (!district.isNullOrBlank()) "$district, $city" else city
         fetchLiveWeather(locationQuery)
     }
-
-    private val refreshMutex = Mutex()
-    private val sentBreakingStoryIds = mutableSetOf<String>()
-    private val sentGoalAlertIds = mutableSetOf<String>()
-    private var lastBreakingNotifTimeMs = 0L
 
     fun refreshAll() {
         scope.launch {
