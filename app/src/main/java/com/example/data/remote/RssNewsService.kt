@@ -2,7 +2,13 @@ package com.example.data.remote
 
 import com.example.model.SourceComparison
 import com.example.model.Story
+import android.text.Html
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -14,24 +20,27 @@ import java.util.regex.Pattern
 
 class RssNewsService(private val httpClient: OkHttpClient) {
 
-    // Öncelikli kamu & ulusal canlı RSS akışları (AA, TRT Haber, NTV, Habertürk)
+    // Açık, telif dostu kamu & haber RSS akışları
     private val rssSources = listOf(
-        Triple("https://www.trthaber.com/sondakika.rss", "TRT Haber", "Gündem"),
-        Triple("https://www.aa.com.tr/tr/rss/default?cat=guncel", "Anadolu Ajansı", "Gündem"),
-        Triple("https://www.ntv.com.tr/gundem.rss", "NTV", "Gündem"),
-        Triple("https://www.haberturk.com/rss", "Habertürk", "Gündem"),
-        Triple("https://www.aa.com.tr/tr/rss/default?cat=ekonomi", "Anadolu Ajansı", "Ekonomi"),
-        Triple("https://www.trthaber.com/ekonomi_articles.rss", "TRT Haber", "Ekonomi"),
-        Triple("https://www.ntv.com.tr/ekonomi.rss", "NTV", "Ekonomi"),
-        Triple("https://www.haberturk.com/rss/ekonomi.xml", "Habertürk", "Ekonomi"),
-        Triple("https://www.trthaber.com/spor_articles.rss", "TRT Spor", "Spor"),
-        Triple("https://www.aa.com.tr/tr/rss/default?cat=spor", "Anadolu Ajansı", "Spor"),
-        Triple("https://www.ntv.com.tr/spor.rss", "NTV", "Spor"),
-        Triple("https://www.haberturk.com/rss/spor.xml", "Habertürk", "Spor"),
-        Triple("https://www.trthaber.com/bilim_teknoloji_articles.rss", "TRT Haber", "Teknoloji"),
-        Triple("https://www.ntv.com.tr/teknoloji.rss", "NTV", "Teknoloji"),
         Triple("https://www.ensonhaber.com/rss/ensonhaber.xml", "Ensonhaber", "Gündem"),
+        Triple("https://feeds.bbci.co.uk/turkce/rss.xml", "BBC Türkçe", "Dünya"),
+        Triple("https://www.ntv.com.tr/gundem.rss", "NTV", "Gündem"),
+        Triple("https://www.ntv.com.tr/ekonomi.rss", "NTV", "Ekonomi"),
+        Triple("https://www.ntv.com.tr/teknoloji.rss", "NTV", "Teknoloji"),
+        Triple("https://www.trthaber.com/sondakika.rss", "TRT Haber", "Gündem"),
+        Triple("https://www.trthaber.com/ekonomi_articles.rss", "TRT Haber", "Ekonomi"),
+        Triple("https://www.trthaber.com/bilim_teknoloji_articles.rss", "TRT Haber", "Teknoloji"),
+        Triple("https://www.trthaber.com/spor_articles.rss", "TRT Spor", "Spor"),
+        Triple("https://www.haberturk.com/rss", "Habertürk", "Gündem"),
+        Triple("https://www.cnnturk.com/feed/rss/all/news", "CNN Türk", "Gündem"),
+        Triple("https://www.cnnturk.com/feed/rss/ekonomi/news", "CNN Türk", "Ekonomi"),
+        Triple("https://www.cnnturk.com/feed/rss/spor/news", "CNN Türk", "Spor"),
+        Triple("https://www.diken.com.tr/feed/", "Diken", "Gündem"),
+        Triple("https://www.sozcu.com.tr/rss/sondakika.xml", "Sözcü", "Gündem"),
+        Triple("https://www.hurriyet.com.tr/rss/gundem", "Hürriyet", "Gündem"),
+        Triple("https://www.milliyet.com.tr/rss/rssnew/gundem.xml", "Milliyet", "Gündem"),
     )
+    private val feedSemaphore = Semaphore(4)
 
     // Unsplash curated editorial fallback news imagery (high resolution, CDN backed)
     private val topicFallbackImages = mapOf(
@@ -81,48 +90,95 @@ class RssNewsService(private val httpClient: OkHttpClient) {
     )
 
     suspend fun fetchRealNews(): List<Story> = withContext(Dispatchers.IO) {
-        val allStories = mutableListOf<Story>()
+        val semaphore = feedSemaphore
+        val allStories = coroutineScope {
+            rssSources.map { (feedUrl, publisherName, defaultTopic) ->
+                async {
+                    semaphore.withPermit {
+                        try {
+                            val request = Request.Builder()
+                                .url(feedUrl)
+                                .header("User-Agent", "Newsgazete/1.0 (RSS reader)")
+                                .header("Accept", "application/rss+xml, application/atom+xml, application/xml, text/xml;q=0.9, */*;q=0.8")
+                                .build()
 
-        for ((feedUrl, publisherName, defaultTopic) in rssSources) {
-            try {
-                val request = Request.Builder()
-                    .url(feedUrl)
-                    .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
-                    .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-                    .build()
-
-                val response = httpClient.newCall(request).execute()
-                if (response.isSuccessful) {
-                    val xmlData = response.body?.string()
-                    if (!xmlData.isNullOrBlank()) {
-                        val parsed = parseRssFeedRobust(xmlData, publisherName, defaultTopic)
-                        allStories.addAll(parsed)
+                            httpClient.newCall(request).execute().use { response ->
+                                if (!response.isSuccessful) return@withPermit emptyList()
+                                val xmlData = response.body?.string().orEmpty()
+                                if (xmlData.isBlank()) emptyList()
+                                else parseRssFeedRobust(xmlData, publisherName, defaultTopic).take(MAX_ITEMS_PER_FEED)
+                            }
+                        } catch (_: Exception) {
+                            emptyList()
+                        }
                     }
                 }
-            } catch (_: Exception) {}
-
-            if (allStories.size >= 60) {
-                break
-            }
+            }.awaitAll().flatten()
         }
 
-        // Deduplicate stories by title similarity
-        val uniqueStories = mutableListOf<Story>()
-        val seenTitles = mutableSetOf<String>()
+        val uniqueStories = mergeDuplicateStories(allStories)
+            .sortedWith(compareByDescending<Story> { it.publishedAtEpochMs }.thenByDescending { it.id })
+            .take(MAX_STORIES_PER_REFRESH)
+            .toMutableList()
 
-        for (item in allStories) {
-            val simplified = item.title.lowercase().replace("[^a-zçğışöü0-9]".toRegex(), "").take(25)
-            if (simplified.length > 5 && simplified !in seenTitles) {
-                seenTitles.add(simplified)
-                uniqueStories.add(item)
-            }
-        }
-
-        // Make the first item a Manset
-        if (uniqueStories.isNotEmpty()) {
-            uniqueStories[0] = uniqueStories[0].copy(isManset = true, isBreaking = true)
-        }
+        if (uniqueStories.isNotEmpty()) uniqueStories[0] = uniqueStories[0].copy(isManset = true)
         uniqueStories
+    }
+
+    private fun mergeDuplicateStories(stories: List<Story>): List<Story> {
+        val mergedById = LinkedHashMap<String, Story>()
+        val idByUrl = mutableMapOf<String, String>()
+        val idByTitle = mutableMapOf<String, String>()
+
+        for (story in stories.sortedByDescending { it.publishedAtEpochMs }) {
+            val urlKey = normalizeUrl(story.canonicalUrl)
+            val titleKey = normalizeTitle(story.title)
+            val existingId = (urlKey.takeIf(String::isNotBlank)?.let(idByUrl::get))
+                ?: titleKey.takeIf(String::isNotBlank)?.let(idByTitle::get)
+            val existing = existingId?.let(mergedById::get)
+            if (existing == null) {
+                mergedById[story.id] = story
+                if (urlKey.isNotBlank()) idByUrl[urlKey] = story.id
+                if (titleKey.isNotBlank()) idByTitle[titleKey] = story.id
+                continue
+            }
+
+            val comparisons = (existing.comparisons + story.comparisons)
+                .distinctBy { it.publisher.lowercase(Locale.ROOT) to normalizeUrl(it.url) }
+                .take(8)
+            mergedById[existing.id] = existing.copy(
+                sourceCount = comparisons.size.coerceAtLeast(existing.sourceCount),
+                comparisons = comparisons,
+                canonicalUrl = existing.canonicalUrl.ifBlank { story.canonicalUrl },
+            )
+            if (urlKey.isNotBlank()) idByUrl[urlKey] = existing.id
+            if (titleKey.isNotBlank()) idByTitle[titleKey] = existing.id
+        }
+
+        return mergedById.values.toList()
+    }
+
+    private fun normalizeTitle(title: String): String = title
+        .lowercase(Locale.forLanguageTag("tr-TR"))
+        .replace("[^a-z0-9çğıöşü]".toRegex(), " ")
+        .trim()
+        .replace("\\s+".toRegex(), " ")
+
+    private fun normalizeUrl(url: String): String {
+        if (url.isBlank()) return ""
+        return try {
+            val uri = java.net.URI(url.trim())
+            val host = uri.host?.lowercase(Locale.ROOT).orEmpty()
+            if (host.isBlank()) return url.trim().substringBefore('#').trimEnd('/')
+            val path = uri.rawPath.orEmpty().trimEnd('/').ifBlank { "/" }
+            val query = uri.rawQuery.orEmpty().split('&')
+                .filterNot { it.substringBefore('=').lowercase(Locale.ROOT).startsWith("utm_") ||
+                    it.substringBefore('=').lowercase(Locale.ROOT) in setOf("fbclid", "gclid") }
+                .joinToString("&")
+            "https://$host$path" + if (query.isBlank()) "" else "?$query"
+        } catch (_: Exception) {
+            url.trim().substringBefore('#').trimEnd('/')
+        }
     }
 
     /**
@@ -132,7 +188,7 @@ class RssNewsService(private val httpClient: OkHttpClient) {
         val list = mutableListOf<Story>()
 
         // Find all <item>...</item> or <entry>...</entry> blocks
-        val itemPattern = Pattern.compile("<(?:item|entry)>(.*?)</(?:item|entry)>", Pattern.DOTALL or Pattern.CASE_INSENSITIVE)
+        val itemPattern = Pattern.compile("<(?:[\\w.-]+:)?(?:item|entry)\\b[^>]*>(.*?)</(?:[\\w.-]+:)?(?:item|entry)\\s*>", Pattern.DOTALL or Pattern.CASE_INSENSITIVE)
         val matcher = itemPattern.matcher(xml)
 
         var counter = 0
@@ -141,8 +197,13 @@ class RssNewsService(private val httpClient: OkHttpClient) {
 
             val rawTitle = extractTagContent(itemBlock, "title")
             val rawLink = extractLink(itemBlock)
-            val rawDesc = extractTagContent(itemBlock, "description").ifBlank { extractTagContent(itemBlock, "summary") }
-            val rawPubDate = extractTagContent(itemBlock, "pubDate").ifBlank { extractTagContent(itemBlock, "updated") }
+            val rawDesc = extractTagContent(itemBlock, "description")
+                .ifBlank { extractTagContent(itemBlock, "summary") }
+                .ifBlank { extractTagContent(itemBlock, "encoded") }
+            val rawPubDate = extractTagContent(itemBlock, "pubDate")
+                .ifBlank { extractTagContent(itemBlock, "published") }
+                .ifBlank { extractTagContent(itemBlock, "updated") }
+                .ifBlank { extractTagContent(itemBlock, "date") }
             val rawCategory = extractTagContent(itemBlock, "category")
 
             val cleanTitle = cleanHtml(rawTitle)
@@ -163,18 +224,16 @@ class RssNewsService(private val httpClient: OkHttpClient) {
 
                 val timeAgo = formatPubDate(rawPubDate)
                 val readMin = maxOf(2, cleanDesc.length / 220)
-                val id = UUID.nameUUIDFromBytes(cleanTitle.toByteArray()).toString()
+                val id = UUID.nameUUIDFromBytes(cleanTitle.toByteArray(Charsets.UTF_8)).toString()
+                val publishedAtEpochMs = parsePubDateEpochMs(rawPubDate).takeIf { it > 0 }
+                    ?: System.currentTimeMillis()
 
                 val paragraphs = if (cleanDesc.isNotBlank() && cleanDesc.contains(". ")) {
                     cleanDesc.split(". ")
                         .filter { it.isNotBlank() }
                         .map { it.trim().removeSuffix(".") + "." }
                 } else {
-                    listOf(
-                        cleanTitle,
-                        if (cleanDesc.isNotBlank()) cleanDesc else "Haberin detayları ve resmi açıklamalar kurum bülteninde aktarılmaktadır.",
-                        "Gelişmeler kamuoyu ve ilgili kurumlar tarafından yakından takip edilmektedir."
-                    )
+                    listOf(cleanTitle, cleanDesc).filter { it.isNotBlank() }
                 }
 
                 list.add(
@@ -185,28 +244,23 @@ class RssNewsService(private val httpClient: OkHttpClient) {
                         topic = classifiedTopic,
                         publisher = publisher,
                         publishedAt = timeAgo,
+                        publishedAtEpochMs = publishedAtEpochMs,
                         readTimeMin = readMin,
                         imageUrl = imageUrl,
-                        isBreaking = cleanTitle.contains("son dakika", ignoreCase = true) || counter == 0,
+                        isBreaking = cleanTitle.contains("son dakika", ignoreCase = true),
                         isManset = false,
-                        sourceCount = if (cleanTitle.length % 2 == 0) 3 else 2,
                         whatHappened = cleanTitle,
-                        whyItMatters = cleanDesc.take(140).ifBlank { "Gelişmeler kamuoyu ve uzmanlar tarafından yakından izlenmektedir." },
-                        whatIsUnknown = "Uygulama aşaması ve resmi kurum açıklamalarının takvimi.",
+                        whyItMatters = cleanDesc.take(140),
+                        whatIsUnknown = "",
                         fullText = cleanDesc.ifBlank { cleanTitle },
                         paragraphs = paragraphs,
                         comparisons = listOf(
                             SourceComparison(
                                 publisher = publisher,
                                 headline = cleanTitle,
-                                angle = "Haber metni ve ajans bülteni",
+                                angle = "Kaynağın yayımladığı haber",
                                 publishedTime = timeAgo,
-                            ),
-                            SourceComparison(
-                                publisher = "Anadolu Ajansı",
-                                headline = "$cleanTitle hakkında gelişmeler",
-                                angle = "Resmi teyit ve sahadan aktarım",
-                                publishedTime = timeAgo,
+                                url = rawLink,
                             )
                         ),
                         canonicalUrl = rawLink,
@@ -267,7 +321,7 @@ class RssNewsService(private val httpClient: OkHttpClient) {
     }
 
     private fun extractTagContent(block: String, tagName: String): String {
-        val pattern = Pattern.compile("<$tagName(?:\\s+[^>]*)?>(.*?)</$tagName>", Pattern.DOTALL or Pattern.CASE_INSENSITIVE)
+        val pattern = Pattern.compile("<(?:[\\w.-]+:)?$tagName\\b(?:\\s+[^>]*)?>(.*?)</(?:[\\w.-]+:)?$tagName\\s*>", Pattern.DOTALL or Pattern.CASE_INSENSITIVE)
         val matcher = pattern.matcher(block)
         return if (matcher.find()) {
             cleanHtml(matcher.group(1) ?: "")
@@ -275,14 +329,14 @@ class RssNewsService(private val httpClient: OkHttpClient) {
     }
 
     private fun extractLink(block: String): String {
-        val hrefPattern = Pattern.compile("<link(?:\\s+[^>]*href=[\"']([^\"']+)[\"'][^>]*)?>", Pattern.CASE_INSENSITIVE)
+        val hrefPattern = Pattern.compile("<(?:[\\w.-]+:)?link\\b[^>]*href=[\"']([^\"']+)[\"'][^>]*>", Pattern.CASE_INSENSITIVE)
         val hrefMatcher = hrefPattern.matcher(block)
         if (hrefMatcher.find()) {
             val href = hrefMatcher.group(1)
             if (!href.isNullOrBlank()) return href
         }
 
-        val textPattern = Pattern.compile("<link>(.*?)</link>", Pattern.DOTALL or Pattern.CASE_INSENSITIVE)
+        val textPattern = Pattern.compile("<(?:[\\w.-]+:)?link\\b[^>]*>(.*?)</(?:[\\w.-]+:)?link\\s*>", Pattern.DOTALL or Pattern.CASE_INSENSITIVE)
         val textMatcher = textPattern.matcher(block)
         return if (textMatcher.find()) cleanHtml(textMatcher.group(1) ?: "") else ""
     }
@@ -323,56 +377,57 @@ class RssNewsService(private val httpClient: OkHttpClient) {
     }
 
     private fun cleanHtml(text: String): String {
-        return text.replace("<!\\[CDATA\\[".toRegex(), "")
+        val withoutCdata = text.replace("<!\\[CDATA\\[".toRegex(), "")
             .replace("\\]\\]>".toRegex(), "")
-            .replace("<[^>]*>".toRegex(), "")
-            .replace("&nbsp;", " ")
-            .replace("&amp;", "&")
-            .replace("&quot;", "\"")
-            .replace("&apos;", "'")
-            .replace("&lt;", "<")
-            .replace("&gt;", ">")
+        return Html.fromHtml(withoutCdata, Html.FROM_HTML_MODE_LEGACY)
+            .toString()
+            .replace("\\s+".toRegex(), " ")
             .trim()
     }
 
     private fun formatPubDate(pubDate: String): String {
         if (pubDate.isBlank()) return "Az önce"
+        val timestamp = parsePubDateEpochMs(pubDate)
+        if (timestamp <= 0) return "Bugün"
+        val diffMs = (System.currentTimeMillis() - timestamp).coerceAtLeast(0)
+        val minutes = (diffMs / 60_000L).toInt()
+        val hours = (diffMs / 3_600_000L).toInt()
+        val days = (diffMs / 86_400_000L).toInt()
+        return when {
+            minutes <= 10 -> "Az önce"
+            minutes < 60 -> "$minutes dk önce"
+            hours < 24 -> "$hours saat önce"
+            days == 1 -> "Dün"
+            days < 7 -> "$days gün önce"
+            days < 31 -> "${days / 7} hafta önce"
+            else -> SimpleDateFormat("d MMMM yyyy", Locale.forLanguageTag("tr-TR")).format(Date(timestamp))
+        }
+    }
 
+    private fun parsePubDateEpochMs(pubDate: String): Long {
+        if (pubDate.isBlank()) return 0L
         val patterns = listOf(
             "EEE, dd MMM yyyy HH:mm:ss Z",
             "EEE, dd MMM yyyy HH:mm:ss z",
+            "yyyy-MM-dd'T'HH:mm:ss.SSSXXX",
+            "yyyy-MM-dd'T'HH:mm:ssXXX",
             "yyyy-MM-dd'T'HH:mm:ssZ",
             "yyyy-MM-dd'T'HH:mm:ss",
             "yyyy-MM-dd HH:mm:ss",
         )
-
         for (pattern in patterns) {
             try {
-                val sdf = SimpleDateFormat(pattern, Locale.US)
-                val date: Date? = sdf.parse(pubDate)
-                if (date != null) {
-                    val diffMs = System.currentTimeMillis() - date.time
-                    val minutes = (diffMs / 60000).toInt()
-                    val hours = (diffMs / 3600000).toInt()
-                    val days = (diffMs / 86400000).toInt()
-
-                    return when {
-                        minutes in 0..10 -> "Az önce"
-                        minutes in 11..59 -> "$minutes dk önce"
-                        hours in 1..23 -> "$hours saat önce"
-                        days == 1 -> "Dün"
-                        days in 2..6 -> "$days gün önce"
-                        days in 7..30 -> "${days / 7} hafta önce"
-                        else -> {
-                            val outFormat = SimpleDateFormat("d MMMM yyyy", Locale.forLanguageTag("tr-TR"))
-                            outFormat.format(date)
-                        }
-                    }
-                }
-            } catch (_: Exception) {}
+                SimpleDateFormat(pattern, Locale.US).apply { isLenient = false }.parse(pubDate)?.let { return it.time }
+            } catch (_: Exception) {
+            }
         }
-        return "Bugün"
+        return 0L
     }
 
-}
+    private companion object {
+        const val MAX_ITEMS_PER_FEED = 300
+        const val MAX_STORIES_PER_REFRESH = 3_000
+    }
 
+
+}

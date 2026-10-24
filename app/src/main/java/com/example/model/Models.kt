@@ -21,6 +21,7 @@ data class Story(
     val topic: String,
     val publisher: String,
     val publishedAt: String,
+    val publishedAtEpochMs: Long = 0L,
     val readTimeMin: Int = 2,
     val imageUrl: String = "",
     val isBreaking: Boolean = false,
@@ -55,35 +56,48 @@ data class SportsMatch(
     val status: MatchStatus,
     val statusLabel: String,
     val kickoffTime: String,
+    val kickoffAtEpochMs: Long = 0L,
     val events: List<MatchEvent> = emptyList(),
     val sportType: String = "FUTBOL", // "FUTBOL", "BASKETBOL", "VOLEYBOL"
     val liveAction: String = "",       // e.g. "⚽ GOL! 78' Icardi"
-    val oddsHome: String = "1.75",
-    val oddsDraw: String = "3.40",
-    val oddsAway: String = "3.90",
-    val possessionHome: Int = 54,
-    val possessionAway: Int = 46,
-    val shotsHome: Int = 14,
-    val shotsAway: Int = 8,
-    val shotsOnTargetHome: Int = 6,
-    val shotsOnTargetAway: Int = 3,
-    val cornersHome: Int = 6,
-    val cornersAway: Int = 3,
+    val oddsHome: String = "",
+    val oddsDraw: String = "",
+    val oddsAway: String = "",
+    val possessionHome: Int? = null,
+    val possessionAway: Int? = null,
+    val shotsHome: Int? = null,
+    val shotsAway: Int? = null,
+    val shotsOnTargetHome: Int? = null,
+    val shotsOnTargetAway: Int? = null,
+    val cornersHome: Int? = null,
+    val cornersAway: Int? = null,
     val referee: String = "",
     val stadium: String = "",
+)
+
+data class SportsSnapshot(
+    val competition: String = "",
+    val sportType: String = "",
+    val matches: List<SportsMatch> = emptyList(),
+    val standings: List<LeagueStanding> = emptyList(),
+    val topScorers: List<TopScorer> = emptyList(),
+    val isLoading: Boolean = false,
+    val updatedAtEpochMs: Long = 0L,
+    val scorerMessage: String = "",
 )
 
 data class TopScorer(
     val rank: Int,
     val player: String,
     val team: String,
-    val count: Int,             // Goals, assists, yellow cards or points
-    val secondaryCount: Int = 0, // Assists, red cards or rebounds
+    val count: Int,             // Goals, assists or points
+    val secondaryCount: Int = 0, // Assists or rebounds
     val matches: Int = 0,
-    val type: String = "GOL",    // "GOL", "ASIST", "KART", "SAYI"
+    val type: String = "GOL",    // "GOL", "ASIST", "SAYI"
     val yellowCards: Int = 0,
     val redCards: Int = 0,
     val penalties: Int = 0,
+    val valueLabel: String = "",
 )
 
 data class FinancialAsset(
@@ -91,9 +105,9 @@ data class FinancialAsset(
     val name: String,          // e.g. "Dolar", "Euro", "Gram Altın", "BIST 100", "Bitcoin"
     val symbol: String,        // "$", "€", "₺", "₿"
     val currentPrice: Double,
-    val changePct: Double,     // +0.45, -0.22
-    val highPrice: Double,
-    val lowPrice: Double,
+    val changePct: Double? = null, // null when the source does not report a real change
+    val highPrice: Double? = null,
+    val lowPrice: Double? = null,
     val unit: String = "₺",
     val sparkline: List<Float> = emptyList(),
 )
@@ -107,9 +121,12 @@ data class LeagueStanding(
     val lost: Int,
     val goalDiff: Int,
     val points: Int,
-    val form: String = "G-G-B-G-M",
+    val form: String = "—",
     val goalsFor: Int = 0,
     val goalsAgainst: Int = 0,
+    val qualificationNote: String? = null,
+    val groupName: String? = null,
+    val winPercentage: Double? = null,
 )
 
 data class HourlyWeather(
