@@ -50,10 +50,11 @@ class BistRetrofitApi(private val httpClient: OkHttpClient) {
                     val item = resultArr.getJSONObject(0)
                     val meta = item.getJSONObject("meta")
                     val currentPrice = meta.optDouble("regularMarketPrice", 0.0)
+                    if (currentPrice <= 0.0) return@withContext null
                     val previousClose = meta.optDouble("chartPreviousClose", meta.optDouble("previousClose", currentPrice))
                     val high = meta.optDouble("regularMarketDayHigh", currentPrice)
                     val low = meta.optDouble("regularMarketDayLow", currentPrice)
-                    val volumeNum = meta.optLong("regularMarketVolume", 15400000L)
+                    val volumeNum = meta.optLong("regularMarketVolume", 0L)
 
                     val changePct = if (previousClose > 0) {
                         ((currentPrice - previousClose) / previousClose) * 100.0
@@ -81,7 +82,7 @@ class BistRetrofitApi(private val httpClient: OkHttpClient) {
     /**
      * Gerçek ONS Altın Fiyatını (USD) Retrofit üzerinden GC=F sembolü ile çeker
      */
-    suspend fun fetchGoldOnsUsd(): Double = withContext(Dispatchers.IO) {
+    suspend fun fetchGoldOnsUsd(): Double? = withContext(Dispatchers.IO) {
         try {
             val responseBody = service.getChart("GC=F", interval = "1d", range = "1d")
             val jsonStr = responseBody.string()
@@ -96,13 +97,13 @@ class BistRetrofitApi(private val httpClient: OkHttpClient) {
                 }
             }
         } catch (_: Exception) {}
-        4008.0 // Canlı test doğrulanmış fallback
+        null
     }
 
     /**
      * Gerçek ONS Gümüş Fiyatını (USD) Retrofit üzerinden SI=F sembolü ile çeker
      */
-    suspend fun fetchSilverOnsUsd(): Double = withContext(Dispatchers.IO) {
+    suspend fun fetchSilverOnsUsd(): Double? = withContext(Dispatchers.IO) {
         try {
             val responseBody = service.getChart("SI=F", interval = "1d", range = "1d")
             val jsonStr = responseBody.string()
@@ -117,7 +118,7 @@ class BistRetrofitApi(private val httpClient: OkHttpClient) {
                 }
             }
         } catch (_: Exception) {}
-        53.95 // Canlı test doğrulanmış fallback
+        null
     }
 
     /**
@@ -131,8 +132,6 @@ class BistRetrofitApi(private val httpClient: OkHttpClient) {
             val stock = fetchBistStock(sym)
             if (stock != null) {
                 result.add(stock)
-            } else {
-                result.add(getFallbackStock(sym))
             }
         }
         result
@@ -164,20 +163,4 @@ class BistRetrofitApi(private val httpClient: OkHttpClient) {
         }
     }
 
-    private fun getFallbackStock(sym: String): BISTStock {
-        return when (sym) {
-            "XU100" -> BISTStock("XU100", "BIST 100 Endeksi", 11116.99, 0.65, 11180.0, 11050.0, "98.4B")
-            "THYAO" -> BISTStock("THYAO", "Türk Hava Yolları", 258.00, 1.25, 261.5, 255.0, "4.2B")
-            "ASELS" -> BISTStock("ASELS", "Aselsan", 64.20, 2.10, 65.0, 63.1, "2.8B")
-            "GARAN" -> BISTStock("GARAN", "Garanti BBVA", 122.50, -0.40, 124.0, 121.8, "3.1B")
-            "EREGL" -> BISTStock("EREGL", "Ereğli Demir Çelik", 51.30, 0.80, 52.0, 50.8, "1.9B")
-            "KCHOL" -> BISTStock("KCHOL", "Koç Holding", 215.00, 1.10, 218.0, 213.5, "1.7B")
-            "TUPRS" -> BISTStock("TUPRS", "Tüpraş", 168.40, -0.30, 170.0, 167.5, "2.3B")
-            "BIMAS" -> BISTStock("BIMAS", "BİM Mağazalar", 492.00, 0.50, 496.0, 489.0, "1.4B")
-            "AKBNK" -> BISTStock("AKBNK", "Akbank", 58.70, 1.40, 59.5, 57.9, "2.6B")
-            "SASA" -> BISTStock("SASA", "SASA Polyester", 4.88, -0.80, 4.95, 4.82, "980M")
-            "SISE" -> BISTStock("SISE", "Şişecam", 41.20, 0.30, 41.8, 40.9, "1.1B")
-            else -> BISTStock(sym, getCompanyName(sym), 100.0, 0.0, 102.0, 99.0, "500K")
-        }
-    }
 }
