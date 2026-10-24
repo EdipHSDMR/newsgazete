@@ -88,56 +88,91 @@ fun SporScreen(
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
-    val matches by repository.matches.collectAsState()
-    val standings by repository.standings.collectAsState()
-    val topScorers by repository.topScorers.collectAsState()
-    val topAssists by repository.topAssists.collectAsState()
-    val cardLeaders by repository.cardLeaders.collectAsState()
+    val sportsSnapshot by repository.sportsSnapshot.collectAsState()
     val prefs by repository.preferences.collectAsState()
 
-    // Sport Selector: Futbol, Basketbol, Voleybol
+    // Only show sports and leagues backed by a real data source.
     var selectedSport by remember { mutableStateOf("FUTBOL") }
-    val sportCategories = listOf("FUTBOL" to "⚽ Futbol", "BASKETBOL" to "🏀 Basketbol", "VOLEYBOL" to "🏐 Voleybol")
+    val sportCategories = listOf("FUTBOL" to "⚽ Futbol", "BASKETBOL" to "🏀 Basketbol")
 
     // League choices depending on sport
     val competitions = when (selectedSport) {
         "BASKETBOL" -> listOf(
-            "Turkish Airlines EuroLeague" to "🇪🇺 EuroLeague",
             "NBA" to "🇺🇸 NBA",
-            "A Milli Erkek Basketbol (12 Dev Adam)" to "🇹🇷 12 Dev Adam",
-        )
-        "VOLEYBOL" -> listOf(
-            "Vodafone Sultanlar Ligi" to "🇹🇷 Sultanlar Ligi",
-            "Filenin Sultanları (Milli Takım)" to "🇹🇷 Filenin Sultanları",
-            "CEV Şampiyonlar Ligi" to "🇪🇺 CEV Kadınlar",
+            "WNBA" to "🇺🇸 WNBA",
+            "NBA G League" to "🏀 NBA G League",
+            "NCAA Erkekler" to "🇺🇸 NCAA Erkekler",
+            "NCAA Kadınlar" to "🇺🇸 NCAA Kadınlar",
         )
         else -> listOf(
             "Trendyol Süper Lig" to "🇹🇷 Süper Lig",
-            "İngiltere Premier Lig" to "🏴󠁧󠁢󠁥󠁮󠁧󠁿 Premier Lig",
             "UEFA Şampiyonlar Ligi" to "🏆 Şampiyonlar Ligi",
-            "A Milli Takım" to "🇹🇷 A Milli Futbol",
+            "İngiltere Premier Lig" to "🏴󠁧󠁢󠁥󠁮󠁧󠁿 Premier Lig",
             "İspanya La Liga" to "🇪🇸 La Liga",
+            "Almanya Bundesliga" to "🇩🇪 Bundesliga",
+            "İtalya Serie A" to "🇮🇹 Serie A",
+            "Fransa Ligue 1" to "🇫🇷 Ligue 1",
+            "UEFA Avrupa Ligi" to "🏆 Avrupa Ligi",
+            "UEFA Konferans Ligi" to "🏆 Konferans Ligi",
+            "Hollanda Eredivisie" to "🇳🇱 Eredivisie",
+            "Portekiz Primeira Liga" to "🇵🇹 Portekiz",
+            "İngiltere Championship" to "🏴 Championship",
+            "İspanya Segunda" to "🇪🇸 Segunda",
+            "İtalya Serie B" to "🇮🇹 Serie B",
+            "Almanya 2. Bundesliga" to "🇩🇪 2. Bundesliga",
+            "Fransa Ligue 2" to "🇫🇷 Ligue 2",
+            "MLS" to "🇺🇸 MLS",
+            "Brezilya Serie A" to "🇧🇷 Brezilya",
+            "Japonya J1 League" to "🇯🇵 J1 League",
+            "CONMEBOL Libertadores" to "🏆 Libertadores",
+            "CONMEBOL Sudamericana" to "🏆 Sudamericana",
         )
     }
 
     var selectedCompetition by remember(selectedSport) { mutableStateOf(competitions.first().first) }
     var selectedTab by remember { mutableIntStateOf(0) }
-    val tabs = listOf("Canlı Skorlar", "Puan Durumu", "Gol & Asist Krallığı", "Tüm Maçlar", "Gol Bildirimleri")
+    val tabs = if (selectedSport == "BASKETBOL") {
+        listOf("Canlı Skorlar", "Puan Durumu", "Sayı Liderleri", "Tüm Maçlar", "Canlı Aksiyonlar")
+    } else {
+        listOf("Canlı Skorlar", "Puan Durumu", "Gol Krallığı", "Tüm Maçlar", "Gol Bildirimleri")
+    }
 
     // Match alert toggles
     val matchAlerts = remember { mutableStateMapOf<String, Boolean>() }
 
-    // Live update loop: updates immediately and keeps polling automatically every 20s
+    // Live scores refresh once a minute; standings and scorer tables are cached by the service.
     LaunchedEffect(selectedCompetition, selectedSport) {
         while (isActive) {
             repository.fetchLiveSports(selectedCompetition, selectedSport)
-            delay(20_000L)
+            delay(60_000L)
         }
     }
 
-    val liveMatches = remember(matches) { matches.filter { it.status == MatchStatus.LIVE } }
-    val finishedMatches = remember(matches) { matches.filter { it.status == MatchStatus.FINISHED } }
-    val upcomingMatches = remember(matches) { matches.filter { it.status == MatchStatus.UPCOMING } }
+    val snapshotMatches = if (sportsSnapshot.competition == selectedCompetition && sportsSnapshot.sportType == selectedSport) {
+        sportsSnapshot.matches
+    } else emptyList()
+    val standings = if (sportsSnapshot.competition == selectedCompetition && sportsSnapshot.sportType == selectedSport) {
+        sportsSnapshot.standings
+    } else emptyList()
+    val topScorers = if (sportsSnapshot.competition == selectedCompetition && sportsSnapshot.sportType == selectedSport) {
+        sportsSnapshot.topScorers
+    } else emptyList()
+    val sportsLoading = sportsSnapshot.competition == selectedCompetition &&
+        sportsSnapshot.sportType == selectedSport && sportsSnapshot.isLoading
+    val leaderLoadingMessage = if (selectedSport == "BASKETBOL") "Sayı liderleri yükleniyor." else "Gol krallığı verisi yükleniyor."
+    val scorerMessage = when {
+        sportsSnapshot.competition != selectedCompetition || sportsSnapshot.sportType != selectedSport -> leaderLoadingMessage
+        sportsSnapshot.isLoading && topScorers.isEmpty() -> leaderLoadingMessage
+        topScorers.isNotEmpty() -> ""
+        else -> sportsSnapshot.scorerMessage.ifBlank {
+            if (selectedSport == "BASKETBOL") "Bu lig için güncel sayı lideri verisi bulunamadı."
+            else "Gol krallığı verisi alınamadı."
+        }
+    }
+
+    val liveMatches = remember(snapshotMatches) { snapshotMatches.filter { it.status == MatchStatus.LIVE } }
+    val finishedMatches = remember(snapshotMatches) { snapshotMatches.filter { it.status == MatchStatus.FINISHED } }
+    val upcomingMatches = remember(snapshotMatches) { snapshotMatches.filter { it.status == MatchStatus.UPCOMING } }
 
     Column(
         modifier = modifier
@@ -196,7 +231,7 @@ fun SporScreen(
                             }
                         } else {
                             Text(
-                                text = "Maçkolik & API-Sports",
+                                text = "ESPN · API-Sports",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -217,7 +252,7 @@ fun SporScreen(
                     }
                 }
 
-                // 2. Multi-Sport Selection Chips (Futbol, Basketbol, Voleybol)
+                // 2. Supported sport selection chips
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -336,7 +371,7 @@ fun SporScreen(
                 // CANLI SKORLAR TAB
                 MackolikLiveMatchesList(
                     liveMatches = liveMatches,
-                    allMatches = matches,
+                    allMatches = snapshotMatches,
                     matchAlerts = matchAlerts,
                     onToggleAlert = { match ->
                         val current = matchAlerts[match.id] ?: false
@@ -359,16 +394,18 @@ fun SporScreen(
                     standings = standings,
                     followedTeams = prefs.followedTeams,
                     competition = selectedCompetition,
+                    sportType = selectedSport,
+                    isLoading = sportsLoading,
+                    emptyMessage = "Bu lig için şu anda puan durumu alınamadı.",
                 )
             }
             2 -> {
-                // GOL, ASİST VE KART KRALLIĞI TAB
+                // GOL KRALLIĞI VE İSTATİSTİKLER TAB
                 MackolikScorersTab(
                     scorers = topScorers,
-                    assists = topAssists,
-                    cards = cardLeaders,
                     sportType = selectedSport,
                     competition = selectedCompetition,
+                    emptyMessage = scorerMessage,
                 )
             }
             3 -> {
@@ -378,6 +415,7 @@ fun SporScreen(
                     finishedMatches = finishedMatches,
                     upcomingMatches = upcomingMatches,
                     matchAlerts = matchAlerts,
+                    isLoading = sportsLoading,
                     onToggleAlert = { match ->
                         val current = matchAlerts[match.id] ?: false
                         matchAlerts[match.id] = !current
@@ -387,7 +425,8 @@ fun SporScreen(
             4 -> {
                 // GOL & SAYI BİLDİRİMLERİ TAB
                 MackolikGoalAlertsFeed(
-                    matches = matches,
+                    matches = snapshotMatches,
+                    sportType = selectedSport,
                 )
             }
         }
@@ -529,6 +568,7 @@ fun MackolikAllFixturesList(
     finishedMatches: List<SportsMatch>,
     upcomingMatches: List<SportsMatch>,
     matchAlerts: Map<String, Boolean>,
+    isLoading: Boolean = false,
     onToggleAlert: (SportsMatch) -> Unit,
 ) {
     LazyColumn(
@@ -536,6 +576,17 @@ fun MackolikAllFixturesList(
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
+        if (liveMatches.isEmpty() && finishedMatches.isEmpty() && upcomingMatches.isEmpty()) {
+            item(key = "empty_fixtures") {
+                Text(
+                    text = if (isLoading) "Fikstür yükleniyor…" else "Bu lig için maç fikstürü bulunamadı.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth().padding(24.dp),
+                )
+            }
+        }
         if (liveMatches.isNotEmpty()) {
             item {
                 Text("🔴 OYNANAN MAÇLAR (CANLI)", style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold), color = Color(0xFFE53935))
@@ -809,130 +860,64 @@ fun GlowingMatchCard(
                 ) {
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
 
-                    // 1. İddaa Oranları Çubuğu (Maçkolik Standardı)
-                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text(
-                            text = "İDDAA ORANLARI",
-                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                            color = MaterialTheme.colorScheme.primary,
-                        )
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            OddBox(title = "MS 1", value = match.oddsHome, modifier = Modifier.weight(1f))
-                            OddBox(title = "X (Beraberlik)", value = match.oddsDraw, modifier = Modifier.weight(1.2f))
-                            OddBox(title = "MS 2", value = match.oddsAway, modifier = Modifier.weight(1f))
-                            OddBox(title = "2.5 ÜST", value = "1.65", modifier = Modifier.weight(1f))
-                        }
-                    }
-
-                    // 2. Canlı Maç İstatistikleri Çubukları
-                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text(
-                            text = "CANLI MAÇ İSTATİSTİKLERİ",
-                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                            color = MaterialTheme.colorScheme.primary,
-                        )
-
-                        StatComparisonBar(title = "Topla Oynama", home = "%${match.possessionHome}", away = "%${match.possessionAway}", ratio = match.possessionHome / 100f)
-                        StatComparisonBar(title = "Toplam Şut", home = "${match.shotsHome}", away = "${match.shotsAway}", ratio = match.shotsHome.toFloat() / maxOf(1, match.shotsHome + match.shotsAway))
-                        StatComparisonBar(title = "İsabetli Şut", home = "${match.shotsOnTargetHome}", away = "${match.shotsOnTargetAway}", ratio = match.shotsOnTargetHome.toFloat() / maxOf(1, match.shotsOnTargetHome + match.shotsOnTargetAway))
-                        StatComparisonBar(title = "Kornerler", home = "${match.cornersHome}", away = "${match.cornersAway}", ratio = match.cornersHome.toFloat() / maxOf(1, match.cornersHome + match.cornersAway))
-                    }
-
-                    // 3. Kadrolar ve Saha Dizilişi (İlk 11'ler)
-                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text(
-                            text = "İLK 11'LER VE KADROLAR",
-                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                            color = MaterialTheme.colorScheme.primary,
-                        )
-
-                        val homeLineup = remember(match.homeTeam) { getRealisticLineup(match.homeTeam) }
-                        val awayLineup = remember(match.awayTeam) { getRealisticLineup(match.awayTeam) }
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
-                            // Home Lineup
-                            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                                Surface(
-                                    shape = RoundedCornerShape(6.dp),
-                                    color = MaterialTheme.colorScheme.primaryContainer,
-                                    modifier = Modifier.fillMaxWidth()
-                                ) {
-                                    Text(
-                                        text = "${match.homeTeam} (4-2-3-1)",
-                                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                                        color = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp),
-                                        maxLines = 1,
-                                    )
-                                }
-
-                                homeLineup.forEach { (name, pos) ->
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween
-                                    ) {
-                                        Text(text = name, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-                                        Text(text = pos, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 10.sp)
-                                    }
-                                }
-                            }
-
-                            // Away Lineup
-                            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                                Surface(
-                                    shape = RoundedCornerShape(6.dp),
-                                    color = MaterialTheme.colorScheme.surfaceVariant,
-                                    modifier = Modifier.fillMaxWidth()
-                                ) {
-                                    Text(
-                                        text = "${match.awayTeam} (4-3-3)",
-                                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                                        color = MaterialTheme.colorScheme.onSurface,
-                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp),
-                                        maxLines = 1,
-                                    )
-                                }
-
-                                awayLineup.forEach { (name, pos) ->
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween
-                                    ) {
-                                        Text(text = name, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-                                        Text(text = pos, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 10.sp)
-                                    }
-                                }
+                    if (match.oddsHome.isNotBlank() || match.oddsDraw.isNotBlank() || match.oddsAway.isNotBlank()) {
+                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text("SAĞLAYICIDAN GELEN ORANLAR", style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold), color = MaterialTheme.colorScheme.primary)
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                if (match.oddsHome.isNotBlank()) OddBox(title = "MS 1", value = match.oddsHome, modifier = Modifier.weight(1f))
+                                if (match.oddsDraw.isNotBlank()) OddBox(title = "X", value = match.oddsDraw, modifier = Modifier.weight(1f))
+                                if (match.oddsAway.isNotBlank()) OddBox(title = "MS 2", value = match.oddsAway, modifier = Modifier.weight(1f))
                             }
                         }
                     }
 
-                    // 4. Hakem ve Stadyum Bilgisi
-                    Surface(
-                        shape = RoundedCornerShape(8.dp),
-                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
+                    val hasMatchStats = match.possessionHome != null || match.shotsHome != null || match.shotsOnTargetHome != null || match.cornersHome != null
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text("MAÇ İSTATİSTİKLERİ", style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold), color = MaterialTheme.colorScheme.primary)
+                        if (match.possessionHome != null && match.possessionAway != null) {
+                            StatComparisonBar(title = "Topla Oynama", home = "%${match.possessionHome}", away = "%${match.possessionAway}", ratio = match.possessionHome / 100f)
+                        }
+                        if (match.shotsHome != null && match.shotsAway != null) {
+                            StatComparisonBar(title = "Toplam Şut", home = "${match.shotsHome}", away = "${match.shotsAway}", ratio = match.shotsHome.toFloat() / maxOf(1, match.shotsHome + match.shotsAway))
+                        }
+                        if (match.shotsOnTargetHome != null && match.shotsOnTargetAway != null) {
+                            StatComparisonBar(title = "İsabetli Şut", home = "${match.shotsOnTargetHome}", away = "${match.shotsOnTargetAway}", ratio = match.shotsOnTargetHome.toFloat() / maxOf(1, match.shotsOnTargetHome + match.shotsOnTargetAway))
+                        }
+                        if (match.cornersHome != null && match.cornersAway != null) {
+                            StatComparisonBar(title = "Kornerler", home = "${match.cornersHome}", away = "${match.cornersAway}", ratio = match.cornersHome.toFloat() / maxOf(1, match.cornersHome + match.cornersAway))
+                        }
+                        if (!hasMatchStats) {
+                            Text(
+                                text = if (match.status == MatchStatus.UPCOMING) "Canlı istatistikler maç başladıktan sonra sağlayıcı paylaşır." else "Bu maç için sağlayıcı istatistik verisi sunmadı.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text("KADROLAR", style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold), color = MaterialTheme.colorScheme.primary)
+                        Text(
+                            text = "Bu maç için kadro bilgisi şu anda kaynakta mevcut değil.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+
+                    if (match.stadium.isNotBlank() || match.referee.isNotBlank()) {
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                            modifier = Modifier.fillMaxWidth(),
                         ) {
-                            Text(
-                                text = "🏟️ ${if (match.stadium.isNotBlank()) match.stadium else "RAMS Park"}",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurface
-                            )
-                            Text(
-                                text = "👨‍⚖️ ${if (match.referee.isNotBlank()) match.referee else "Halil Umut Meler"}",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurface
-                            )
+                            Row(
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                if (match.stadium.isNotBlank()) Text("🏟️ ${match.stadium}", style = MaterialTheme.typography.labelSmall)
+                                if (match.referee.isNotBlank()) Text("👨‍⚖️ ${match.referee}", style = MaterialTheme.typography.labelSmall)
+                            }
                         }
                     }
 
@@ -986,7 +971,7 @@ fun GlowingMatchCard(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    text = if (expanded) "Detayları ve Kadroları Gizle" else "Maç Detayları, İddaa ve Kadrolar",
+                    text = if (expanded) "Detayları Gizle" else "Maç Detayları",
                     style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
                     color = MaterialTheme.colorScheme.primary,
                 )
@@ -1042,17 +1027,40 @@ fun StatComparisonBar(title: String, home: String, away: String, ratio: Float) {
 }
 
 /**
- * Puan Durumu Tablosu (Genel, İç Saha, Dış Saha Filtreli, 19 Takımlı Tam Liste)
+ * Seçili ligin sağlayıcıdan gelen puan tablosu.
  */
+private fun qualificationLabel(note: String): String? {
+    val lower = note.lowercase()
+    return when {
+        "relegat" in lower || "drop" in lower || "düşme" in lower -> "Düşme hattı"
+        "champions league" in lower || "şampiyonlar ligi" in lower -> "Şampiyonlar Ligi"
+        "europa league" in lower || "avrupa ligi" in lower -> "Avrupa Ligi"
+        "conference league" in lower || "konferans ligi" in lower -> "Konferans Ligi"
+        "playoff" in lower || "play-off" in lower -> "Play-off"
+        else -> null
+    }
+}
+
+private fun qualificationColor(note: String?): Color {
+    val lower = note?.lowercase().orEmpty()
+    return when {
+        "relegat" in lower || "drop" in lower || "düşme" in lower -> Color(0xFFD32F2F)
+        "champions league" in lower || "şampiyonlar ligi" in lower -> Color(0xFF1976D2)
+        "europa league" in lower || "avrupa ligi" in lower -> Color(0xFFE65100)
+        "conference league" in lower || "konferans ligi" in lower -> Color(0xFF2E7D32)
+        else -> Color.Transparent
+    }
+}
+
 @Composable
 fun MackolikStandingsTable(
     standings: List<LeagueStanding>,
     followedTeams: Set<String>,
     competition: String,
+    sportType: String = "FUTBOL",
+    isLoading: Boolean = false,
+    emptyMessage: String = "Puan durumu alınamadı.",
 ) {
-    var filterMode by remember { mutableStateOf("Genel") }
-    val modes = listOf("Genel", "İç Saha", "Dış Saha")
-
     Card(
         shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -1063,7 +1071,6 @@ fun MackolikStandingsTable(
             .padding(16.dp),
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
-            // Mode Filter Row (Genel, İç Saha, Dış Saha)
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -1072,37 +1079,16 @@ fun MackolikStandingsTable(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "$competition (2026-2027 Sezonu)",
+                    text = competition,
                     style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
                     color = MaterialTheme.colorScheme.primary,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f)
                 )
-
-                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    modes.forEach { mode ->
-                        val isSel = filterMode == mode
-                        Surface(
-                            shape = RoundedCornerShape(12.dp),
-                            color = if (isSel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant,
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(12.dp))
-                                .clickable { filterMode = mode }
-                        ) {
-                            Text(
-                                text = mode,
-                                color = if (isSel) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
-                                fontSize = 11.sp,
-                                fontWeight = if (isSel) FontWeight.Bold else FontWeight.Medium,
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                            )
-                        }
-                    }
-                }
             }
 
-            // Header Row: S | Takım | O | G | B | M | AG | YG | AV | P
+            // Basketball has wins/losses and win percentage, not football draws and points.
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -1114,10 +1100,12 @@ fun MackolikStandingsTable(
                 Text("Takım", fontWeight = FontWeight.Bold, fontSize = 11.sp, modifier = Modifier.weight(1f))
                 Text("O", fontWeight = FontWeight.Bold, fontSize = 11.sp, modifier = Modifier.width(24.dp), textAlign = TextAlign.Center)
                 Text("G", fontWeight = FontWeight.Bold, fontSize = 11.sp, modifier = Modifier.width(22.dp), textAlign = TextAlign.Center)
-                Text("B", fontWeight = FontWeight.Bold, fontSize = 11.sp, modifier = Modifier.width(22.dp), textAlign = TextAlign.Center)
+                if (sportType != "BASKETBOL") {
+                    Text("B", fontWeight = FontWeight.Bold, fontSize = 11.sp, modifier = Modifier.width(22.dp), textAlign = TextAlign.Center)
+                }
                 Text("M", fontWeight = FontWeight.Bold, fontSize = 11.sp, modifier = Modifier.width(22.dp), textAlign = TextAlign.Center)
                 Text("AV", fontWeight = FontWeight.Bold, fontSize = 11.sp, modifier = Modifier.width(28.dp), textAlign = TextAlign.Center)
-                Text("P", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = MaterialTheme.colorScheme.primary, modifier = Modifier.width(28.dp), textAlign = TextAlign.Center)
+                Text(if (sportType == "BASKETBOL") "W%" else "P", fontWeight = FontWeight.Bold, fontSize = 11.sp, color = MaterialTheme.colorScheme.primary, modifier = Modifier.width(32.dp), textAlign = TextAlign.Center)
             }
 
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
@@ -1128,16 +1116,20 @@ fun MackolikStandingsTable(
                     .weight(1f),
                 contentPadding = PaddingValues(vertical = 4.dp),
             ) {
-                items(standings, key = { it.rank }) { team ->
-                    val isFollowed = team.team in followedTeams
-
-                    val rankIndicatorColor = when {
-                        team.rank in 1..2 -> Color(0xFF1976D2)  // Şampiyonlar Ligi (Mavi)
-                        team.rank == 3 -> Color(0xFFE65100)      // Avrupa Ligi (Turuncu)
-                        team.rank == 4 -> Color(0xFF2E7D32)      // Konferans Ligi (Yeşil)
-                        team.rank >= 16 -> Color(0xFFD32F2F)     // Düşme Hattı (Kırmızı)
-                        else -> Color.Transparent
+                if (standings.isEmpty()) {
+                    item(key = "empty_standings") {
+                        Text(
+                            text = if (isLoading) "Puan durumu yükleniyor…" else emptyMessage,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.fillMaxWidth().padding(24.dp),
+                        )
                     }
+                }
+                items(standings, key = { it.team }) { team ->
+                    val isFollowed = team.team in followedTeams
+                    val qualificationColor = qualificationColor(team.qualificationNote)
 
                     Row(
                         modifier = Modifier
@@ -1150,54 +1142,66 @@ fun MackolikStandingsTable(
                             modifier = Modifier.width(22.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            if (rankIndicatorColor != Color.Transparent) {
+                            if (qualificationColor != Color.Transparent) {
                                 Box(
                                     modifier = Modifier
                                         .size(width = 3.dp, height = 14.dp)
                                         .clip(RoundedCornerShape(1.dp))
-                                        .background(rankIndicatorColor),
+                                        .background(qualificationColor),
                                 )
                                 Spacer(Modifier.width(2.dp))
                             }
                             Text(
                                 text = "${team.rank}",
-                                fontWeight = if (team.rank <= 4) FontWeight.Bold else FontWeight.Medium,
+                                fontWeight = if (team.rank == 1) FontWeight.Bold else FontWeight.Medium,
                                 fontSize = 11.5.sp,
                                 textAlign = TextAlign.Center,
                                 modifier = Modifier.weight(1f),
                             )
                         }
 
-                        Row(
+                        Column(
                             modifier = Modifier.weight(1f),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            verticalArrangement = Arrangement.Center,
                         ) {
                             Text(
                                 text = team.team,
                                 style = MaterialTheme.typography.bodyMedium.copy(
-                                    fontWeight = if (isFollowed || team.rank <= 2) FontWeight.Bold else FontWeight.Normal,
+                                    fontWeight = if (isFollowed || team.rank == 1) FontWeight.Bold else FontWeight.Normal,
                                     fontSize = 12.5.sp,
                                 ),
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                             )
-                            if (isFollowed) {
-                                Text("★", color = CizgiColor.Gold, fontSize = 11.sp)
+                            (team.qualificationNote ?: team.groupName)?.let { note ->
+                                Text(
+                                    text = qualificationLabel(note) ?: note,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
                             }
+                        }
+                        if (isFollowed) {
+                            Text("★", color = CizgiColor.Gold, fontSize = 11.sp)
                         }
 
                         Text("${team.played}", fontSize = 11.5.sp, modifier = Modifier.width(24.dp), textAlign = TextAlign.Center)
                         Text("${team.won}", fontSize = 11.5.sp, modifier = Modifier.width(22.dp), textAlign = TextAlign.Center)
-                        Text("${team.drawn}", fontSize = 11.5.sp, modifier = Modifier.width(22.dp), textAlign = TextAlign.Center)
+                        if (sportType != "BASKETBOL") {
+                            Text("${team.drawn}", fontSize = 11.5.sp, modifier = Modifier.width(22.dp), textAlign = TextAlign.Center)
+                        }
                         Text("${team.lost}", fontSize = 11.5.sp, modifier = Modifier.width(22.dp), textAlign = TextAlign.Center)
                         Text("${if (team.goalDiff > 0) "+" else ""}${team.goalDiff}", fontSize = 11.5.sp, modifier = Modifier.width(28.dp), textAlign = TextAlign.Center)
                         Text(
-                            text = "${team.points}",
+                            text = if (sportType == "BASKETBOL") {
+                                team.winPercentage?.let { String.format(java.util.Locale.US, "%.3f", it) } ?: "—"
+                            } else "${team.points}",
                             fontWeight = FontWeight.Bold,
                             fontSize = 12.5.sp,
                             color = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.width(28.dp),
+                            modifier = Modifier.width(32.dp),
                             textAlign = TextAlign.Center,
                         )
                     }
@@ -1205,22 +1209,21 @@ fun MackolikStandingsTable(
                 }
             }
 
-            // Explanatory Color Legend at bottom
-            Surface(
-                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 10.dp, vertical = 6.dp),
-                    horizontalArrangement = Arrangement.SpaceAround,
-                    verticalAlignment = Alignment.CenterVertically
+            val actualZones = standings.mapNotNull { team ->
+                team.qualificationNote?.let { note -> qualificationLabel(note)?.let { it to qualificationColor(note) } }
+            }.distinctBy { it.first }
+            if (actualZones.isNotEmpty()) {
+                Surface(
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                    modifier = Modifier.fillMaxWidth(),
                 ) {
-                    LegendItem(color = Color(0xFF1976D2), label = "Şamp. Ligi")
-                    LegendItem(color = Color(0xFFE65100), label = "Avrupa Ligi")
-                    LegendItem(color = Color(0xFF2E7D32), label = "Konferans")
-                    LegendItem(color = Color(0xFFD32F2F), label = "Düşme Hattı")
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterHorizontally),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        actualZones.forEach { (label, color) -> LegendItem(color = color, label = label) }
+                    }
                 }
             }
         }
@@ -1246,31 +1249,17 @@ fun LegendItem(color: Color, label: String) {
 /**
  * Gol Krallığı & Asist Krallığı Tablosu
  */
-/**
- * Canlı Gol, Asist ve Kart Krallığı Tabloları
- */
 @Composable
 fun MackolikScorersTab(
     scorers: List<TopScorer>,
-    assists: List<TopScorer> = emptyList(),
-    cards: List<TopScorer> = emptyList(),
     sportType: String,
-    competition: String,
+    competition: String = "",
+    emptyMessage: String = "Gol krallığı verisi alınamadı.",
 ) {
-    var selectedStatType by remember { mutableStateOf("GOL") }
-
-    val currentList = when (selectedStatType) {
-        "ASIST" -> assists.ifEmpty { scorers.filter { it.type == "ASIST" } }
-        "SARI" -> cards.filter { it.yellowCards > 0 }.sortedByDescending { it.yellowCards }
-        "KIRMIZI" -> cards.filter { it.redCards > 0 }.sortedByDescending { it.redCards }
-        "KART" -> cards.ifEmpty { scorers.filter { it.type == "KART" } }
-        else -> scorers.filter { it.type == "GOL" || it.type == "SAYI" }
-    }
-
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+        verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         item {
             Card(
@@ -1283,57 +1272,17 @@ fun MackolikScorersTab(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    Text(if (sportType == "VOLEYBOL") "🏐" else if (sportType == "BASKETBOL") "🏀" else "⚽", fontSize = 24.sp)
+                    Text(if (sportType == "BASKETBOL") "🏀" else "⚽", fontSize = 24.sp)
                     Column {
-                        val headerTitle = if (competition.contains("Süper Lig", ignoreCase = true)) {
-                            "Süper Lig · Maç 9 / 34 İstatistikler"
-                        } else {
-                            "$competition Canlı İstatistikleri"
-                        }
                         Text(
-                            text = headerTitle,
-                            style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
-                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                            text = if (sportType == "BASKETBOL") "$competition SAYI LİDERLERİ" else "$competition GOL KRALLIĞI",
+                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                            color = MaterialTheme.colorScheme.primary,
                         )
                         Text(
-                            text = "2026-2027 Sezonu · Güncel Sezon Liderleri",
+                            text = if (sportType == "BASKETBOL") "Maç başına sayı · güncel sezon" else "Güncel sezon verisi",
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f),
-                        )
-                    }
-                }
-            }
-        }
-
-        // Sub-filters: Gol, Asist, Sarı kart, Kırmızı kart (exactly matching user's Google/Süper Lig card)
-        if (sportType == "FUTBOL") {
-            item {
-                Row(
-                    modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    listOf(
-                        Triple("GOL", "⚽ Gol", scorers.size),
-                        Triple("ASIST", "🎯 Asist", assists.size),
-                        Triple("SARI", "🟨 Sarı kart", cards.count { it.yellowCards > 0 }),
-                        Triple("KIRMIZI", "🟥 Kırmızı kart", cards.count { it.redCards > 0 }),
-                    ).forEach { (typeKey, label, count) ->
-                        val isSelected = selectedStatType == typeKey
-                        FilterChip(
-                            selected = isSelected,
-                            onClick = { selectedStatType = typeKey },
-                            label = {
-                                Text(
-                                    text = label,
-                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                                    fontSize = 12.sp,
-                                )
-                            },
-                            colors = FilterChipDefaults.filterChipColors(
-                                selectedContainerColor = MaterialTheme.colorScheme.primary,
-                                selectedLabelColor = MaterialTheme.colorScheme.onPrimary,
-                            ),
-                            shape = RoundedCornerShape(16.dp),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
                 }
@@ -1341,159 +1290,90 @@ fun MackolikScorersTab(
         }
 
         item {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 4.dp, vertical = 4.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    text = "Sporcu",
-                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Text(
-                    text = when (selectedStatType) {
-                        "ASIST" -> "Asist"
-                        "SARI" -> "Sarı kart"
-                        "KIRMIZI" -> "Kırmızı kart"
-                        else -> if (sportType == "VOLEYBOL" || sportType == "BASKETBOL") "Sayı" else "Gol"
-                    },
-                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+            Text(
+                text = if (sportType == "BASKETBOL") "MAÇ BAŞINA SAYI LİDERLERİ" else "GOL KRALLIĞI SIRALAMASI",
+                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                color = MaterialTheme.colorScheme.primary,
+            )
+        }
+
+        if (scorers.isEmpty()) {
+            item(key = "empty_scorers") {
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(
+                        text = emptyMessage,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth().padding(20.dp),
+                    )
+                }
             }
         }
 
-        if (currentList.isEmpty()) {
-            item {
-                Card(
-                    shape = RoundedCornerShape(12.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 20.dp),
-                ) {
-                    Column(
-                        modifier = Modifier.fillMaxWidth().padding(24.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                    ) {
-                        Text("📊", fontSize = 32.sp)
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            text = "Canlı istatistikler yükleniyor...",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                }
-            }
-        } else {
-            items(currentList) { scorer ->
-                Card(
-                    shape = RoundedCornerShape(12.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                    border = CardDefaults.outlinedCardBorder().copy(brush = SolidColor(MaterialTheme.colorScheme.outlineVariant)),
-                    modifier = Modifier.fillMaxWidth()
+        items(scorers, key = { "${it.team}-${it.player}" }) { scorer ->
+            Card(
+                shape = RoundedCornerShape(12.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                border = CardDefaults.outlinedCardBorder().copy(brush = SolidColor(MaterialTheme.colorScheme.outlineVariant)),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
                 ) {
                     Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 14.dp, vertical = 12.dp),
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        modifier = Modifier.weight(1f)
                     ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(12.dp),
-                            modifier = Modifier.weight(1f)
+                        Surface(
+                            shape = CircleShape,
+                            color = if (scorer.rank == 1) CizgiColor.Gold else MaterialTheme.colorScheme.primaryContainer,
+                            modifier = Modifier.size(28.dp)
                         ) {
-                            // Rank Number
-                            Text(
-                                text = "${scorer.rank}",
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 14.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.width(20.dp),
-                                textAlign = TextAlign.Center,
-                            )
-
-                            // Circular Player Avatar
-                            Surface(
-                                shape = CircleShape,
-                                color = MaterialTheme.colorScheme.surfaceVariant,
-                                modifier = Modifier.size(38.dp)
-                            ) {
-                                Box(contentAlignment = Alignment.Center) {
-                                    val initials = scorer.player.split(" ")
-                                        .take(2)
-                                        .mapNotNull { it.firstOrNull()?.uppercase() }
-                                        .joinToString("")
-                                    Text(
-                                        text = initials.ifBlank { "⚽" },
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 13.sp,
-                                        color = MaterialTheme.colorScheme.primary,
-                                    )
-                                }
-                            }
-
-                            Column {
+                            Box(contentAlignment = Alignment.Center) {
                                 Text(
-                                    text = scorer.player,
-                                    style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
-                                    color = MaterialTheme.colorScheme.onSurface
+                                    text = "${scorer.rank}",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 12.sp,
+                                    color = if (scorer.rank == 1) CizgiColor.Navy else MaterialTheme.colorScheme.primary
                                 )
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(4.dp),
-                                ) {
-                                    Box(
-                                        modifier = Modifier
-                                            .size(6.dp)
-                                            .clip(CircleShape)
-                                            .background(MaterialTheme.colorScheme.primary)
-                                    )
-                                    Text(
-                                        text = scorer.team,
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
                             }
                         }
 
-                        // Stat Count on right
-                        Column(horizontalAlignment = Alignment.End) {
-                            when (selectedStatType) {
-                                "SARI" -> {
-                                    Text(
-                                        text = "${scorer.yellowCards}",
-                                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Black),
-                                        color = MaterialTheme.colorScheme.primary,
-                                    )
-                                }
-                                "KIRMIZI" -> {
-                                    Text(
-                                        text = "${scorer.redCards}",
-                                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Black),
-                                        color = Color(0xFFD50000),
-                                    )
-                                }
-                                "ASIST" -> {
-                                    Text(
-                                        text = "${scorer.count}",
-                                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Black),
-                                        color = MaterialTheme.colorScheme.primary,
-                                    )
-                                }
-                                else -> {
-                                    Text(
-                                        text = "${scorer.count}",
-                                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Black),
-                                        color = MaterialTheme.colorScheme.primary,
-                                    )
-                                }
-                            }
+                        Column {
+                            Text(
+                                text = scorer.player,
+                                style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Text(
+                                text = if (scorer.matches > 0) "${scorer.team} · ${scorer.matches} Maç" else scorer.team,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+
+                    Column(horizontalAlignment = Alignment.End) {
+                        Text(
+                            text = scorer.valueLabel.ifBlank { "${scorer.count} ${scorer.type}" },
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Black),
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        if (scorer.secondaryCount > 0) {
+                            Text(
+                                text = "${scorer.secondaryCount} Asist",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
                         }
                     }
                 }
@@ -1508,11 +1388,12 @@ fun MackolikScorersTab(
 @Composable
 fun MackolikGoalAlertsFeed(
     matches: List<SportsMatch>,
+    sportType: String = "FUTBOL",
 ) {
-    val allGoals = remember(matches) {
+    val allEvents = remember(matches, sportType) {
         val list = mutableListOf<Pair<SportsMatch, MatchEvent>>()
         matches.forEach { match ->
-            match.events.filter { it.type == "GOL" }.forEach { ev ->
+            match.events.filter { it.type == "GOL" || (sportType == "BASKETBOL" && it.type == "SAYI") }.forEach { ev ->
                 list.add(match to ev)
             }
         }
@@ -1538,12 +1419,12 @@ fun MackolikGoalAlertsFeed(
                     Text("🔔", fontSize = 24.sp)
                     Column {
                         Text(
-                            text = "CANLI GOL VE SKOR AKIŞI",
+                            text = if (sportType == "BASKETBOL") "CANLI SKOR VE OLAY AKIŞI" else "CANLI GOL VE SKOR AKIŞI",
                             style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
                             color = MaterialTheme.colorScheme.primary,
                         )
                         Text(
-                            text = "Lig ve kupa maçlarındaki tüm goller, penaltılar ve kritik anlar bu akışta toplanır.",
+                            text = if (sportType == "BASKETBOL") "Seçili ligdeki canlı skorlar ve sayı olayları bu akışta toplanır." else "Lig ve kupa maçlarındaki tüm goller, penaltılar ve kritik anlar bu akışta toplanır.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -1552,7 +1433,7 @@ fun MackolikGoalAlertsFeed(
             }
         }
 
-        if (allGoals.isEmpty()) {
+        if (allEvents.isEmpty()) {
             item {
                 Box(
                     modifier = Modifier
@@ -1564,9 +1445,9 @@ fun MackolikGoalAlertsFeed(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        Text("⚽", fontSize = 36.sp)
+                        Text(if (sportType == "BASKETBOL") "🏀" else "⚽", fontSize = 36.sp)
                         Text(
-                            text = "Kayıtlı Canlı Gol Bulunmuyor",
+                            text = if (sportType == "BASKETBOL") "Canlı sayı olayı bulunmuyor" else "Kayıtlı canlı gol bulunmuyor",
                             style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
                             color = MaterialTheme.colorScheme.onSurface,
                         )
@@ -1574,7 +1455,7 @@ fun MackolikGoalAlertsFeed(
                 }
             }
         } else {
-            items(allGoals) { (match, ev) ->
+            items(allEvents) { (match, ev) ->
                 Card(
                     shape = RoundedCornerShape(12.dp),
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -1595,7 +1476,7 @@ fun MackolikGoalAlertsFeed(
                                 .background(Color(0xFFE53935).copy(alpha = 0.15f)),
                             contentAlignment = Alignment.Center,
                         ) {
-                            Text("⚽", fontSize = 20.sp)
+                            Text(if (sportType == "BASKETBOL") "🏀" else "⚽", fontSize = 20.sp)
                         }
 
                         Column(modifier = Modifier.weight(1f)) {
@@ -1604,7 +1485,7 @@ fun MackolikGoalAlertsFeed(
                                 horizontalArrangement = Arrangement.SpaceBetween,
                             ) {
                                 Text(
-                                    text = "GOL! ${ev.player}",
+                                    text = if (sportType == "BASKETBOL") "SAYI · ${ev.player}" else "GOL! ${ev.player}",
                                     style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
                                     color = MaterialTheme.colorScheme.onSurface,
                                 )
@@ -1628,98 +1509,3 @@ fun MackolikGoalAlertsFeed(
     }
 }
 
-fun getRealisticLineup(team: String): List<Pair<String, String>> {
-    return when {
-        team.contains("Galatasaray", ignoreCase = true) -> listOf(
-            "Fernando Muslera" to "KL (K)",
-            "Kaan Ayhan" to "SB",
-            "Davinson Sanchez" to "STP",
-            "Abdülkerim Bardakcı" to "STP",
-            "Ismail Jakobs" to "SLB",
-            "Lucas Torreira" to "ÖNL",
-            "Gabriel Sara" to "OS",
-            "Barış Alper Yılmaz" to "SK",
-            "Dries Mertens" to "10",
-            "Yunus Akgün" to "SLK",
-            "Victor Osimhen" to "SNT"
-        )
-        team.contains("Fenerbahçe", ignoreCase = true) -> listOf(
-            "Dominik Livakovic" to "KL",
-            "Mert Müldür" to "SB",
-            "Alexander Djiku" to "STP",
-            "Rodrigo Becao" to "STP",
-            "Jayden Oosterwolde" to "SLB",
-            "Sofyan Amrabat" to "ÖNL",
-            "Fred" to "OS",
-            "Dusan Tadic" to "SK",
-            "Sebastian Szymanski" to "10",
-            "Allan Saint-Maximin" to "SLK",
-            "Youssef En-Nesyri" to "SNT"
-        )
-        team.contains("Beşiktaş", ignoreCase = true) -> listOf(
-            "Mert Günok" to "KL (K)",
-            "Jonas Svensson" to "SB",
-            "Gabriel Paulista" to "STP",
-            "Felix Uduokhai" to "STP",
-            "Arthur Masuaku" to "SLB",
-            "Al-Musrati" to "ÖNL",
-            "Gedson Fernandes" to "OS",
-            "Milot Rashica" to "SK",
-            "Rafa Silva" to "10",
-            "Semih Kılıçsoy" to "SLK",
-            "Ciro Immobile" to "SNT"
-        )
-        team.contains("Trabzonspor", ignoreCase = true) -> listOf(
-            "Uğurcan Çakır" to "KL (K)",
-            "Pedro Malheiro" to "SB",
-            "Stefan Savic" to "STP",
-            "Batista Mendy" to "STP",
-            "Eren Elmalı" to "SLB",
-            "Okay Yokuşlu" to "ÖNL",
-            "John Lundstram" to "OS",
-            "Edin Visca" to "SK",
-            "Muhammed Cham" to "10",
-            "Denis Dragus" to "SLK",
-            "Simon Banza" to "SNT"
-        )
-        team.contains("Başakşehir", ignoreCase = true) -> listOf(
-            "Muhammed Şengezer" to "KL",
-            "Leo Duarte" to "SB",
-            "Ousseynou Ba" to "STP",
-            "Jerome Opoku" to "STP",
-            "Lucas Lima" to "SLB",
-            "Berat Özdemir" to "ÖNL",
-            "Miguel Crespo" to "OS",
-            "Deniz Türüç" to "SK",
-            "Dimitrios Pelkas" to "10",
-            "Serdar Gürler" to "SLK",
-            "Krzysztof Piatek" to "SNT"
-        )
-        team.contains("Samsunspor", ignoreCase = true) -> listOf(
-            "Okan Kocuk" to "KL",
-            "Zeki Yavru" to "SB (K)",
-            "Lubomir Satka" to "STP",
-            "Rick van Drongelen" to "STP",
-            "Marc Bola" to "SLB",
-            "Youssef Ait Bennasser" to "ÖNL",
-            "Olivier Ntcham" to "OS",
-            "Kingsley Schindler" to "SK",
-            "Carlo Holse" to "10",
-            "Emre Kılınç" to "SLK",
-            "Marius Mouandilmadji" to "SNT"
-        )
-        else -> listOf(
-            "1. Kaleci" to "KL",
-            "2. Sağ Bek" to "SB",
-            "3. Stoper" to "STP",
-            "4. Stoper" to "STP",
-            "5. Sol Bek" to "SLB",
-            "6. Ön Libero" to "ÖNL",
-            "7. Merkez Orta Saha" to "OS",
-            "8. Sağ Kanat" to "SK",
-            "9. Oyun Kurucu" to "10",
-            "10. Sol Kanat" to "SLK",
-            "11. Santrfor" to "SNT"
-        )
-    }
-}

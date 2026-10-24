@@ -1,5 +1,6 @@
 package com.example.data.remote
 
+import com.example.BuildConfig
 import com.example.model.DailyWeather
 import com.example.model.HourlyWeather
 import com.example.model.WeatherInfo
@@ -9,82 +10,57 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONObject
 import java.net.URLEncoder
+import java.time.LocalDate
+import java.time.format.TextStyle
+import java.util.Locale
 import java.nio.charset.StandardCharsets
-
-import com.example.BuildConfig
 
 class WeatherApiService(
     private val httpClient: OkHttpClient,
     private val apiKeyProvider: () -> String = { "" },
 ) {
 
-    // WeatherAPI key: Priority 1: User-entered key in app settings, Priority 2: BuildConfig / .env, Priority 3: Fallback
     private fun getApiKey(): String {
         val userKey = apiKeyProvider().trim()
-        if (userKey.isNotBlank()) return userKey
-        val buildKey = BuildConfig.WEATHER_API_KEY.trim()
-        if (buildKey.isNotBlank()) return buildKey
-        return "ab0580d539ff4d409a3191011262310"
+        if (userKey.isNotBlank() && !userKey.startsWith("YOUR_")) return userKey
+        return BuildConfig.WEATHER_API_KEY.trim().takeUnless { it.isBlank() || it.startsWith("YOUR_") }.orEmpty()
     }
 
     suspend fun fetchWeather(cityName: String): WeatherInfo? = withContext(Dispatchers.IO) {
         val apiKey = getApiKey()
-        // 1. Try original city query
-        var result = tryFetchWeatherApi(apiKey, cityName, days = 5)
-        if (result != null) return@withContext result
-
-        // 2. Try sanitized ASCII name (WeatherAPI works best with ascii e.g. Istanbul, Diyarbakir)
+        if (apiKey.isBlank()) return@withContext null
         val sanitized = sanitizeTurkishChars(cityName)
-        if (sanitized != cityName) {
-            result = tryFetchWeatherApi(apiKey, sanitized, days = 3)
-            if (result != null) return@withContext result
+        val queries = linkedSetOf(cityName, sanitized)
+        if (cityName.contains(",")) queries += sanitizeTurkishChars(cityName.substringAfter(",").trim())
+        for (query in queries) {
+            tryFetchWeatherApi(apiKey, query)?.let { return@withContext it }
         }
-
-        // 3. If district was included ("Kadikoy, Istanbul"), try just main city
-        if (cityName.contains(",")) {
-            val mainCity = cityName.substringAfter(",").trim()
-            result = tryFetchWeatherApi(apiKey, sanitizeTurkishChars(mainCity), days = 3)
-            if (result != null) return@withContext result
-        }
-
         null
     }
 
-    private fun tryFetchWeatherApi(apiKey: String, query: String, days: Int): WeatherInfo? {
-        try {
-            val encoded = URLEncoder.encode(query, StandardCharsets.UTF_8.toString())
-            val url = "https://api.weatherapi.com/v1/forecast.json?key=$apiKey&q=$encoded&days=$days&aqi=no&alerts=no"
-
-            val request = Request.Builder()
-                .url(url)
-                .build()
-
-            val response = httpClient.newCall(request).execute()
+    private fun tryFetchWeatherApi(apiKey: String, query: String): WeatherInfo? = try {
+        val encodedCity = URLEncoder.encode(query, StandardCharsets.UTF_8.toString())
+        val url = "https://api.weatherapi.com/v1/forecast.json?key=$apiKey&q=$encodedCity&days=5&aqi=no&alerts=no"
+        val request = Request.Builder().url(url).build()
+        httpClient.newCall(request).execute().use { response ->
             if (!response.isSuccessful) return null
-
             val jsonStr = response.body?.string() ?: return null
-            return parseWeatherApiResponse(query, jsonStr)
-        } catch (_: Exception) {
-            return null
+            val current = JSONObject(jsonStr).optJSONObject("current") ?: return null
+            if (!current.has("temp_c")) return null
+            parseWeatherApiResponse(query, jsonStr)
         }
+    } catch (_: Exception) {
+        null
     }
 
-    private fun sanitizeTurkishChars(input: String): String {
-        return input
-            .replace("İ", "I")
-            .replace("ı", "i")
-            .replace("ğ", "g")
-            .replace("Ğ", "G")
-            .replace("ü", "u")
-            .replace("Ü", "U")
-            .replace("ş", "s")
-            .replace("Ş", "S")
-            .replace("ö", "o")
-            .replace("Ö", "O")
-            .replace("ç", "c")
-            .replace("Ç", "C")
-            .trim()
-    }
+    private fun sanitizeTurkishChars(input: String): String = input
+        .replace("İ", "I").replace("ı", "i")
+        .replace("ğ", "g").replace("Ğ", "G")
+        .replace("ü", "u").replace("Ü", "U")
+        .replace("ş", "s").replace("Ş", "S")
+        .replace("ö", "o").replace("Ö", "O")
+        .replace("ç", "c").replace("Ç", "C")
+        .trim()
 
     private fun parseWeatherApiResponse(requestedCity: String, jsonStr: String): WeatherInfo {
         val root = JSONObject(jsonStr)
@@ -115,7 +91,12 @@ class WeatherApiService(
 
             val hourArray = todayObj.optJSONArray("hour")
             if (hourArray != null) {
-                for (h in 0 until minOf(24, hourArray.length()) step 3) {
+                val currentEpoch = current.optLong("last_updated_epoch", 0L)
+                val futureHours = (0 until hourArray.length()).filter { index ->
+                    hourArray.getJSONObject(index).optLong("time_epoch", 0L) >= currentEpoch
+                }
+                for (position in futureHours.indices step 3) {
+                    val h = futureHours[position]
                     val hObj = hourArray.getJSONObject(h)
                     val timeStr = hObj.optString("time", "")
                     val hourLabel = timeStr.substringAfter(" ").take(5).ifBlank { "${h}:00" }
@@ -137,8 +118,6 @@ class WeatherApiService(
 
         // Parse daily forecast
         val dailyList = mutableListOf<DailyWeather>()
-        val dayNames = listOf("Bugün", "Yarın", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar")
-
         if (forecastDayArray != null) {
             for (d in 0 until forecastDayArray.length()) {
                 val fObj = forecastDayArray.getJSONObject(d)
@@ -148,7 +127,16 @@ class WeatherApiService(
                 val rain = dayObj.optInt("daily_chance_of_rain", 15)
                 val dayCond = translateCondition(dayObj.optJSONObject("condition")?.optString("text", "") ?: "")
 
-                val dayName = if (d < dayNames.size) dayNames[d] else "Gün ${d + 1}"
+                val dayName = when (d) {
+                    0 -> "Bugün"
+                    1 -> "Yarın"
+                    else -> runCatching {
+                        LocalDate.parse(fObj.optString("date"))
+                            .dayOfWeek
+                            .getDisplayName(TextStyle.FULL, Locale.forLanguageTag("tr-TR"))
+                            .replaceFirstChar { it.titlecase(Locale.forLanguageTag("tr-TR")) }
+                    }.getOrDefault("Gün ${d + 1}")
+                }
                 dailyList.add(
                     DailyWeather(
                         dayName = dayName,
@@ -173,7 +161,7 @@ class WeatherApiService(
             summary = "$resolvedCity genelinde $condition. Sıcaklık $tempC°C, hissedilen $feelsLikeC°C. Rüzgar $windKmh km/s hızında esiyor.",
             hourly = hourlyList,
             daily = dailyList,
-            lastUpdated = "WeatherAPI Canlı",
+            lastUpdated = current.optString("last_updated", "WeatherAPI Canlı"),
         )
     }
 

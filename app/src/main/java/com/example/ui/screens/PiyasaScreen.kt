@@ -490,8 +490,13 @@ fun FinancialAssetCard(
     asset: FinancialAsset,
     modifier: Modifier = Modifier,
 ) {
-    val isPositive = asset.changePct >= 0
-    val trendColor = if (isPositive) Color(0xFF16A34A) else Color(0xFFDC2626)
+    val changePct = asset.changePct
+    val isPositive = (changePct ?: 0.0) >= 0.0
+    val trendColor = when {
+        changePct == null -> MaterialTheme.colorScheme.onSurfaceVariant
+        isPositive -> Color(0xFF16A34A)
+        else -> Color(0xFFDC2626)
+    }
 
     Card(
         shape = RoundedCornerShape(14.dp),
@@ -555,33 +560,42 @@ fun FinancialAssetCard(
                     color = MaterialTheme.colorScheme.onSurface,
                 )
 
-                Surface(
-                    shape = RoundedCornerShape(6.dp),
-                    color = trendColor.copy(alpha = 0.14f),
-                    modifier = Modifier.padding(top = 2.dp)
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(2.dp),
+                if (changePct != null) {
+                    Surface(
+                        shape = RoundedCornerShape(6.dp),
+                        color = trendColor.copy(alpha = 0.14f),
+                        modifier = Modifier.padding(top = 2.dp)
                     ) {
-                        Icon(
-                            imageVector = if (isPositive) Icons.Default.ArrowUpward else Icons.Default.ArrowDownward,
-                            contentDescription = null,
-                            tint = trendColor,
-                            modifier = Modifier.size(12.dp),
-                        )
-                        Text(
-                            text = "${if (isPositive) "+" else ""}${asset.changePct}%",
-                            color = trendColor,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 11.sp,
-                        )
+                        Row(
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(2.dp),
+                        ) {
+                            Icon(
+                                imageVector = if (isPositive) Icons.Default.ArrowUpward else Icons.Default.ArrowDownward,
+                                contentDescription = null,
+                                tint = trendColor,
+                                modifier = Modifier.size(12.dp),
+                            )
+                            Text(
+                                text = "${if (isPositive) "+" else ""}${changePct}%",
+                                color = trendColor,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 11.sp,
+                            )
+                        }
                     }
+                } else {
+                    Text(
+                        text = "Değişim verisi yok",
+                        color = trendColor,
+                        fontWeight = FontWeight.Medium,
+                        fontSize = 11.sp,
+                    )
                 }
 
                 Text(
-                    text = "G: ${asset.lowPrice} - ${asset.highPrice}",
+                    text = if (asset.lowPrice != null && asset.highPrice != null) "G: ${asset.lowPrice} - ${asset.highPrice}" else "Gün içi aralık yok",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     fontSize = 10.sp,
