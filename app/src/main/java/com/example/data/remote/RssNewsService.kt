@@ -166,12 +166,6 @@ class RssNewsService(private val httpClient: OkHttpClient) {
                         .map { it.trim().removeSuffix(".") + "." }
                 } else {
                     listOf(cleanTitle, cleanDesc).filter { it.isNotBlank() }
-                } else {
-                    listOf(
-                        cleanTitle,
-                        if (cleanDesc.isNotBlank()) cleanDesc else "Haberin detayları ve resmi açıklamalar kurum bülteninde aktarılmaktadır.",
-                        "Gelişmeler kamuoyu ve ilgili kurumlar tarafından yakından takip edilmektedir."
-                    )
                 }
 
                 list.add(
