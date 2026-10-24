@@ -19,6 +19,7 @@ import okhttp3.Request
 import org.json.JSONObject
 import java.time.LocalDate
 import java.time.Instant
+import java.time.OffsetDateTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
@@ -31,6 +32,8 @@ class FootballApiService(private val httpClient: OkHttpClient) {
     private val scorersCache = java.util.concurrent.ConcurrentHashMap<String, Pair<Long, List<TopScorer>>>()
     private val espnScheduleCache = java.util.concurrent.ConcurrentHashMap<String, EspnFixtureCache>()
     private val espnLiveEventCache = java.util.concurrent.ConcurrentHashMap<String, List<MatchEvent>>()
+    private val basketballLeadersCache = java.util.concurrent.ConcurrentHashMap<String, Pair<Long, List<TopScorer>>>()
+    @Volatile private var apiFootballUnavailableReason: String? = null
 
     private data class EspnFixtureCache(
         val scheduleFetchedAtMs: Long,
@@ -40,18 +43,91 @@ class FootballApiService(private val httpClient: OkHttpClient) {
 
     private fun leagueId(competition: String): Int? = when (competition) {
         "UEFA Şampiyonlar Ligi" -> 2
+        "UEFA Avrupa Ligi" -> 3
+        "UEFA Konferans Ligi" -> 848
         "İngiltere Premier Lig" -> 39
+        "İngiltere Championship" -> 40
         "İspanya La Liga" -> 140
+        "İspanya Segunda" -> 141
+        "İtalya Serie A" -> 135
+        "İtalya Serie B" -> 136
+        "Almanya Bundesliga" -> 78
+        "Almanya 2. Bundesliga" -> 79
+        "Fransa Ligue 1" -> 61
+        "Fransa Ligue 2" -> 62
+        "Hollanda Eredivisie" -> 88
+        "Portekiz Primeira Liga" -> 94
         "Trendyol Süper Lig" -> 203
+        "Brezilya Serie A" -> 71
+        "MLS" -> 253
+        "Japonya J1 League" -> 98
+        "CONMEBOL Libertadores" -> 13
+        "CONMEBOL Sudamericana" -> 11
+        else -> null
+    }
+
+    private fun footballEspnSlug(competition: String): String? = when (competition) {
+        "UEFA Şampiyonlar Ligi" -> "uefa.champions"
+        "UEFA Avrupa Ligi" -> "uefa.europa"
+        "UEFA Konferans Ligi" -> "uefa.europa.conf"
+        "İngiltere Premier Lig" -> "eng.1"
+        "İngiltere Championship" -> "eng.2"
+        "İspanya La Liga" -> "esp.1"
+        "İspanya Segunda" -> "esp.2"
+        "İtalya Serie A" -> "ita.1"
+        "İtalya Serie B" -> "ita.2"
+        "Almanya Bundesliga" -> "ger.1"
+        "Almanya 2. Bundesliga" -> "ger.2"
+        "Fransa Ligue 1" -> "fra.1"
+        "Fransa Ligue 2" -> "fra.2"
+        "Hollanda Eredivisie" -> "ned.1"
+        "Portekiz Primeira Liga" -> "por.1"
+        "Trendyol Süper Lig" -> "tur.1"
+        "Brezilya Serie A" -> "bra.1"
+        "MLS" -> "usa.1"
+        "Japonya J1 League" -> "jpn.1"
+        "CONMEBOL Libertadores" -> "conmebol.libertadores"
+        "CONMEBOL Sudamericana" -> "conmebol.sudamericana"
+        else -> null
+    }
+
+    private fun basketballEspnSlug(competition: String): String? = when (competition) {
+        "NBA" -> "nba"
+        "WNBA" -> "wnba"
+        "NBA G League" -> "nba-development"
+        "NCAA Erkekler" -> "mens-college-basketball"
+        "NCAA Kadınlar" -> "womens-college-basketball"
         else -> null
     }
 
     private fun hasApiKey(): Boolean = apiKey.isNotBlank() && !apiKey.startsWith("YOUR_")
 
     fun topScorersUnavailableMessage(sportType: String): String = when {
-        sportType != "FUTBOL" -> "Bu branş için gol krallığı verisi sunulmuyor."
+        sportType == "BASKETBOL" -> "Bu lig için güncel sayı lideri verisi henüz yayınlanmadı."
+        sportType != "FUTBOL" -> "Bu branş için oyuncu liderliği verisi bulunmuyor."
+        apiFootballUnavailableReason != null -> apiFootballUnavailableReason!!
         !hasApiKey() -> "Gol krallığı verisi için API_FOOTBALL_KEY ayarlanmalı."
         else -> "Gol krallığı verisi şu anda alınamadı; bağlantıyı veya API kotasını kontrol et."
+    }
+
+    private fun rememberApiFootballIssue(json: String) {
+        val errors = runCatching { JSONObject(json).opt("errors") }.getOrNull() ?: return
+        val messages = when (errors) {
+            is org.json.JSONArray -> (0 until errors.length()).mapNotNull { index ->
+                errors.optJSONObject(index)?.let { error ->
+                    error.keys().asSequence().map { key -> error.optString(key) }.filter(String::isNotBlank).joinToString(" ")
+                }
+            }
+            is JSONObject -> errors.keys().asSequence().map { key -> errors.optString(key) }.filter(String::isNotBlank).toList()
+            else -> emptyList()
+        }
+        val message = messages.joinToString(" ").lowercase(Locale.ROOT)
+        apiFootballUnavailableReason = when {
+            "suspend" in message -> "API-Football hesabı askıya alınmış; hesabı etkinleştirince gol krallığı otomatik gelir."
+            "limit" in message || "quota" in message -> "API-Football günlük isteği dolmuş; kota yenilenince gol krallığı otomatik gelir."
+            "invalid" in message || "key" in message -> "API-Football anahtarı geçersiz; paneldeki etkin anahtarı kontrol et."
+            else -> null
+        }
     }
 
     private fun currentSeasonYear(): Int {
@@ -61,10 +137,10 @@ class FootballApiService(private val httpClient: OkHttpClient) {
 
     suspend fun fetchFixtures(competition: String, sportType: String = "FUTBOL"): List<SportsMatch> = withContext(Dispatchers.IO) {
         when (sportType) {
-            "BASKETBOL" -> if (competition == "NBA") fetchBasketballFixtures(competition) else emptyList()
+            "BASKETBOL" -> if (basketballEspnSlug(competition) != null) fetchBasketballFixtures(competition) else emptyList()
             "FUTBOL" -> {
                 val id = leagueId(competition) ?: return@withContext emptyList()
-                if (hasApiKey()) {
+                if (hasApiKey() && apiFootballUnavailableReason == null) {
                     val today = LocalDate.now()
                     val url = "$baseUrl/fixtures?league=$id&season=${currentSeasonYear()}&from=${today.minusDays(2)}&to=${today.plusDays(7)}&timezone=Europe%2FIstanbul"
                     try {
@@ -74,6 +150,7 @@ class FootballApiService(private val httpClient: OkHttpClient) {
                             .build()
                         httpClient.newCall(request).execute().use { response ->
                             val body = response.body?.string()
+                            if (!body.isNullOrBlank()) rememberApiFootballIssue(body)
                             if (response.isSuccessful && !body.isNullOrBlank()) {
                                 val matches = parseApiSportsFixtures(
                                     defaultComp = competition,
@@ -96,14 +173,15 @@ class FootballApiService(private val httpClient: OkHttpClient) {
     }
 
     suspend fun fetchStandings(competition: String, sportType: String = "FUTBOL"): List<LeagueStanding> = withContext(Dispatchers.IO) {
+        if (sportType == "BASKETBOL") return@withContext fetchBasketballStandings(competition)
         if (sportType != "FUTBOL") return@withContext emptyList()
         val id = leagueId(competition) ?: return@withContext emptyList()
         val cacheKey = "$id-${currentSeasonYear()}"
         standingsCache[cacheKey]?.let { (fetchedAt, cached) ->
-            if (System.currentTimeMillis() - fetchedAt < STANDINGS_CACHE_MS) return@withContext cached
+            if (System.currentTimeMillis() - fetchedAt < STANDINGS_CACHE_MS) return@withContext sortStandings(cached)
         }
 
-        if (hasApiKey()) {
+        if (hasApiKey() && apiFootballUnavailableReason == null) {
             try {
                 val url = "$baseUrl/standings?league=$id&season=${currentSeasonYear()}"
                 val request = Request.Builder()
@@ -112,11 +190,13 @@ class FootballApiService(private val httpClient: OkHttpClient) {
                     .build()
                 httpClient.newCall(request).execute().use { response ->
                     val body = response.body?.string()
+                    if (!body.isNullOrBlank()) rememberApiFootballIssue(body)
                     if (response.isSuccessful && !body.isNullOrBlank()) {
                         val standings = parseApiSportsStandings(body)
                         if (standings.isNotEmpty()) {
-                            standingsCache[cacheKey] = System.currentTimeMillis() to standings
-                            return@withContext standings
+                            val sorted = sortStandings(standings)
+                            standingsCache[cacheKey] = System.currentTimeMillis() to sorted
+                            return@withContext sorted
                         }
                     }
                 }
@@ -126,15 +206,14 @@ class FootballApiService(private val httpClient: OkHttpClient) {
             }
         }
 
-        val standings = fetchEspnFallbackStandings(competition)
+        val standings = sortStandings(fetchEspnFallbackStandings(competition))
         if (standings.isNotEmpty()) standingsCache[cacheKey] = System.currentTimeMillis() to standings
         standings
     }
 
     suspend fun fetchTopScorers(competition: String, sportType: String = "FUTBOL"): List<TopScorer> = withContext(Dispatchers.IO) {
-        if (sportType != "FUTBOL" || !hasApiKey()) {
-            return@withContext emptyList()
-        }
+        if (sportType == "BASKETBOL") return@withContext fetchBasketballLeaders(competition)
+        if (sportType != "FUTBOL") return@withContext emptyList()
 
         val id = leagueId(competition) ?: return@withContext emptyList()
         val cacheKey = "$id-${currentSeasonYear()}"
@@ -144,18 +223,20 @@ class FootballApiService(private val httpClient: OkHttpClient) {
 
         val scorers = mutableListOf<TopScorer>()
         try {
+            if (!hasApiKey() || apiFootballUnavailableReason != null) throw IllegalStateException("API-Football unavailable")
             val url = "$baseUrl/players/topscorers?league=$id&season=${currentSeasonYear()}"
             val request = Request.Builder()
                 .url(url)
                 .header("x-apisports-key", apiKey)
                 .build()
             httpClient.newCall(request).execute().use { response ->
+                val body = response.body?.string()
+                if (!body.isNullOrBlank()) rememberApiFootballIssue(body)
                 if (response.isSuccessful) {
-                    val body = response.body?.string()
                     if (!body.isNullOrBlank()) {
-                        val entries = JSONObject(body).optJSONArray("response") ?: return@withContext emptyList()
-                        for (i in 0 until entries.length()) {
-                            val entry = entries.optJSONObject(i) ?: continue
+                        val entries = JSONObject(body).optJSONArray("response")
+                        for (i in 0 until (entries?.length() ?: 0)) {
+                            val entry = entries?.optJSONObject(i) ?: continue
                             val player = entry.optJSONObject("player")?.optString("name").orEmpty()
                             val stats = entry.optJSONArray("statistics")?.optJSONObject(0) ?: continue
                             val team = stats.optJSONObject("team")?.optString("name").orEmpty()
@@ -182,12 +263,22 @@ class FootballApiService(private val httpClient: OkHttpClient) {
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (_: Exception) {}
-        scorers
+        if (scorers.isNotEmpty()) {
+            scorersCache[cacheKey] = System.currentTimeMillis() to scorers.toList()
+            scorers
+        } else {
+            fetchEspnFootballTopScorers(competition).also { fallback ->
+                if (fallback.isNotEmpty()) scorersCache[cacheKey] = System.currentTimeMillis() to fallback
+            }
+        }
     }
 
     private fun sortMatches(matches: List<SportsMatch>): List<SportsMatch> = matches
         .distinctBy { it.id }
         .sortedWith(compareBy<SportsMatch> { it.kickoffAtEpochMs }.thenBy { it.homeTeam })
+
+    private fun sortStandings(standings: List<LeagueStanding>): List<LeagueStanding> = standings
+        .sortedWith(compareBy<LeagueStanding> { it.groupName.orEmpty() }.thenBy { it.rank }.thenBy { it.team })
 
     private fun parseApiSportsFixtures(
         defaultComp: String,
@@ -278,8 +369,8 @@ class FootballApiService(private val httpClient: OkHttpClient) {
                         round = round,
                         homeTeam = homeName,
                         awayTeam = awayName,
-                        homeScore = homeScore,
-                        awayScore = awayScore,
+                        homeScore = homeScore.takeIf { status != MatchStatus.UPCOMING },
+                        awayScore = awayScore.takeIf { status != MatchStatus.UPCOMING },
                         minute = if (elapsed > 0) elapsed else null,
                         status = status,
                         statusLabel = statusLabel,
@@ -306,57 +397,51 @@ class FootballApiService(private val httpClient: OkHttpClient) {
             val standingsArray = leagueObj.optJSONArray("standings") ?: return list
             if (standingsArray.length() == 0) return list
 
-            val leagueGroup = standingsArray.getJSONArray(0)
-            for (i in 0 until leagueGroup.length()) {
-                val row = leagueGroup.getJSONObject(i)
-                val rank = row.optInt("rank", i + 1)
-                val teamObj = row.getJSONObject("team")
-                val teamName = teamObj.optString("name", "Takım")
-                val points = row.optInt("points", 0)
-                val goalsDiff = row.optInt("goalsDiff", 0)
-                val form = row.optString("form", "")
-                    .replace("W", "G-")
-                    .replace("D", "B-")
-                    .replace("L", "M-")
-                    .trimEnd('-')
-                    .ifBlank { "—" }
+            for (groupIndex in 0 until standingsArray.length()) {
+                val leagueGroup = standingsArray.optJSONArray(groupIndex) ?: continue
+                for (i in 0 until leagueGroup.length()) {
+                    val row = leagueGroup.optJSONObject(i) ?: continue
+                    val rank = row.optInt("rank", i + 1)
+                    val teamObj = row.optJSONObject("team") ?: continue
+                    val teamName = teamObj.optString("name", "Takım")
+                    val points = row.optInt("points", 0)
+                    val goalsDiff = row.optInt("goalsDiff", 0)
+                    val form = row.optString("form", "")
+                        .replace("W", "G-")
+                        .replace("D", "B-")
+                        .replace("L", "M-")
+                        .trimEnd('-')
+                        .ifBlank { "—" }
 
-                val all = row.optJSONObject("all") ?: JSONObject()
-                val played = all.optInt("played", 0)
-                val won = all.optInt("win", 0)
-                val drawn = all.optInt("draw", 0)
-                val lost = all.optInt("lose", 0)
-                val goals = all.optJSONObject("goals") ?: JSONObject()
-
-                list.add(
-                    LeagueStanding(
-                        rank = rank,
-                        team = teamName,
-                        played = played,
-                        won = won,
-                        drawn = drawn,
-                        lost = lost,
-                        goalDiff = goalsDiff,
-                        points = points,
-                        form = form,
-                        goalsFor = goals.optInt("for", 0),
-                        goalsAgainst = goals.optInt("against", 0),
-                        qualificationNote = row.optString("description").takeIf(String::isNotBlank),
+                    val all = row.optJSONObject("all") ?: JSONObject()
+                    val goals = all.optJSONObject("goals") ?: JSONObject()
+                    val rawGroup = row.optString("group").takeIf(String::isNotBlank)
+                    val groupName = rawGroup ?: if (standingsArray.length() > 1) "Grup ${groupIndex + 1}" else null
+                    list.add(
+                        LeagueStanding(
+                            rank = rank,
+                            team = teamName,
+                            played = all.optInt("played", 0),
+                            won = all.optInt("win", 0),
+                            drawn = all.optInt("draw", 0),
+                            lost = all.optInt("lose", 0),
+                            goalDiff = goalsDiff,
+                            points = points,
+                            form = form,
+                            goalsFor = goals.optInt("for", 0),
+                            goalsAgainst = goals.optInt("against", 0),
+                            qualificationNote = row.optString("description").takeIf(String::isNotBlank),
+                            groupName = groupName,
+                        )
                     )
-                )
+                }
             }
         } catch (_: Exception) {}
         return list
     }
 
     private suspend fun fetchEspnFootballFixtures(competition: String): List<SportsMatch> {
-        val leagueSlug = when (competition) {
-            "UEFA Şampiyonlar Ligi" -> "uefa.champions"
-            "İngiltere Premier Lig" -> "eng.1"
-            "İspanya La Liga" -> "esp.1"
-            "Trendyol Süper Lig" -> "tur.1"
-            else -> return emptyList()
-        }
+        val leagueSlug = footballEspnSlug(competition) ?: return emptyList()
 
         val now = System.currentTimeMillis()
         val today = LocalDate.now()
@@ -437,7 +522,7 @@ class FootballApiService(private val httpClient: OkHttpClient) {
                         val competitor = competitors.optJSONObject(c) ?: continue
                         val isHome = competitor.optString("homeAway") == "home"
                         val name = competitor.optJSONObject("team")?.optString("displayName", "Takım") ?: "Takım"
-                        val score = competitor.optString("score", "").toIntOrNull()
+                        val score = competitor.optString("score", "").toIntOrNull().takeIf { state != "pre" }
                         if (isHome) {
                             homeName = name
                             homeScore = score
@@ -532,7 +617,11 @@ class FootballApiService(private val httpClient: OkHttpClient) {
         val instant = try {
             Instant.parse(value)
         } catch (_: Exception) {
-            return 0L to "Saat bekleniyor"
+            try {
+                OffsetDateTime.parse(value).toInstant()
+            } catch (_: Exception) {
+                return 0L to "Saat bekleniyor"
+            }
         }
         val zone = ZoneId.systemDefault()
         val local = instant.atZone(zone)
@@ -544,91 +633,314 @@ class FootballApiService(private val httpClient: OkHttpClient) {
         return instant.toEpochMilli() to local.format(format)
     }
 
-    private fun fetchBasketballFixtures(competition: String): List<SportsMatch> {
+    private suspend fun fetchBasketballFixtures(competition: String): List<SportsMatch> {
+        val slug = basketballEspnSlug(competition) ?: return emptyList()
+        val cacheKey = "BASKETBOL|$competition"
+        val today = LocalDate.now()
+        val now = System.currentTimeMillis()
+        var cache = espnScheduleCache[cacheKey]
+
+        if (cache == null || now - cache.scheduleFetchedAtMs >= ESPN_SCHEDULE_REFRESH_MS) {
+            val semaphore = Semaphore(4)
+            val schedule = coroutineScope {
+                (0L..7L).map { offset ->
+                    async {
+                        semaphore.withPermit {
+                            fetchBasketballScoreboard(competition, slug, today.plusDays(offset))
+                        }
+                    }
+                }.awaitAll().flatten()
+            }
+            cache = EspnFixtureCache(now, now, sortMatches(schedule))
+            espnScheduleCache[cacheKey] = cache
+        } else if (now - cache.liveFetchedAtMs >= ESPN_LIVE_REFRESH_MS) {
+            val todayMatches = fetchBasketballScoreboard(competition, slug, today)
+            val refreshed = cache.matches.filterNot { sameLocalDay(it.kickoffAtEpochMs, today) } + todayMatches
+            cache = cache.copy(liveFetchedAtMs = now, matches = sortMatches(refreshed))
+            espnScheduleCache[cacheKey] = cache
+        }
+        return cache.matches
+    }
+
+    private fun fetchBasketballScoreboard(competition: String, leagueSlug: String, date: LocalDate): List<SportsMatch> {
         val result = mutableListOf<SportsMatch>()
         try {
-            val url = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard"
-            val req = Request.Builder().url(url).build()
-            val resp = httpClient.newCall(req).execute()
-            if (resp.isSuccessful) {
-                val body = resp.body?.string()
-                if (body != null) {
-                    val root = JSONObject(body)
-                    val events = root.optJSONArray("events") ?: return result
-                    for (i in 0 until events.length()) {
-                        val ev = events.getJSONObject(i)
-                        val id = ev.optString("id", "b-$i")
-                        val compArray = ev.optJSONArray("competitions") ?: continue
-                        if (compArray.length() == 0) continue
-                        val compObj = compArray.getJSONObject(0)
-                        val statusObj = compObj.optJSONObject("status") ?: JSONObject()
-                        val typeObj = statusObj.optJSONObject("type") ?: JSONObject()
-                        val state = typeObj.optString("state", "pre")
-                        val detail = typeObj.optString("detail", "Başlamadı")
-
-                        val competitors = compObj.optJSONArray("competitors") ?: continue
-                        var homeName = "Ev Sahibi"
-                        var awayName = "Deplasman"
-                        var homeScore: Int? = null
-                        var awayScore: Int? = null
-
-                        for (c in 0 until competitors.length()) {
-                            val compTeam = competitors.getJSONObject(c)
-                            val isHome = compTeam.optString("homeAway") == "home"
-                            val name = compTeam.optJSONObject("team")?.optString("displayName", "Takım") ?: "Takım"
-                            val score = compTeam.optString("score", "").toIntOrNull()
-                            if (isHome) {
-                                homeName = name
-                                homeScore = score
-                            } else {
-                                awayName = name
-                                awayScore = score
-                            }
+            val dateParam = date.format(DateTimeFormatter.BASIC_ISO_DATE)
+            val url = "https://site.api.espn.com/apis/site/v2/sports/basketball/$leagueSlug/scoreboard?limit=100&dates=$dateParam"
+            val request = Request.Builder().url(url).build()
+            httpClient.newCall(request).execute().use { response ->
+                val body = response.body?.string()
+                if (!response.isSuccessful || body.isNullOrBlank()) return result
+                val events = JSONObject(body).optJSONArray("events") ?: return result
+                for (i in 0 until events.length()) {
+                    val event = events.optJSONObject(i) ?: continue
+                    val id = event.optString("id", "basketball-$i")
+                    val competitionArray = event.optJSONArray("competitions") ?: continue
+                    val game = competitionArray.optJSONObject(0) ?: continue
+                    val statusObject = game.optJSONObject("status") ?: JSONObject()
+                    val statusType = statusObject.optJSONObject("type") ?: JSONObject()
+                    val state = statusType.optString("state", "pre")
+                    val detail = statusType.optString("shortDetail")
+                        .ifBlank { statusType.optString("detail", "") }
+                    val competitors = game.optJSONArray("competitors") ?: continue
+                    var homeName = "Ev Sahibi"
+                    var awayName = "Deplasman"
+                    var homeScore: Int? = null
+                    var awayScore: Int? = null
+                    for (index in 0 until competitors.length()) {
+                        val competitor = competitors.optJSONObject(index) ?: continue
+                        val isHome = competitor.optString("homeAway") == "home"
+                        val teamName = competitor.optJSONObject("team")?.optString("displayName").orEmpty()
+                            .ifBlank { "Takım" }
+                    val score = competitor.optString("score").toIntOrNull().takeIf { state != "pre" }
+                        if (isHome) {
+                            homeName = teamName
+                            homeScore = score
+                        } else {
+                            awayName = teamName
+                            awayScore = score
                         }
+                    }
 
-                        val status = when (state) {
-                            "in" -> MatchStatus.LIVE
-                            "post" -> MatchStatus.FINISHED
-                            else -> MatchStatus.UPCOMING
+                    val status = when (state) {
+                        "in" -> MatchStatus.LIVE
+                        "post" -> MatchStatus.FINISHED
+                        else -> MatchStatus.UPCOMING
+                    }
+                    val (kickoffAt, kickoffTime) = formatKickoff(event.optString("date"))
+                    val scoreText = if (homeScore != null && awayScore != null) "$homeScore - $awayScore" else ""
+                    result.add(
+                        SportsMatch(
+                            id = id,
+                            competition = competition,
+                            round = event.optJSONObject("season")?.optJSONObject("type")?.optString("name")
+                                ?.takeIf(String::isNotBlank) ?: "Sezon",
+                            homeTeam = homeName,
+                            awayTeam = awayName,
+                            homeScore = homeScore,
+                            awayScore = awayScore,
+                            status = status,
+                            statusLabel = when (status) {
+                                MatchStatus.LIVE -> listOf("CANLI", detail).filter(String::isNotBlank).joinToString(" · ")
+                                MatchStatus.FINISHED -> "MS"
+                                MatchStatus.UPCOMING -> "Başlamadı"
+                            },
+                            kickoffTime = kickoffTime,
+                            kickoffAtEpochMs = kickoffAt,
+                            sportType = "BASKETBOL",
+                            liveAction = if (status == MatchStatus.LIVE && scoreText.isNotBlank()) "🏀 Canlı skor: $scoreText" else "",
+                        )
+                    )
+                }
+            }
+        } catch (_: Exception) {
+        }
+        return result
+    }
+
+    private fun fetchBasketballStandings(competition: String): List<LeagueStanding> {
+        val slug = basketballEspnSlug(competition) ?: return emptyList()
+        val cacheKey = "basketball-$slug-${basketballSeasonYear(slug)}"
+        standingsCache[cacheKey]?.let { (fetchedAt, cached) ->
+            if (System.currentTimeMillis() - fetchedAt < STANDINGS_CACHE_MS) return sortStandings(cached)
+        }
+        val standings = mutableListOf<LeagueStanding>()
+        try {
+            val url = "https://site.api.espn.com/apis/v2/sports/basketball/$slug/standings"
+            val root = fetchEspnJson(url) ?: return emptyList()
+            val groups = root.optJSONArray("children") ?: return emptyList()
+            for (groupIndex in 0 until groups.length()) {
+                val group = groups.optJSONObject(groupIndex) ?: continue
+                val groupName = group.optString("name").takeIf(String::isNotBlank)
+                val entries = group.optJSONObject("standings")?.optJSONArray("entries") ?: continue
+                for (index in 0 until entries.length()) {
+                    val entry = entries.optJSONObject(index) ?: continue
+                    val teamName = entry.optJSONObject("team")?.optString("displayName").orEmpty()
+                    if (teamName.isBlank()) continue
+                    val stats = entry.optJSONArray("stats") ?: continue
+                    var rank = index + 1
+                    var wins = 0
+                    var losses = 0
+                    var winPercentage: Double? = null
+                    var pointDifferential = 0
+                    for (statIndex in 0 until stats.length()) {
+                        val stat = stats.optJSONObject(statIndex) ?: continue
+                        when (stat.optString("name")) {
+                            "playoffSeed", "rank" -> rank = stat.optDouble("value", rank.toDouble()).toInt().takeIf { it > 0 } ?: rank
+                            "wins" -> wins = stat.optDouble("value", 0.0).toInt()
+                            "losses" -> losses = stat.optDouble("value", 0.0).toInt()
+                            "winPercent" -> winPercentage = stat.optDouble("value", 0.0)
+                            "pointDifferential" -> pointDifferential = stat.optDouble("value", 0.0).toInt()
                         }
+                    }
+                    standings.add(
+                        LeagueStanding(
+                            rank = rank,
+                            team = teamName,
+                            played = wins + losses,
+                            won = wins,
+                            drawn = 0,
+                            lost = losses,
+                            goalDiff = pointDifferential,
+                            points = 0,
+                            form = "—",
+                            groupName = groupName,
+                            winPercentage = winPercentage,
+                        )
+                    )
+                }
+            }
+        } catch (_: Exception) {
+        }
+        val sorted = sortStandings(standings)
+        if (sorted.isNotEmpty()) standingsCache[cacheKey] = System.currentTimeMillis() to sorted
+        return sorted
+    }
 
-                        val statusLabel = when (state) {
-                            "in" -> "CANLI · ${detail.take(8)}"
-                            "post" -> "MS"
-                            else -> detail.ifBlank { "Yakında" }
+    private suspend fun fetchBasketballLeaders(competition: String): List<TopScorer> {
+        val slug = basketballEspnSlug(competition) ?: return emptyList()
+        val season = basketballSeasonYear(slug)
+        val cacheKey = "$slug-$season-points"
+        basketballLeadersCache[cacheKey]?.let { (fetchedAt, cached) ->
+            if (System.currentTimeMillis() - fetchedAt < STANDINGS_CACHE_MS) return cached
+        }
+        val url = "https://sports.core.api.espn.com/v2/sports/basketball/leagues/$slug/seasons/$season/types/2/leaders"
+        val root = fetchEspnJson(url) ?: return emptyList()
+        val categories = root.optJSONArray("categories") ?: return emptyList()
+        val pointsCategory = (0 until categories.length())
+            .mapNotNull { categories.optJSONObject(it) }
+            .firstOrNull { it.optString("name") == "pointsPerGame" }
+            ?: return emptyList()
+        val entries = pointsCategory.optJSONArray("leaders") ?: return emptyList()
+        val semaphore = Semaphore(4)
+        val leaders = coroutineScope {
+            (0 until minOf(entries.length(), 10)).map { index ->
+                async {
+                    semaphore.withPermit {
+                        val entry = entries.optJSONObject(index) ?: return@withPermit null
+                        val athleteRef = entry.optJSONObject("athlete")?.optString("\$ref").orEmpty()
+                        val teamRef = entry.optJSONObject("team")?.optString("\$ref").orEmpty()
+                        val athleteAndTeam = coroutineScope {
+                            val athlete = async { fetchEspnEntityName(athleteRef) }
+                            val team = async { fetchEspnEntityName(teamRef) }
+                            athlete.await() to team.await()
                         }
-
-                        result.add(
-                            SportsMatch(
-                                id = id,
-                                competition = "NBA",
-                                round = "Normal Sezon",
-                                homeTeam = homeName,
-                                awayTeam = awayName,
-                                homeScore = homeScore,
-                                awayScore = awayScore,
-                                minute = null,
-                                status = status,
-                                statusLabel = statusLabel,
-                                kickoffTime = detail,
-                                events = emptyList(),
-                                sportType = "BASKETBOL",
-                                liveAction = if (status == MatchStatus.LIVE) "🏀 3 Sayılık Basket!" else "",
-                            )
+                        val playerName = athleteAndTeam.first
+                        if (playerName.isBlank()) return@withPermit null
+                        val displayValue = entry.optString("displayValue").ifBlank {
+                            entry.optDouble("value", 0.0).toString()
+                        }
+                        TopScorer(
+                            rank = index + 1,
+                            player = playerName,
+                            team = athleteAndTeam.second.ifBlank { "Takım bilgisi yok" },
+                            count = entry.optDouble("value", 0.0).toInt(),
+                            matches = 0,
+                            type = "SAYI/MAÇ",
+                            valueLabel = "$displayValue sayı/maç",
                         )
                     }
                 }
-            }
-        } catch (_: Exception) {}
-        return result
+            }.awaitAll().filterNotNull()
+        }
+        if (leaders.isNotEmpty()) basketballLeadersCache[cacheKey] = System.currentTimeMillis() to leaders
+        return leaders
+    }
+
+    private suspend fun fetchEspnFootballTopScorers(competition: String): List<TopScorer> {
+        val slug = footballEspnSlug(competition) ?: return emptyList()
+        val season = currentSeasonYear()
+        val cacheKey = "${leagueId(competition)}-$season"
+        val url = "https://sports.core.api.espn.com/v2/sports/soccer/leagues/$slug/seasons/$season/types/1/leaders"
+        val root = fetchEspnJson(url) ?: return emptyList()
+        val categories = root.optJSONArray("categories") ?: return emptyList()
+        val goalsCategory = (0 until categories.length())
+            .mapNotNull { categories.optJSONObject(it) }
+            .firstOrNull { it.optString("name") == "goalsLeaders" }
+            ?: (0 until categories.length()).mapNotNull { categories.optJSONObject(it) }
+                .firstOrNull { it.optString("name") == "goals" }
+            ?: return emptyList()
+        val entries = goalsCategory.optJSONArray("leaders") ?: return emptyList()
+        val semaphore = Semaphore(4)
+        val leaders = coroutineScope {
+            (0 until minOf(entries.length(), 20)).map { index ->
+                async {
+                    semaphore.withPermit {
+                        val entry = entries.optJSONObject(index) ?: return@withPermit null
+                        val athleteRef = entry.optJSONObject("athlete")?.optString("\$ref").orEmpty()
+                        val teamRef = entry.optJSONObject("team")?.optString("\$ref").orEmpty()
+                        val names = coroutineScope {
+                            val athlete = async { fetchEspnEntityName(athleteRef) }
+                            val team = async { fetchEspnEntityName(teamRef) }
+                            athlete.await() to team.await()
+                        }
+                        if (names.first.isBlank() || names.second.isBlank()) return@withPermit null
+                        val detail = entry.optString("displayValue")
+                        val appearances = Regex("Matches:\\s*(\\d+)", RegexOption.IGNORE_CASE)
+                            .find(detail)?.groupValues?.getOrNull(1)?.toIntOrNull() ?: 0
+                        val assists = Regex("Assists:\\s*(\\d+)", RegexOption.IGNORE_CASE)
+                            .find(detail)?.groupValues?.getOrNull(1)?.toIntOrNull() ?: 0
+                        TopScorer(
+                            rank = index + 1,
+                            player = names.first,
+                            team = names.second,
+                            count = entry.optDouble("value", 0.0).toInt(),
+                            secondaryCount = assists,
+                            matches = appearances,
+                            type = "GOL",
+                        )
+                    }
+                }
+            }.awaitAll().filterNotNull()
+        }
+        if (leaders.isNotEmpty()) scorersCache[cacheKey] = System.currentTimeMillis() to leaders
+        return leaders
+    }
+
+    private fun basketballSeasonYear(slug: String): Int {
+        val now = LocalDate.now()
+        return if (slug == "wnba") now.year else if (now.monthValue >= 7) now.year + 1 else now.year
+    }
+
+    private fun fetchEspnJson(url: String): JSONObject? = try {
+        val request = Request.Builder().url(url).build()
+        httpClient.newCall(request).execute().use { response ->
+            val body = response.body?.string()
+            if (response.isSuccessful && !body.isNullOrBlank()) JSONObject(body) else null
+        }
+    } catch (_: Exception) {
+        null
+    }
+
+    private fun fetchEspnEntityName(reference: String): String {
+        if (reference.isBlank()) return ""
+        val safeUrl = reference.replaceFirst("http://", "https://")
+        return fetchEspnJson(safeUrl)?.optString("displayName").orEmpty()
     }
 
     private fun fetchEspnFallbackStandings(competition: String): List<LeagueStanding> {
         val leagueSlug = when (competition) {
             "UEFA Şampiyonlar Ligi" -> "uefa.champions"
+            "UEFA Avrupa Ligi" -> "uefa.europa"
+            "UEFA Konferans Ligi" -> "uefa.europa.conf"
             "İngiltere Premier Lig" -> "eng.1"
+            "İngiltere Championship" -> "eng.2"
             "İspanya La Liga" -> "esp.1"
+            "İspanya Segunda" -> "esp.2"
+            "İtalya Serie A" -> "ita.1"
+            "İtalya Serie B" -> "ita.2"
+            "Almanya Bundesliga" -> "ger.1"
+            "Almanya 2. Bundesliga" -> "ger.2"
+            "Fransa Ligue 1" -> "fra.1"
+            "Fransa Ligue 2" -> "fra.2"
+            "Hollanda Eredivisie" -> "ned.1"
+            "Portekiz Primeira Liga" -> "por.1"
             "Trendyol Süper Lig" -> "tur.1"
+            "Brezilya Serie A" -> "bra.1"
+            "MLS" -> "usa.1"
+            "Japonya J1 League" -> "jpn.1"
+            "CONMEBOL Libertadores" -> "conmebol.libertadores"
+            "CONMEBOL Sudamericana" -> "conmebol.sudamericana"
             else -> return emptyList()
         }
         val result = mutableListOf<LeagueStanding>()
@@ -642,59 +954,63 @@ class FootballApiService(private val httpClient: OkHttpClient) {
                     val root = JSONObject(body)
                     val children = root.optJSONArray("children") ?: return result
                     if (children.length() == 0) return result
-                    val child = children.getJSONObject(0)
-                    val standingsObj = child.optJSONObject("standings") ?: return result
-                    val entries = standingsObj.optJSONArray("entries") ?: return result
+                    for (groupIndex in 0 until children.length()) {
+                        val child = children.optJSONObject(groupIndex) ?: continue
+                        val standingsObj = child.optJSONObject("standings") ?: continue
+                        val entries = standingsObj.optJSONArray("entries") ?: continue
+                        val groupName = child.optString("name").takeIf(String::isNotBlank)
 
-                    for (i in 0 until entries.length()) {
-                        val entry = entries.getJSONObject(i)
-                        val teamObj = entry.optJSONObject("team") ?: continue
-                        val teamName = teamObj.optString("displayName", "Takım")
-                        val statsArray = entry.optJSONArray("stats") ?: continue
+                        for (i in 0 until entries.length()) {
+                            val entry = entries.optJSONObject(i) ?: continue
+                            val teamObj = entry.optJSONObject("team") ?: continue
+                            val teamName = teamObj.optString("displayName", "Takım")
+                            val statsArray = entry.optJSONArray("stats") ?: continue
 
-                        var rank = i + 1
-                        var gamesPlayed = 0
-                        var wins = 0
-                        var ties = 0
-                        var losses = 0
-                        var gd = 0
-                        var points = 0
-                        var goalsFor = 0
-                        var goalsAgainst = 0
-                        val qualificationNote = entry.optJSONObject("note")
-                            ?.optString("description")?.takeIf(String::isNotBlank)
+                            var rank = i + 1
+                            var gamesPlayed = 0
+                            var wins = 0
+                            var ties = 0
+                            var losses = 0
+                            var gd = 0
+                            var points = 0
+                            var goalsFor = 0
+                            var goalsAgainst = 0
+                            val qualificationNote = entry.optJSONObject("note")
+                                ?.optString("description")?.takeIf(String::isNotBlank)
 
-                        for (s in 0 until statsArray.length()) {
-                            val stat = statsArray.getJSONObject(s)
-                            when (stat.optString("name")) {
-                                "rank" -> rank = stat.optDouble("value", (i + 1).toDouble()).toInt()
-                                "gamesPlayed" -> gamesPlayed = stat.optDouble("value", 0.0).toInt()
-                                "wins" -> wins = stat.optDouble("value", 0.0).toInt()
-                                "ties" -> ties = stat.optDouble("value", 0.0).toInt()
-                                "losses" -> losses = stat.optDouble("value", 0.0).toInt()
-                                "pointDifferential" -> gd = stat.optDouble("value", 0.0).toInt()
-                                "points" -> points = stat.optDouble("value", 0.0).toInt()
-                                "pointsFor" -> goalsFor = stat.optDouble("value", 0.0).toInt()
-                                "pointsAgainst" -> goalsAgainst = stat.optDouble("value", 0.0).toInt()
+                            for (s in 0 until statsArray.length()) {
+                                val stat = statsArray.optJSONObject(s) ?: continue
+                                when (stat.optString("name")) {
+                                    "rank" -> rank = stat.optDouble("value", (i + 1).toDouble()).toInt()
+                                    "gamesPlayed" -> gamesPlayed = stat.optDouble("value", 0.0).toInt()
+                                    "wins" -> wins = stat.optDouble("value", 0.0).toInt()
+                                    "ties" -> ties = stat.optDouble("value", 0.0).toInt()
+                                    "losses" -> losses = stat.optDouble("value", 0.0).toInt()
+                                    "pointDifferential" -> gd = stat.optDouble("value", 0.0).toInt()
+                                    "points" -> points = stat.optDouble("value", 0.0).toInt()
+                                    "pointsFor" -> goalsFor = stat.optDouble("value", 0.0).toInt()
+                                    "pointsAgainst" -> goalsAgainst = stat.optDouble("value", 0.0).toInt()
+                                }
                             }
-                        }
 
-                        result.add(
-                            LeagueStanding(
-                                rank = rank,
-                                team = teamName,
-                                played = gamesPlayed,
-                                won = wins,
-                                drawn = ties,
-                                lost = losses,
-                                goalDiff = gd,
-                                points = points,
-                                form = "—",
-                                goalsFor = goalsFor,
-                                goalsAgainst = goalsAgainst,
-                                qualificationNote = qualificationNote,
+                            result.add(
+                                LeagueStanding(
+                                    rank = rank,
+                                    team = teamName,
+                                    played = gamesPlayed,
+                                    won = wins,
+                                    drawn = ties,
+                                    lost = losses,
+                                    goalDiff = gd,
+                                    points = points,
+                                    form = "—",
+                                    goalsFor = goalsFor,
+                                    goalsAgainst = goalsAgainst,
+                                    qualificationNote = qualificationNote,
+                                    groupName = groupName,
+                                )
                             )
-                        )
+                        }
                     }
                 }
             }
@@ -708,3 +1024,4 @@ class FootballApiService(private val httpClient: OkHttpClient) {
         const val ESPN_LIVE_REFRESH_MS = 60_000L
     }
 }
+

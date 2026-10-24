@@ -60,17 +60,17 @@ data class SportsMatch(
     val events: List<MatchEvent> = emptyList(),
     val sportType: String = "FUTBOL", // "FUTBOL", "BASKETBOL", "VOLEYBOL"
     val liveAction: String = "",       // e.g. "⚽ GOL! 78' Icardi"
-    val oddsHome: String = "1.75",
-    val oddsDraw: String = "3.40",
-    val oddsAway: String = "3.90",
-    val possessionHome: Int = 54,
-    val possessionAway: Int = 46,
-    val shotsHome: Int = 14,
-    val shotsAway: Int = 8,
-    val shotsOnTargetHome: Int = 6,
-    val shotsOnTargetAway: Int = 3,
-    val cornersHome: Int = 6,
-    val cornersAway: Int = 3,
+    val oddsHome: String = "",
+    val oddsDraw: String = "",
+    val oddsAway: String = "",
+    val possessionHome: Int? = null,
+    val possessionAway: Int? = null,
+    val shotsHome: Int? = null,
+    val shotsAway: Int? = null,
+    val shotsOnTargetHome: Int? = null,
+    val shotsOnTargetAway: Int? = null,
+    val cornersHome: Int? = null,
+    val cornersAway: Int? = null,
     val referee: String = "",
     val stadium: String = "",
 )
@@ -94,6 +94,7 @@ data class TopScorer(
     val secondaryCount: Int = 0, // Assists or rebounds
     val matches: Int = 0,
     val type: String = "GOL",    // "GOL", "ASIST", "SAYI"
+    val valueLabel: String = "",
 )
 
 data class FinancialAsset(
@@ -121,6 +122,8 @@ data class LeagueStanding(
     val goalsFor: Int = 0,
     val goalsAgainst: Int = 0,
     val qualificationNote: String? = null,
+    val groupName: String? = null,
+    val winPercentage: Double? = null,
 )
 
 data class HourlyWeather(
@@ -177,3 +180,4 @@ data class UserPreferences(
     val quietHoursStart: String = "23:00",
     val quietHoursEnd: String = "07:00",
 )
+

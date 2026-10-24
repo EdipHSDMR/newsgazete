@@ -29,13 +29,14 @@ class WeatherApiService(private val httpClient: OkHttpClient) {
                 .url(url)
                 .build()
 
-            val response = httpClient.newCall(request).execute()
-            if (!response.isSuccessful) return@withContext null
+            httpClient.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) return@withContext null
 
-            val jsonStr = response.body?.string() ?: return@withContext null
-            val current = JSONObject(jsonStr).optJSONObject("current")
-            if (current == null || !current.has("temp_c")) return@withContext null
-            parseWeatherApiResponse(cityName, jsonStr)
+                val jsonStr = response.body?.string() ?: return@withContext null
+                val current = JSONObject(jsonStr).optJSONObject("current")
+                if (current == null || !current.has("temp_c")) return@withContext null
+                parseWeatherApiResponse(cityName, jsonStr)
+            }
         } catch (_: Exception) {
             null
         }
@@ -160,3 +161,4 @@ class WeatherApiService(private val httpClient: OkHttpClient) {
         }
     }
 }
+
