@@ -58,7 +58,7 @@ class FootballApiService(private val httpClient: OkHttpClient) {
                                     if (!body.isNullOrBlank()) {
                                         matches.addAll(
                                             parseApiSportsFixtures(
-                                                competition = competition,
+                                                defaultComp = competition,
                                                 jsonStr = body,
                                                 filterLeagueId = if (index == 0) leagueId(competition) else null,
                                                 sportType = "FUTBOL",
