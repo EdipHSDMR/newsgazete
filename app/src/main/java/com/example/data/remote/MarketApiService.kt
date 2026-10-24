@@ -39,13 +39,13 @@ class MarketApiService(private val httpClient: OkHttpClient) {
                     val root = JSONObject(body)
                     val ratesObj = root.optJSONObject("rates")
                     if (ratesObj != null) {
-                        val usdTry = ratesObj.optDouble("TRY", 34.35)
-                        val eurUsd = ratesObj.optDouble("EUR", 0.92)
-                        val gbpUsd = ratesObj.optDouble("GBP", 0.77)
+                        val usdTry = ratesObj.optDouble("TRY", 0.0)
+                        val eurUsd = ratesObj.optDouble("EUR", 0.0)
+                        val gbpUsd = ratesObj.optDouble("GBP", 0.0)
 
-                        rates["USD_TRY"] = usdTry
-                        if (eurUsd > 0) rates["EUR_TRY"] = usdTry / eurUsd
-                        if (gbpUsd > 0) rates["GBP_TRY"] = usdTry / gbpUsd
+                        if (usdTry > 0.0 && usdTry.isFinite()) rates["USD_TRY"] = usdTry
+                        if (usdTry > 0.0 && eurUsd > 0.0 && eurUsd.isFinite()) rates["EUR_TRY"] = usdTry / eurUsd
+                        if (usdTry > 0.0 && gbpUsd > 0.0 && gbpUsd.isFinite()) rates["GBP_TRY"] = usdTry / gbpUsd
                     }
                 }
             }
@@ -73,15 +73,19 @@ class MarketApiService(private val httpClient: OkHttpClient) {
                     val root = JSONObject(body)
                     val btc = root.optJSONObject("bitcoin")
                     if (btc != null) {
-                        val priceTry = btc.optDouble("try", 2320000.0)
-                        val change24h = btc.optDouble("try_24h_change", 1.85)
-                        crypto["BTC"] = priceTry to change24h
+                        val priceTry = btc.optDouble("try", 0.0)
+                        if (priceTry > 0.0 && priceTry.isFinite()) {
+                            val change24h = btc.optDouble("try_24h_change", 0.0)
+                            crypto["BTC"] = priceTry to change24h
+                        }
                     }
                     val eth = root.optJSONObject("ethereum")
                     if (eth != null) {
-                        val priceTry = eth.optDouble("try", 86500.0)
-                        val change24h = eth.optDouble("try_24h_change", -0.42)
-                        crypto["ETH"] = priceTry to change24h
+                        val priceTry = eth.optDouble("try", 0.0)
+                        if (priceTry > 0.0 && priceTry.isFinite()) {
+                            val change24h = eth.optDouble("try_24h_change", 0.0)
+                            crypto["ETH"] = priceTry to change24h
+                        }
                     }
                 }
             }
@@ -113,10 +117,11 @@ class MarketApiService(private val httpClient: OkHttpClient) {
                         val item = resultArr.getJSONObject(0)
                         val meta = item.getJSONObject("meta")
                         val currentPrice = meta.optDouble("regularMarketPrice", 0.0)
+                        if (currentPrice <= 0.0) return@withContext null
                         val previousClose = meta.optDouble("chartPreviousClose", meta.optDouble("previousClose", currentPrice))
                         val high = meta.optDouble("regularMarketDayHigh", currentPrice)
                         val low = meta.optDouble("regularMarketDayLow", currentPrice)
-                        val volumeNum = meta.optLong("regularMarketVolume", 15400000L)
+                        val volumeNum = meta.optLong("regularMarketVolume", 0L)
 
                         val changePct = if (previousClose > 0) {
                             ((currentPrice - previousClose) / previousClose) * 100.0
@@ -150,8 +155,6 @@ class MarketApiService(private val httpClient: OkHttpClient) {
             val stock = fetchBistStock(sym)
             if (stock != null) {
                 list.add(stock)
-            } else {
-                list.add(getFallbackStock(sym))
             }
         }
         list
@@ -165,218 +168,90 @@ class MarketApiService(private val httpClient: OkHttpClient) {
     suspend fun fetchCompleteMarketOverview(): List<FinancialAsset> = withContext(Dispatchers.IO) {
         val assets = mutableListOf<FinancialAsset>()
 
-        // 1. Canlı Döviz Kurlarını Çek
+        fun addAsset(
+            code: String,
+            name: String,
+            symbol: String,
+            price: Double,
+            changePct: Double = 0.0,
+            unit: String = "₺",
+            high: Double = price,
+            low: Double = price,
+        ) {
+            if (price > 0.0 && price.isFinite()) {
+                assets.add(
+                    FinancialAsset(
+                        code = code,
+                        name = name,
+                        symbol = symbol,
+                        currentPrice = price,
+                        changePct = changePct,
+                        highPrice = high,
+                        lowPrice = low,
+                        unit = unit,
+                    )
+                )
+            }
+        }
+
         val currencies = fetchLiveCurrencies()
-        val usdTry = currencies["USD_TRY"] ?: 49.75
-        val eurTry = currencies["EUR_TRY"] ?: (usdTry * 1.09)
-        val gbpTry = currencies["GBP_TRY"] ?: (usdTry * 1.27)
+        val usdTry = currencies["USD_TRY"]
+        val eurTry = currencies["EUR_TRY"]
+        val gbpTry = currencies["GBP_TRY"]
 
-        // 2. Canlı ONS Altın ve Gümüş (Retrofit GC=F ve SI=F üzerinden)
-        val onsGoldUsd = bistRetrofitApi.fetchGoldOnsUsd()
-        val onsSilverUsd = bistRetrofitApi.fetchSilverOnsUsd()
+        usdTry?.let { addAsset("USD/TRY", "Amerikan Doları", "$", it) }
+        eurTry?.let { addAsset("EUR/TRY", "Euro", "€", it) }
+        gbpTry?.let { addAsset("GBP/TRY", "İngiliz Sterlini", "£", it) }
 
-        // 1 ONS = 31.1034768 Gram. Kapalıçarşı & Serbest piyasa çarpanları ile hesaplama:
-        val gramAltinTry = Math.round(((onsGoldUsd / 31.1034768) * usdTry * 1.012) * 100.0) / 100.0
-        val ceyrekAltinTry = Math.round((gramAltinTry * 1.635) * 100.0) / 100.0
-        val yarimAltinTry = Math.round((ceyrekAltinTry * 2.0) * 100.0) / 100.0
-        val cumhuriyetAltinTry = Math.round((ceyrekAltinTry * 4.0) * 100.0) / 100.0
-        val ataAltinTry = Math.round((gramAltinTry * 6.72) * 100.0) / 100.0
-        val bilezik22Try = Math.round((gramAltinTry * 0.916) * 100.0) / 100.0
-        val gumusGramTry = Math.round(((onsSilverUsd / 31.1034768) * usdTry * 1.01) * 100.0) / 100.0
+        val goldUsd = bistRetrofitApi.fetchGoldOnsUsd()
+        val silverUsd = bistRetrofitApi.fetchSilverOnsUsd()
+        val gramGoldTry = if (goldUsd != null && usdTry != null) {
+            (goldUsd / 31.1034768) * usdTry
+        } else null
+        val gramSilverTry = if (silverUsd != null && usdTry != null) {
+            (silverUsd / 31.1034768) * usdTry
+        } else null
 
-        // 3. Canlı Kripto
-        val crypto = fetchLiveCrypto()
-        val btcTry = crypto["BTC"]?.first ?: (usdTry * 68500.0)
-        val btcChange = crypto["BTC"]?.second ?: 2.14
+        gramGoldTry?.let { gram ->
+            val quarter = gram * 1.635
+            addAsset("GA", "Gram Altın", "Altın", gram)
+            addAsset("CA", "Çeyrek Altın", "Çeyrek", quarter)
+            addAsset("YA", "Yarım Altın", "Yarım", quarter * 2.0)
+            addAsset("CUM", "Cumhuriyet Altını", "Tam", quarter * 4.0)
+            addAsset("BLZ", "22 Ayar Bilezik (Gr)", "Bilezik", gram * 0.916)
+        }
+        goldUsd?.let { addAsset("XAU/USD", "ONS Altın ($)", "ONS", it, unit = "$") }
+        gramSilverTry?.let {
+            addAsset("GUM", "Gümüş Gram", "Gümüş", it)
+            addAsset("GUMUS", "Gümüş (Gram)", "Ag", it)
+        }
+        silverUsd?.let { addAsset("XAG/USD", "ONS Gümüş ($)", "ONS", it, unit = "$") }
 
-        // 4. Canlı BIST 100 Endeksi (Retrofit üzerinden)
-        val bistStock = bistRetrofitApi.fetchBistStock("XU100")
-        val bistPrice = bistStock?.price ?: 11116.99
-        val bistChange = bistStock?.changePct ?: 0.65
+        fetchLiveCrypto().forEach { (code, quote) ->
+            val (price, change) = quote
+            val asset = when (code) {
+                "BTC" -> Triple("BTC/TRY", "Bitcoin", "₿")
+                "ETH" -> Triple("ETH/TRY", "Ethereum", "Ξ")
+                else -> null
+            }
+            if (asset != null) {
+                addAsset(asset.first, asset.second, asset.third, price, change)
+            }
+        }
 
-        // Dolar
-        assets.add(
-            FinancialAsset(
-                code = "USD/TRY",
-                name = "Amerikan Doları",
-                symbol = "$",
-                currentPrice = Math.round(usdTry * 100.0) / 100.0,
-                changePct = 0.28,
-                highPrice = Math.round((usdTry * 1.004) * 100.0) / 100.0,
-                lowPrice = Math.round((usdTry * 0.996) * 100.0) / 100.0,
-                sparkline = listOf((usdTry * 0.992).toFloat(), (usdTry * 0.995).toFloat(), (usdTry * 0.998).toFloat(), usdTry.toFloat()),
-            )
-        )
-
-        // Euro
-        assets.add(
-            FinancialAsset(
-                code = "EUR/TRY",
-                name = "Euro",
-                symbol = "€",
-                currentPrice = Math.round(eurTry * 100.0) / 100.0,
-                changePct = -0.15,
-                highPrice = Math.round((eurTry * 1.005) * 100.0) / 100.0,
-                lowPrice = Math.round((eurTry * 0.995) * 100.0) / 100.0,
-                sparkline = listOf((eurTry * 1.003).toFloat(), (eurTry * 1.001).toFloat(), (eurTry * 0.998).toFloat(), eurTry.toFloat()),
-            )
-        )
-
-        // Gram Altın
-        assets.add(
-            FinancialAsset(
-                code = "GA",
-                name = "Gram Altın",
-                symbol = "Altın",
-                currentPrice = gramAltinTry,
-                changePct = 0.85,
-                highPrice = Math.round((gramAltinTry * 1.008) * 100.0) / 100.0,
-                lowPrice = Math.round((gramAltinTry * 0.992) * 100.0) / 100.0,
-                sparkline = listOf((gramAltinTry * 0.991).toFloat(), (gramAltinTry * 0.995).toFloat(), (gramAltinTry * 0.998).toFloat(), gramAltinTry.toFloat()),
-            )
-        )
-
-        // Çeyrek Altın
-        assets.add(
-            FinancialAsset(
-                code = "CA",
-                name = "Çeyrek Altın",
-                symbol = "Çeyrek",
-                currentPrice = ceyrekAltinTry,
-                changePct = 0.82,
-                highPrice = Math.round((ceyrekAltinTry * 1.008) * 100.0) / 100.0,
-                lowPrice = Math.round((ceyrekAltinTry * 0.992) * 100.0) / 100.0,
-                sparkline = listOf((ceyrekAltinTry * 0.991).toFloat(), (ceyrekAltinTry * 0.995).toFloat(), (ceyrekAltinTry * 0.998).toFloat(), ceyrekAltinTry.toFloat()),
-            )
-        )
-
-        // Yarım Altın
-        assets.add(
-            FinancialAsset(
-                code = "YA",
-                name = "Yarım Altın",
-                symbol = "Yarım",
-                currentPrice = yarimAltinTry,
-                changePct = 0.82,
-                highPrice = Math.round((yarimAltinTry * 1.008) * 100.0) / 100.0,
-                lowPrice = Math.round((yarimAltinTry * 0.992) * 100.0) / 100.0,
-                sparkline = listOf((yarimAltinTry * 0.991).toFloat(), (yarimAltinTry * 0.995).toFloat(), yarimAltinTry.toFloat()),
-            )
-        )
-
-        // Cumhuriyet Altını
-        assets.add(
-            FinancialAsset(
-                code = "CUM",
-                name = "Cumhuriyet Altını",
-                symbol = "Tam",
-                currentPrice = cumhuriyetAltinTry,
-                changePct = 0.85,
-                highPrice = Math.round((cumhuriyetAltinTry * 1.008) * 100.0) / 100.0,
-                lowPrice = Math.round((cumhuriyetAltinTry * 0.992) * 100.0) / 100.0,
-                sparkline = listOf((cumhuriyetAltinTry * 0.99).toFloat(), cumhuriyetAltinTry.toFloat()),
-            )
-        )
-
-        // 22 Ayar Bilezik
-        assets.add(
-            FinancialAsset(
-                code = "BLZ",
-                name = "22 Ayar Bilezik (Gr)",
-                symbol = "Bilezik",
-                currentPrice = bilezik22Try,
-                changePct = 0.80,
-                highPrice = Math.round((bilezik22Try * 1.008) * 100.0) / 100.0,
-                lowPrice = Math.round((bilezik22Try * 0.992) * 100.0) / 100.0,
-                sparkline = listOf((bilezik22Try * 0.991).toFloat(), bilezik22Try.toFloat()),
-            )
-        )
-
-        // ONS Altın ($)
-        assets.add(
-            FinancialAsset(
-                code = "XAU/USD",
-                name = "ONS Altın ($)",
-                symbol = "ONS",
-                currentPrice = Math.round(onsGoldUsd * 100.0) / 100.0,
-                changePct = 0.62,
-                highPrice = Math.round((onsGoldUsd * 1.006) * 100.0) / 100.0,
-                lowPrice = Math.round((onsGoldUsd * 0.994) * 100.0) / 100.0,
-                unit = "$",
-                sparkline = listOf((onsGoldUsd * 0.992).toFloat(), (onsGoldUsd * 0.996).toFloat(), onsGoldUsd.toFloat()),
-            )
-        )
-
-        // Gümüş (Gr)
-        assets.add(
-            FinancialAsset(
-                code = "GUM",
-                name = "Gümüş Gram",
-                symbol = "Gümüş",
-                currentPrice = gumusGramTry,
-                changePct = 1.15,
-                highPrice = Math.round((gumusGramTry * 1.01) * 100.0) / 100.0,
-                lowPrice = Math.round((gumusGramTry * 0.99) * 100.0) / 100.0,
-                sparkline = listOf((gumusGramTry * 0.985).toFloat(), gumusGramTry.toFloat()),
-            )
-        )
-
-        // BIST 100
-        assets.add(
-            FinancialAsset(
+        val bist = bistRetrofitApi.fetchBistStock("XU100")
+        if (bist != null) {
+            addAsset(
                 code = "BIST100",
                 name = "BIST 100 Endeksi",
                 symbol = "BIST",
-                currentPrice = bistPrice,
-                changePct = bistChange,
-                highPrice = Math.round((bistPrice * 1.01) * 100.0) / 100.0,
-                lowPrice = Math.round((bistPrice * 0.99) * 100.0) / 100.0,
+                price = bist.price,
+                changePct = bist.changePct,
                 unit = "Puan",
-                sparkline = listOf(11050f, 11090f, 11110f, bistPrice.toFloat()),
+                high = bist.high,
+                low = bist.low,
             )
-        )
-
-        // Bitcoin
-        assets.add(
-            FinancialAsset(
-                code = "BTC/TRY",
-                name = "Bitcoin",
-                symbol = "₿",
-                currentPrice = btcTry,
-                changePct = btcChange,
-                highPrice = Math.round((btcTry * 1.025) * 100.0) / 100.0,
-                lowPrice = Math.round((btcTry * 0.975) * 100.0) / 100.0,
-                sparkline = listOf(2280000f, 2310000f, 2295000f, 2330000f, btcTry.toFloat()),
-            )
-        )
-
-        // Gümüş
-        assets.add(
-            FinancialAsset(
-                code = "GUMUS",
-                name = "Gümüş (Gram)",
-                symbol = "Ag",
-                currentPrice = gumusGramTry,
-                changePct = 1.15,
-                highPrice = Math.round((gumusGramTry * 1.012) * 100.0) / 100.0,
-                lowPrice = Math.round((gumusGramTry * 0.988) * 100.0) / 100.0,
-                sparkline = listOf(36.8f, 37.1f, 37.4f, 37.6f, gumusGramTry.toFloat()),
-            )
-        )
-
-        // İngiliz Sterlini
-        assets.add(
-            FinancialAsset(
-                code = "GBP/TRY",
-                name = "İngiliz Sterlini",
-                symbol = "£",
-                currentPrice = Math.round(gbpTry * 100.0) / 100.0,
-                changePct = 0.32,
-                highPrice = Math.round((gbpTry * 1.004) * 100.0) / 100.0,
-                lowPrice = Math.round((gbpTry * 0.996) * 100.0) / 100.0,
-                sparkline = listOf(44.2f, 44.3f, 44.4f, 44.45f, gbpTry.toFloat()),
-            )
-        )
+        }
 
         assets
     }
@@ -407,19 +282,4 @@ class MarketApiService(private val httpClient: OkHttpClient) {
         }
     }
 
-    private fun getFallbackStock(sym: String): BISTStock {
-        return when (sym) {
-            "THYAO" -> BISTStock("THYAO", "Türk Hava Yolları", 274.50, 1.45, 276.00, 271.00, "4.2 Mn ₺")
-            "ASELS" -> BISTStock("ASELS", "Aselsan Elektronik", 62.80, 2.10, 63.50, 61.20, "3.1 Mn ₺")
-            "GARAN" -> BISTStock("GARAN", "Garanti BBVA", 114.20, -0.65, 115.80, 113.40, "2.8 Mn ₺")
-            "EREGL" -> BISTStock("EREGL", "Ereğli Demir Çelik", 49.30, 0.40, 49.90, 48.70, "1.9 Mn ₺")
-            "KCHOL" -> BISTStock("KCHOL", "Koç Holding", 198.50, 0.90, 201.00, 196.20, "2.4 Mn ₺")
-            "TUPRS" -> BISTStock("TUPRS", "Tüpraş Rafinerileri", 143.60, -1.10, 145.40, 142.50, "3.6 Mn ₺")
-            "BIMAS" -> BISTStock("BIMAS", "BİM Birleşik Mağazalar", 468.00, 0.75, 472.00, 464.00, "1.5 Mn ₺")
-            "AKBNK" -> BISTStock("AKBNK", "Akbank", 53.40, -0.35, 54.10, 52.80, "2.2 Mn ₺")
-            "SASA" -> BISTStock("SASA", "SASA Polyester", 4.15, 1.22, 4.22, 4.08, "1.1 Mn ₺")
-            "SISE" -> BISTStock("SISE", "Şişecam", 41.20, 0.30, 41.80, 40.90, "1.3 Mn ₺")
-            else -> BISTStock(sym, sym, 100.0, 0.0, 100.0, 100.0, "1.0 Mn ₺")
-        }
-    }
 }
