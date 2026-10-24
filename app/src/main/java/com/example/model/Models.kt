@@ -21,6 +21,7 @@ data class Story(
     val topic: String,
     val publisher: String,
     val publishedAt: String,
+    val publishedAtEpochMs: Long = 0L,
     val readTimeMin: Int = 2,
     val imageUrl: String = "",
     val isBreaking: Boolean = false,
@@ -55,6 +56,7 @@ data class SportsMatch(
     val status: MatchStatus,
     val statusLabel: String,
     val kickoffTime: String,
+    val kickoffAtEpochMs: Long = 0L,
     val events: List<MatchEvent> = emptyList(),
     val sportType: String = "FUTBOL", // "FUTBOL", "BASKETBOL", "VOLEYBOL"
     val liveAction: String = "",       // e.g. "⚽ GOL! 78' Icardi"
@@ -71,6 +73,17 @@ data class SportsMatch(
     val cornersAway: Int = 3,
     val referee: String = "",
     val stadium: String = "",
+)
+
+data class SportsSnapshot(
+    val competition: String = "",
+    val sportType: String = "",
+    val matches: List<SportsMatch> = emptyList(),
+    val standings: List<LeagueStanding> = emptyList(),
+    val topScorers: List<TopScorer> = emptyList(),
+    val isLoading: Boolean = false,
+    val updatedAtEpochMs: Long = 0L,
+    val scorerMessage: String = "",
 )
 
 data class TopScorer(
@@ -104,9 +117,10 @@ data class LeagueStanding(
     val lost: Int,
     val goalDiff: Int,
     val points: Int,
-    val form: String = "G-G-B-G-M",
+    val form: String = "—",
     val goalsFor: Int = 0,
     val goalsAgainst: Int = 0,
+    val qualificationNote: String? = null,
 )
 
 data class HourlyWeather(

@@ -88,31 +88,21 @@ fun SporScreen(
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
-    val matches by repository.matches.collectAsState()
-    val standings by repository.standings.collectAsState()
-    val topScorers by repository.topScorers.collectAsState()
+    val sportsSnapshot by repository.sportsSnapshot.collectAsState()
     val prefs by repository.preferences.collectAsState()
 
-    // Sport Selector: Futbol, Basketbol, Voleybol
+    // Only show sports and leagues backed by a real data source.
     var selectedSport by remember { mutableStateOf("FUTBOL") }
-    val sportCategories = listOf("FUTBOL" to "⚽ Futbol", "BASKETBOL" to "🏀 Basketbol", "VOLEYBOL" to "🏐 Voleybol")
+    val sportCategories = listOf("FUTBOL" to "⚽ Futbol", "BASKETBOL" to "🏀 Basketbol")
 
     // League choices depending on sport
     val competitions = when (selectedSport) {
         "BASKETBOL" -> listOf(
-            "Turkish Airlines EuroLeague" to "🇪🇺 EuroLeague",
             "NBA" to "🇺🇸 NBA",
-            "A Milli Erkek Basketbol (12 Dev Adam)" to "🇹🇷 12 Dev Adam",
-        )
-        "VOLEYBOL" -> listOf(
-            "Vodafone Sultanlar Ligi" to "🇹🇷 Sultanlar Ligi",
-            "Filenin Sultanları (Milli Takım)" to "🇹🇷 Filenin Sultanları",
-            "CEV Şampiyonlar Ligi" to "🇪🇺 CEV Kadınlar",
         )
         else -> listOf(
             "Trendyol Süper Lig" to "🇹🇷 Süper Lig",
             "UEFA Şampiyonlar Ligi" to "🏆 Şampiyonlar Ligi",
-            "A Milli Takım" to "🇹🇷 A Milli Futbol",
             "İngiltere Premier Lig" to "🏴󠁧󠁢󠁥󠁮󠁧󠁿 Premier Lig",
             "İspanya La Liga" to "🇪🇸 La Liga",
         )
@@ -125,17 +115,36 @@ fun SporScreen(
     // Match alert toggles
     val matchAlerts = remember { mutableStateMapOf<String, Boolean>() }
 
-    // Live update loop: updates immediately and keeps polling automatically every 20s
+    // Live scores refresh once a minute; standings and scorer tables are cached by the service.
     LaunchedEffect(selectedCompetition, selectedSport) {
         while (isActive) {
             repository.fetchLiveSports(selectedCompetition, selectedSport)
-            delay(20_000L)
+            delay(60_000L)
         }
     }
 
-    val liveMatches = remember(matches) { matches.filter { it.status == MatchStatus.LIVE } }
-    val finishedMatches = remember(matches) { matches.filter { it.status == MatchStatus.FINISHED } }
-    val upcomingMatches = remember(matches) { matches.filter { it.status == MatchStatus.UPCOMING } }
+    val snapshotMatches = if (sportsSnapshot.competition == selectedCompetition && sportsSnapshot.sportType == selectedSport) {
+        sportsSnapshot.matches
+    } else emptyList()
+    val standings = if (sportsSnapshot.competition == selectedCompetition && sportsSnapshot.sportType == selectedSport) {
+        sportsSnapshot.standings
+    } else emptyList()
+    val topScorers = if (sportsSnapshot.competition == selectedCompetition && sportsSnapshot.sportType == selectedSport) {
+        sportsSnapshot.topScorers
+    } else emptyList()
+    val sportsLoading = sportsSnapshot.competition == selectedCompetition &&
+        sportsSnapshot.sportType == selectedSport && sportsSnapshot.isLoading
+    val scorerMessage = when {
+        selectedSport != "FUTBOL" -> "Bu branş için gol krallığı verisi sunulmuyor."
+        sportsSnapshot.competition != selectedCompetition || sportsSnapshot.sportType != selectedSport -> "Gol krallığı verisi yükleniyor."
+        sportsSnapshot.isLoading && topScorers.isEmpty() -> "Gol krallığı verisi yükleniyor."
+        topScorers.isNotEmpty() -> ""
+        else -> sportsSnapshot.scorerMessage.ifBlank { "Gol krallığı verisi alınamadı." }
+    }
+
+    val liveMatches = remember(snapshotMatches) { snapshotMatches.filter { it.status == MatchStatus.LIVE } }
+    val finishedMatches = remember(snapshotMatches) { snapshotMatches.filter { it.status == MatchStatus.FINISHED } }
+    val upcomingMatches = remember(snapshotMatches) { snapshotMatches.filter { it.status == MatchStatus.UPCOMING } }
 
     Column(
         modifier = modifier
@@ -334,7 +343,7 @@ fun SporScreen(
                 // CANLI SKORLAR TAB
                 MackolikLiveMatchesList(
                     liveMatches = liveMatches,
-                    allMatches = matches,
+                    allMatches = snapshotMatches,
                     matchAlerts = matchAlerts,
                     onToggleAlert = { match ->
                         val current = matchAlerts[match.id] ?: false
@@ -357,6 +366,8 @@ fun SporScreen(
                     standings = standings,
                     followedTeams = prefs.followedTeams,
                     competition = selectedCompetition,
+                    isLoading = sportsLoading,
+                    emptyMessage = if (selectedSport == "FUTBOL") "Bu lig için şu anda puan durumu alınamadı." else "Bu branş için puan durumu verisi sunulmuyor.",
                 )
             }
             2 -> {
@@ -364,6 +375,8 @@ fun SporScreen(
                 MackolikScorersTab(
                     scorers = topScorers,
                     sportType = selectedSport,
+                    competition = selectedCompetition,
+                    emptyMessage = scorerMessage,
                 )
             }
             3 -> {
@@ -382,7 +395,7 @@ fun SporScreen(
             4 -> {
                 // GOL & SAYI BİLDİRİMLERİ TAB
                 MackolikGoalAlertsFeed(
-                    matches = matches,
+                    matches = snapshotMatches,
                 )
             }
         }
@@ -1037,17 +1050,39 @@ fun StatComparisonBar(title: String, home: String, away: String, ratio: Float) {
 }
 
 /**
- * Puan Durumu Tablosu (Genel, İç Saha, Dış Saha Filtreli, 19 Takımlı Tam Liste)
+ * Seçili ligin sağlayıcıdan gelen puan tablosu.
  */
+private fun qualificationLabel(note: String): String? {
+    val lower = note.lowercase()
+    return when {
+        "relegat" in lower || "drop" in lower || "düşme" in lower -> "Düşme hattı"
+        "champions league" in lower || "şampiyonlar ligi" in lower -> "Şampiyonlar Ligi"
+        "europa league" in lower || "avrupa ligi" in lower -> "Avrupa Ligi"
+        "conference league" in lower || "konferans ligi" in lower -> "Konferans Ligi"
+        "playoff" in lower || "play-off" in lower -> "Play-off"
+        else -> null
+    }
+}
+
+private fun qualificationColor(note: String?): Color {
+    val lower = note?.lowercase().orEmpty()
+    return when {
+        "relegat" in lower || "drop" in lower || "düşme" in lower -> Color(0xFFD32F2F)
+        "champions league" in lower || "şampiyonlar ligi" in lower -> Color(0xFF1976D2)
+        "europa league" in lower || "avrupa ligi" in lower -> Color(0xFFE65100)
+        "conference league" in lower || "konferans ligi" in lower -> Color(0xFF2E7D32)
+        else -> Color.Transparent
+    }
+}
+
 @Composable
 fun MackolikStandingsTable(
     standings: List<LeagueStanding>,
     followedTeams: Set<String>,
     competition: String,
+    isLoading: Boolean = false,
+    emptyMessage: String = "Puan durumu alınamadı.",
 ) {
-    var filterMode by remember { mutableStateOf("Genel") }
-    val modes = listOf("Genel", "İç Saha", "Dış Saha")
-
     Card(
         shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -1058,7 +1093,6 @@ fun MackolikStandingsTable(
             .padding(16.dp),
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
-            // Mode Filter Row (Genel, İç Saha, Dış Saha)
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -1074,27 +1108,6 @@ fun MackolikStandingsTable(
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f)
                 )
-
-                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    modes.forEach { mode ->
-                        val isSel = filterMode == mode
-                        Surface(
-                            shape = RoundedCornerShape(12.dp),
-                            color = if (isSel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant,
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(12.dp))
-                                .clickable { filterMode = mode }
-                        ) {
-                            Text(
-                                text = mode,
-                                color = if (isSel) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
-                                fontSize = 11.sp,
-                                fontWeight = if (isSel) FontWeight.Bold else FontWeight.Medium,
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                            )
-                        }
-                    }
-                }
             }
 
             // Header Row: S | Takım | O | G | B | M | AG | YG | AV | P
@@ -1123,16 +1136,20 @@ fun MackolikStandingsTable(
                     .weight(1f),
                 contentPadding = PaddingValues(vertical = 4.dp),
             ) {
-                items(standings, key = { it.rank }) { team ->
-                    val isFollowed = team.team in followedTeams
-
-                    val rankIndicatorColor = when {
-                        team.rank in 1..2 -> Color(0xFF1976D2)  // Şampiyonlar Ligi (Mavi)
-                        team.rank == 3 -> Color(0xFFE65100)      // Avrupa Ligi (Turuncu)
-                        team.rank == 4 -> Color(0xFF2E7D32)      // Konferans Ligi (Yeşil)
-                        team.rank >= 16 -> Color(0xFFD32F2F)     // Düşme Hattı (Kırmızı)
-                        else -> Color.Transparent
+                if (standings.isEmpty()) {
+                    item(key = "empty_standings") {
+                        Text(
+                            text = if (isLoading) "Puan durumu yükleniyor…" else emptyMessage,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.fillMaxWidth().padding(24.dp),
+                        )
                     }
+                }
+                items(standings, key = { it.team }) { team ->
+                    val isFollowed = team.team in followedTeams
+                    val qualificationColor = qualificationColor(team.qualificationNote)
 
                     Row(
                         modifier = Modifier
@@ -1145,41 +1162,49 @@ fun MackolikStandingsTable(
                             modifier = Modifier.width(22.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            if (rankIndicatorColor != Color.Transparent) {
+                            if (qualificationColor != Color.Transparent) {
                                 Box(
                                     modifier = Modifier
                                         .size(width = 3.dp, height = 14.dp)
                                         .clip(RoundedCornerShape(1.dp))
-                                        .background(rankIndicatorColor),
+                                        .background(qualificationColor),
                                 )
                                 Spacer(Modifier.width(2.dp))
                             }
                             Text(
                                 text = "${team.rank}",
-                                fontWeight = if (team.rank <= 4) FontWeight.Bold else FontWeight.Medium,
+                                fontWeight = if (team.rank == 1) FontWeight.Bold else FontWeight.Medium,
                                 fontSize = 11.5.sp,
                                 textAlign = TextAlign.Center,
                                 modifier = Modifier.weight(1f),
                             )
                         }
 
-                        Row(
+                        Column(
                             modifier = Modifier.weight(1f),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            verticalArrangement = Arrangement.Center,
                         ) {
                             Text(
                                 text = team.team,
                                 style = MaterialTheme.typography.bodyMedium.copy(
-                                    fontWeight = if (isFollowed || team.rank <= 2) FontWeight.Bold else FontWeight.Normal,
+                                    fontWeight = if (isFollowed || team.rank == 1) FontWeight.Bold else FontWeight.Normal,
                                     fontSize = 12.5.sp,
                                 ),
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                             )
-                            if (isFollowed) {
-                                Text("★", color = CizgiColor.Gold, fontSize = 11.sp)
+                            team.qualificationNote?.let { note ->
+                                Text(
+                                    text = qualificationLabel(note) ?: note,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
                             }
+                        }
+                        if (isFollowed) {
+                            Text("★", color = CizgiColor.Gold, fontSize = 11.sp)
                         }
 
                         Text("${team.played}", fontSize = 11.5.sp, modifier = Modifier.width(24.dp), textAlign = TextAlign.Center)
@@ -1200,22 +1225,21 @@ fun MackolikStandingsTable(
                 }
             }
 
-            // Explanatory Color Legend at bottom
-            Surface(
-                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 10.dp, vertical = 6.dp),
-                    horizontalArrangement = Arrangement.SpaceAround,
-                    verticalAlignment = Alignment.CenterVertically
+            val actualZones = standings.mapNotNull { team ->
+                team.qualificationNote?.let { note -> qualificationLabel(note)?.let { it to qualificationColor(note) } }
+            }.distinctBy { it.first }
+            if (actualZones.isNotEmpty()) {
+                Surface(
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                    modifier = Modifier.fillMaxWidth(),
                 ) {
-                    LegendItem(color = Color(0xFF1976D2), label = "Şamp. Ligi")
-                    LegendItem(color = Color(0xFFE65100), label = "Avrupa Ligi")
-                    LegendItem(color = Color(0xFF2E7D32), label = "Konferans")
-                    LegendItem(color = Color(0xFFD32F2F), label = "Düşme Hattı")
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterHorizontally),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        actualZones.forEach { (label, color) -> LegendItem(color = color, label = label) }
+                    }
                 }
             }
         }
@@ -1245,6 +1269,8 @@ fun LegendItem(color: Color, label: String) {
 fun MackolikScorersTab(
     scorers: List<TopScorer>,
     sportType: String,
+    competition: String = "",
+    emptyMessage: String = "Gol krallığı verisi alınamadı.",
 ) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -1262,15 +1288,15 @@ fun MackolikScorersTab(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    Text(if (sportType == "VOLEYBOL") "🏐" else if (sportType == "BASKETBOL") "🏀" else "⚽", fontSize = 24.sp)
+                    Text(if (sportType == "BASKETBOL") "🏀" else "⚽", fontSize = 24.sp)
                     Column {
                         Text(
-                            text = if (sportType == "VOLEYBOL") "SULTANLAR LİGİ SAYI KRALLIĞI" else if (sportType == "BASKETBOL") "EUROLEAGUE VE NBA İSTATİSTİKLERİ" else "SÜPER LİG GOL VE ASİST KRALLIĞI",
+                            text = if (sportType == "BASKETBOL") "$competition İSTATİSTİKLERİ" else "$competition GOL KRALLIĞI",
                             style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
                             color = MaterialTheme.colorScheme.primary,
                         )
                         Text(
-                            text = "Sezonun en çok gol atan ve skor üreten yıldızları",
+                            text = "Güncel sezon verisi",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -1287,7 +1313,24 @@ fun MackolikScorersTab(
             )
         }
 
-        items(scorers) { scorer ->
+        if (scorers.isEmpty()) {
+            item(key = "empty_scorers") {
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(
+                        text = emptyMessage,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth().padding(20.dp),
+                    )
+                }
+            }
+        }
+
+        items(scorers, key = { "${it.team}-${it.player}" }) { scorer ->
             Card(
                 shape = RoundedCornerShape(12.dp),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),

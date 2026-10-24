@@ -2,6 +2,7 @@ package com.example.data
 
 import android.content.Context
 import com.example.data.local.CizgiDatabase
+import com.example.data.local.NewsArticleEntity
 import com.example.data.local.SavedArticleEntity
 import com.example.data.remote.FootballApiService
 import com.example.data.remote.RssNewsService
@@ -10,6 +11,7 @@ import com.example.model.FinancialAsset
 import com.example.model.LeagueStanding
 import com.example.model.NotificationItem
 import com.example.model.SportsMatch
+import com.example.model.SportsSnapshot
 import com.example.model.Story
 import com.example.model.UserPreferences
 import com.example.model.WeatherInfo
@@ -17,6 +19,8 @@ import com.example.util.CizgiNotificationHelper
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -41,6 +45,7 @@ class CizgiRepository private constructor(private val context: Context) {
     // Room Database
     private val database = CizgiDatabase.getDatabase(context)
     private val savedArticleDao = database.savedArticleDao()
+    private val newsArticleDao = database.newsArticleDao()
 
     // Remote Services
     private val rssNewsService = RssNewsService(httpClient)
@@ -51,20 +56,25 @@ class CizgiRepository private constructor(private val context: Context) {
     // State flows
     private val _stories = MutableStateFlow<List<Story>>(emptyList())
     val stories: StateFlow<List<Story>> = _stories.asStateFlow()
+    val newsArchiveCount: StateFlow<Int> = newsArticleDao.observeCount()
+        .stateIn(scope, SharingStarted.Eagerly, 0)
 
     // Room-persisted saved articles
     val savedArticles: StateFlow<List<Story>> = savedArticleDao.getAllSavedArticles()
         .map { list -> list.map { it.toStory() } }
         .stateIn(scope, SharingStarted.Eagerly, emptyList())
 
-    private val _matches = MutableStateFlow<List<SportsMatch>>(emptyList())
-    val matches: StateFlow<List<SportsMatch>> = _matches.asStateFlow()
-
-    private val _standings = MutableStateFlow<List<LeagueStanding>>(emptyList())
-    val standings: StateFlow<List<LeagueStanding>> = _standings.asStateFlow()
-
-    private val _topScorers = MutableStateFlow<List<com.example.model.TopScorer>>(emptyList())
-    val topScorers: StateFlow<List<com.example.model.TopScorer>> = _topScorers.asStateFlow()
+    private val _sportsSnapshot = MutableStateFlow(SportsSnapshot())
+    val sportsSnapshot: StateFlow<SportsSnapshot> = _sportsSnapshot.asStateFlow()
+    val matches: StateFlow<List<SportsMatch>> = _sportsSnapshot
+        .map { it.matches }
+        .stateIn(scope, SharingStarted.Eagerly, emptyList())
+    val standings: StateFlow<List<LeagueStanding>> = _sportsSnapshot
+        .map { it.standings }
+        .stateIn(scope, SharingStarted.Eagerly, emptyList())
+    val topScorers: StateFlow<List<com.example.model.TopScorer>> = _sportsSnapshot
+        .map { it.topScorers }
+        .stateIn(scope, SharingStarted.Eagerly, emptyList())
 
     private val _weather = MutableStateFlow(
         WeatherInfo(
@@ -109,11 +119,14 @@ class CizgiRepository private constructor(private val context: Context) {
     private var newsStreamJob: kotlinx.coroutines.Job? = null
     private var marketStreamJob: kotlinx.coroutines.Job? = null
     private var weatherStreamJob: kotlinx.coroutines.Job? = null
-    private var sportsStreamJob: kotlinx.coroutines.Job? = null
+    private var activeSportsKey: String? = null
+    private var sportsRefreshJob: Job? = null
+    private val newsPageMutex = Mutex()
 
     init {
         loadSavedPreferences()
         observeSavedArticles()
+        observeNewsArchive()
         refreshAll()
         startContinuousStreams()
     }
@@ -177,11 +190,20 @@ class CizgiRepository private constructor(private val context: Context) {
             }
         }
 
-        sportsStreamJob?.cancel()
-        sportsStreamJob = scope.launch {
-            while (isActive) {
-                kotlinx.coroutines.delay(60 * 60_000L)
-                refreshSportsData("Trendyol Süper Lig", "FUTBOL")
+    }
+
+    private fun observeNewsArchive() {
+        scope.launch {
+            newsArticleDao.observeLatest(NEWS_PAGE_SIZE).collect { latestArticles ->
+                val savedIds = savedArticles.value.map { it.id }.toSet()
+                val latest = latestArticles.map { it.toStory().copy(isSaved = it.id in savedIds) }
+                _stories.update { current ->
+                    val latestIds = latest.mapTo(mutableSetOf()) { it.id }
+                    (latest + current.filterNot { it.id in latestIds })
+                        .distinctBy { it.id }
+                        .sortedWith(compareByDescending<Story> { it.publishedAtEpochMs }.thenByDescending { it.id })
+                        .take(MAX_IN_MEMORY_STORIES)
+                }
             }
         }
     }
@@ -232,6 +254,11 @@ class CizgiRepository private constructor(private val context: Context) {
     }
 
     fun refreshAll() {
+        val activeSelection = activeSportsKey?.split("|", limit = 2)
+        fetchLiveSports(
+            competition = activeSelection?.getOrNull(1) ?: "Trendyol Süper Lig",
+            sportType = activeSelection?.getOrNull(0) ?: "FUTBOL",
+        )
         scope.launch {
             if (!refreshMutex.tryLock()) return@launch
             _isRefreshing.value = true
@@ -239,7 +266,6 @@ class CizgiRepository private constructor(private val context: Context) {
                 coroutineScope {
                     launch { refreshNewsData() }
                     launch { refreshWeatherData(locationQuery()) }
-                    launch { refreshSportsData("Trendyol Süper Lig", "FUTBOL") }
                     launch { refreshMarketData() }
                 }
             } finally {
@@ -264,11 +290,21 @@ class CizgiRepository private constructor(private val context: Context) {
 
     private suspend fun refreshNewsData() {
         try {
-            val liveFeed = rssNewsService.fetchRealNews().take(60)
+            val liveFeed = rssNewsService.fetchRealNews()
             if (liveFeed.isEmpty()) return
 
+            newsArticleDao.upsertAll(liveFeed.map(NewsArticleEntity::fromStory))
+            newsArticleDao.pruneOldest(MAX_ARCHIVE_ARTICLES)
+
             val savedIds = savedArticles.value.map { it.id }.toSet()
-            _stories.value = liveFeed.map { it.copy(isSaved = it.id in savedIds) }
+            _stories.update { current ->
+                val incoming = liveFeed.map { it.copy(isSaved = it.id in savedIds) }
+                val incomingIds = incoming.mapTo(mutableSetOf()) { it.id }
+                (incoming + current.filterNot { it.id in incomingIds })
+                    .distinctBy { it.id }
+                    .sortedWith(compareByDescending<Story> { it.publishedAtEpochMs }.thenByDescending { it.id })
+                    .take(MAX_IN_MEMORY_STORIES)
+            }
 
             val now = System.currentTimeMillis()
             val criticalBreaking = liveFeed.firstOrNull { story ->
@@ -317,20 +353,63 @@ class CizgiRepository private constructor(private val context: Context) {
         } catch (_: Exception) {}
     }
 
-    fun fetchLiveSports(competition: String = "Trendyol Süper Lig", sportType: String = "FUTBOL") {
-        scope.launch { refreshSportsData(competition, sportType) }
+    fun loadOlderNews() {
+        scope.launch {
+            if (!newsPageMutex.tryLock()) return@launch
+            try {
+                val oldest = _stories.value.minWithOrNull(
+                    compareBy<Story> { it.publishedAtEpochMs }.thenBy { it.id }
+                ) ?: return@launch
+                if (_stories.value.size >= MAX_IN_MEMORY_STORIES) return@launch
+
+                val remainingCapacity = MAX_IN_MEMORY_STORIES - _stories.value.size
+                val older = newsArticleDao.loadOlder(
+                    timestamp = oldest.publishedAtEpochMs,
+                    id = oldest.id,
+                    limit = minOf(NEWS_PAGE_SIZE, remainingCapacity),
+                )
+                if (older.isNotEmpty()) {
+                    val savedIds = savedArticles.value.map { it.id }.toSet()
+                    _stories.update { current ->
+                        val currentIds = current.mapTo(mutableSetOf()) { it.id }
+                        (current + older.map { it.toStory().copy(isSaved = it.id in savedIds) }
+                            .filterNot { it.id in currentIds })
+                            .take(MAX_IN_MEMORY_STORIES)
+                    }
+                }
+            } catch (_: Exception) {
+            } finally {
+                newsPageMutex.unlock()
+            }
+        }
     }
 
-    private suspend fun refreshSportsData(competition: String, sportType: String) {
+    fun fetchLiveSports(competition: String = "Trendyol Süper Lig", sportType: String = "FUTBOL") {
+        val requestKey = "$sportType|$competition"
+        if (activeSportsKey != requestKey) {
+            activeSportsKey = requestKey
+            sportsRefreshJob?.cancel()
+            _sportsSnapshot.value = SportsSnapshot(
+                competition = competition,
+                sportType = sportType,
+                isLoading = true,
+            )
+        }
+        if (sportsRefreshJob?.isActive == true) return
+        sportsRefreshJob = scope.launch { refreshSportsData(competition, sportType, requestKey) }
+    }
+
+    private suspend fun refreshSportsData(competition: String, sportType: String, requestKey: String) {
         try {
             val fixtures = footballApiService.fetchFixtures(competition, sportType)
-            _matches.value = fixtures
+            if (activeSportsKey != requestKey) return
+            _sportsSnapshot.update { it.copy(matches = fixtures) }
 
             fixtures.asSequence()
                 .filter { it.status == com.example.model.MatchStatus.LIVE }
                 .flatMap { match -> match.events.asSequence().filter { it.type == "GOL" }.map { match to it } }
                 .forEach { (match, goal) ->
-                    val alertId = "goal-${match.id}-${goal.minute}"
+                    val alertId = "goal-${match.id}-${goal.minute}-${goal.player}"
                     if (sentGoalAlertIds.add(alertId)) {
                         val notif = NotificationItem(
                             id = alertId,
@@ -349,15 +428,36 @@ class CizgiRepository private constructor(private val context: Context) {
                         )
                     }
                 }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
         } catch (_: Exception) {}
 
         try {
-            _standings.value = footballApiService.fetchStandings(competition, sportType)
+            val currentStandings = footballApiService.fetchStandings(competition, sportType)
+            if (activeSportsKey != requestKey) return
+            _sportsSnapshot.update { it.copy(standings = currentStandings) }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
         } catch (_: Exception) {}
 
         try {
-            _topScorers.value = footballApiService.fetchTopScorers(competition, sportType)
-        } catch (_: Exception) {}
+            val scorers = footballApiService.fetchTopScorers(competition, sportType)
+            if (activeSportsKey != requestKey) return
+            _sportsSnapshot.update {
+                it.copy(
+                    topScorers = scorers,
+                    isLoading = false,
+                    updatedAtEpochMs = System.currentTimeMillis(),
+                    scorerMessage = if (scorers.isEmpty()) footballApiService.topScorersUnavailableMessage(sportType) else "",
+                )
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            if (activeSportsKey == requestKey) {
+                _sportsSnapshot.update { it.copy(isLoading = false) }
+            }
+        }
     }
 
     fun refreshMarkets() {
@@ -423,6 +523,10 @@ class CizgiRepository private constructor(private val context: Context) {
     }
 
     companion object {
+        private const val NEWS_PAGE_SIZE = 120
+        private const val MAX_IN_MEMORY_STORIES = 10_000
+        private const val MAX_ARCHIVE_ARTICLES = 100_000
+
         @Volatile
         private var instance: CizgiRepository? = null
 

@@ -80,6 +80,7 @@ fun AkisScreen(
 ) {
     val context = LocalContext.current
     val stories by repository.stories.collectAsState()
+    val newsArchiveCount by repository.newsArchiveCount.collectAsState()
     val weather by repository.weather.collectAsState()
     val matches by repository.matches.collectAsState()
     val prefs by repository.preferences.collectAsState()
@@ -662,6 +663,17 @@ fun AkisScreen(
                     }
                 }
 
+                if (stories.size < newsArchiveCount) {
+                    item(key = "load_older_news") {
+                        TextButton(
+                            onClick = { repository.loadOlderNews() },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text("Daha eski haberleri yükle · ${stories.size}/$newsArchiveCount")
+                        }
+                    }
+                }
+
                 // Kesintisiz Canlı Akış & Arşiv Bilgilendirme Rozeti
                 item(key = "continuous_stream_info") {
                     Card(
@@ -687,13 +699,13 @@ fun AkisScreen(
                                         .background(Color(0xFF16A34A)),
                                 )
                                 Text(
-                                    text = "CANLI HABER AKIŞI AKTİF",
+                                    text = "BU CİHAZDAKİ HABER ARŞİVİ · $newsArchiveCount HABER",
                                     style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, letterSpacing = 0.8.sp),
                                     color = Color(0xFF16A34A),
                                 )
                             }
                             Text(
-                                text = "Uygulama açık olduğu sürece haberler arkaplanda sürekli taranıp akışa eklenir. Geçmiş ve eski haberlerin tümüne 'Keşfet' sekmesinden arama yaparak ulaşabilirsiniz.",
+                                text = "Kaynak RSS akışları otomatik güncellenir. Haber başlığı ve kısa özeti cihazında saklanır; kaynak makaleyi okumak için haber bağlantısını aç.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 textAlign = androidx.compose.ui.text.style.TextAlign.Center,
