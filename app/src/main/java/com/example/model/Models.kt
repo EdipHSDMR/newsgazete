@@ -88,9 +88,9 @@ data class FinancialAsset(
     val name: String,          // e.g. "Dolar", "Euro", "Gram Altın", "BIST 100", "Bitcoin"
     val symbol: String,        // "$", "€", "₺", "₿"
     val currentPrice: Double,
-    val changePct: Double,     // +0.45, -0.22
-    val highPrice: Double,
-    val lowPrice: Double,
+    val changePct: Double? = null, // null when the source does not report a real change
+    val highPrice: Double? = null,
+    val lowPrice: Double? = null,
     val unit: String = "₺",
     val sparkline: List<Float> = emptyList(),
 )
