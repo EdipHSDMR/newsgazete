@@ -444,12 +444,12 @@ fun GununOzetiCard(
                             .background(CizgiColor.Navy),
                         contentAlignment = Alignment.Center,
                     ) {
-                        Text("5", color = CizgiColor.Gold, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                        Text(points.size.toString(), color = CizgiColor.Gold, fontWeight = FontWeight.Bold, fontSize = 12.sp)
                     }
 
                     Column {
                         Text(
-                            text = "GÜNÜN 5 MADDELİK ÖZETİ",
+                            text = "SON 24 SAATTEN ${points.size} ÖZET",
                             style = MaterialTheme.typography.labelMedium.copy(
                                 fontWeight = FontWeight.Bold,
                                 letterSpacing = 0.5.sp,
@@ -457,7 +457,7 @@ fun GununOzetiCard(
                             color = MaterialTheme.colorScheme.primary,
                         )
                         Text(
-                            text = "Gündemin en can alıcı noktaları",
+                            text = "Güncel haberlerden otomatik derlendi",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -579,15 +579,15 @@ fun KompaktHavaKarti(
                         modifier = Modifier
                             .size(8.dp)
                             .clip(CircleShape)
-                            .background(Color(0xFF2E7D32)),
+                            .background(if (weather.currentTempC == null) MaterialTheme.colorScheme.outline else Color(0xFF2E7D32)),
                     )
                     Text(
-                        text = "CANLI • WeatherAPI",
+                        text = if (weather.currentTempC == null) "VERİ BEKLENİYOR" else "CANLI • WeatherAPI",
                         style = MaterialTheme.typography.labelSmall.copy(
                             fontWeight = FontWeight.SemiBold,
                             fontSize = 11.sp,
                         ),
-                        color = Color(0xFF2E7D32),
+                        color = if (weather.currentTempC == null) MaterialTheme.colorScheme.onSurfaceVariant else Color(0xFF2E7D32),
                     )
                 }
             }
@@ -645,7 +645,7 @@ fun KompaktHavaKarti(
                     )
                     Column {
                         Text(
-                            text = if (weather.lastUpdated == "Veri bekleniyor") "--°C" else "${weather.currentTempC}°C",
+                            text = weather.currentTempC?.let { "$it°C" } ?: "--°C",
                             style = MaterialTheme.typography.headlineMedium.copy(
                                 fontWeight = FontWeight.Bold,
                                 letterSpacing = (-0.5).sp,
@@ -665,7 +665,7 @@ fun KompaktHavaKarti(
                     verticalArrangement = Arrangement.spacedBy(2.dp),
                 ) {
                     Text(
-                        text = if (weather.lastUpdated == "Veri bekleniyor") "Hissedilen: --°C" else "Hissedilen: ${weather.feelsLikeC}°C",
+                        text = "Hissedilen: ${weather.feelsLikeC?.let { "$it°C" } ?: "—"}",
                         style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -693,7 +693,7 @@ fun KompaktHavaKarti(
                 ) {
                     Text("💧", fontSize = 12.sp)
                     Text(
-                        text = "Yağış: %${weather.rainChancePct}",
+                        text = "Yağış: ${weather.rainChancePct?.let { "%$it" } ?: "—"}",
                         style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Medium),
                         color = MaterialTheme.colorScheme.onSurface,
                     )
@@ -707,7 +707,7 @@ fun KompaktHavaKarti(
                 ) {
                     Text("💨", fontSize = 12.sp)
                     Text(
-                        text = "Rüzgar: ${weather.windKmh} km/s",
+                        text = "Rüzgar: ${weather.windKmh?.let { "$it km/s" } ?: "—"}",
                         style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Medium),
                         color = MaterialTheme.colorScheme.onSurface,
                     )
@@ -721,7 +721,7 @@ fun KompaktHavaKarti(
                 ) {
                     Text("🌫️", fontSize = 12.sp)
                     Text(
-                        text = "Nem: %${weather.humidityPct}",
+                        text = "Nem: ${weather.humidityPct?.let { "%$it" } ?: "—"}",
                         style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Medium),
                         color = MaterialTheme.colorScheme.onSurface,
                     )
@@ -760,7 +760,7 @@ fun MiniWeatherCard(
                 Column {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         Text(
-                            text = if (weather.lastUpdated == "Veri bekleniyor") "--°" else "${weather.currentTempC}°",
+                            text = weather.currentTempC?.let { "$it°" } ?: "--°",
                             style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
                             color = MaterialTheme.colorScheme.primary,
                         )
@@ -771,7 +771,7 @@ fun MiniWeatherCard(
                         )
                     }
                     Text(
-                        text = if (weather.lastUpdated == "Veri bekleniyor") weather.condition else "${weather.condition} · Yağış ihtimali %${weather.rainChancePct}",
+                        text = if (weather.rainChancePct == null) weather.condition else "${weather.condition} · Yağış ihtimali %${weather.rainChancePct}",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
