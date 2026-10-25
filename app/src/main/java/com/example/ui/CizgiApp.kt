@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -15,6 +16,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Density
 import com.example.data.CizgiRepository
 import com.example.ui.components.CizgiBottomBar
 import com.example.ui.components.CizgiScreen
@@ -57,6 +60,9 @@ fun CizgiApp(modifier: Modifier = Modifier) {
         else -> isSystemInDarkTheme()
     }
 
+    val systemDensity = LocalDensity.current
+    val fontScale = systemDensity.fontScale * if (preferences.fontSize == "large") 1.125f else 1f
+    CompositionLocalProvider(LocalDensity provides Density(systemDensity.density, fontScale)) {
     CizgiTheme(darkTheme = isDark) {
         var currentTab by remember { mutableStateOf(CizgiScreen.AKIS) }
         var subScreen by remember { mutableStateOf<SubScreen>(SubScreen.None) }
@@ -210,5 +216,7 @@ fun CizgiApp(modifier: Modifier = Modifier) {
             }
         }
     }
+    }
 }
+
 
