@@ -68,6 +68,7 @@ import com.example.ui.components.ModernNewsCard
 import com.example.ui.components.NewsFeedCard
 import com.example.ui.components.SkeletonCard
 import com.example.ui.theme.CizgiColor
+import com.example.util.NewsDiscoveryInsights
 
 @Composable
 fun AkisScreen(
@@ -97,29 +98,20 @@ fun AkisScreen(
     // Visual card mode vs compact list
     var isVisualCardMode by remember { mutableStateOf(true) }
 
-    val categories = listOf(
-        "Tümü" to "⚡",
-        "Siyaset" to "🏛️",
-        "Ekonomi" to "📈",
-        "Teknoloji" to "💻",
-        "Gündem" to "🔥",
-        "Dünya" to "🌍",
-        "Spor" to "⚽",
-        "Kültür-Sanat" to "🎭",
-        "Sağlık" to "🩺",
-    )
+    val categories = remember(stories) {
+        buildList {
+            add("Tümü" to "⚡")
+            stories.asSequence()
+                .map { it.topic.trim() }
+                .filter(String::isNotBlank)
+                .distinct()
+                .forEach { topic -> add(topic to "📰") }
+        }
+    }
 
-    val hashtags = listOf(
-        "#TBMM",
-        "#MerkezBankası",
-        "#YapayZeka",
-        "#SüperLig",
-        "#Enflasyon",
-        "#BIST100",
-        "#AsgariÜcret",
-        "#Kabine",
-        "#Olimpiyat",
-    )
+    val hashtags = remember(stories) {
+        NewsDiscoveryInsights.trendingTerms(stories, limit = 12).map { "#$it" }
+    }
 
     // Filter stories dynamically
     val filteredStories = remember(stories, selectedTopic, selectedHashtag) {
@@ -148,14 +140,8 @@ fun AkisScreen(
         if (mansetStory != null) filteredStories.filter { it.id != mansetStory.id } else filteredStories
     }
 
-    val dailyDigestPoints = remember {
-        listOf(
-            "TCMB Para Politikası Kurulu politika faizini yüzde 50'de sabit tuttu.",
-            "TÜBİTAK öncülüğünde Türkiye'nin ilk açık kaynak yapay zeka çip mimarisi tanıtıldı.",
-            "Trendyol Süper Lig'de lider Galatasaray ve Fenerbahçe haftayı galibiyetle kapattı.",
-            "Birleşmiş Milletler İklim Zirvesi'nde yenilenebilir enerji mutabakatı imzalandı.",
-            "Milli okçumuz Mete Gazoz Dünya Kupası finallerinde altın madalyanın sahibi oldu.",
-        )
+    val dailyDigestPoints = remember(stories) {
+        NewsDiscoveryInsights.dailyDigest(stories)
     }
 
     val nextMatch = remember(matches) {
@@ -264,58 +250,60 @@ fun AkisScreen(
                 }
 
                 // Trending Hashtag Quick Filter Row
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState())
-                        .padding(start = 16.dp, end = 16.dp, bottom = 8.dp),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        text = "Etiketler:",
-                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                        color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.padding(end = 2.dp)
-                    )
+                if (hashtags.isNotEmpty()) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState())
+                            .padding(start = 16.dp, end = 16.dp, bottom = 8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = "Gündemde:",
+                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.padding(end = 2.dp)
+                        )
 
-                    hashtags.forEach { tag ->
-                        val isTagSelected = selectedHashtag == tag
-                        Surface(
-                            shape = RoundedCornerShape(12.dp),
-                            color = if (isTagSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(12.dp))
-                                .clickable {
-                                    selectedHashtag = if (isTagSelected) null else tag
-                                }
-                        ) {
-                            Text(
-                                text = tag,
-                                fontSize = 11.5.sp,
-                                fontWeight = if (isTagSelected) FontWeight.Bold else FontWeight.Normal,
-                                color = if (isTagSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                            )
-                        }
-                    }
-
-                    if (selectedHashtag != null) {
-                        Surface(
-                            shape = CircleShape,
-                            color = MaterialTheme.colorScheme.errorContainer,
-                            modifier = Modifier
-                                .clip(CircleShape)
-                                .clickable { selectedHashtag = null }
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Clear,
-                                contentDescription = "Filtreyi Temizle",
-                                tint = MaterialTheme.colorScheme.error,
+                        hashtags.forEach { tag ->
+                            val isTagSelected = selectedHashtag == tag
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = if (isTagSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
                                 modifier = Modifier
-                                    .size(20.dp)
-                                    .padding(3.dp)
-                            )
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .clickable {
+                                        selectedHashtag = if (isTagSelected) null else tag
+                                    }
+                            ) {
+                                Text(
+                                    text = tag,
+                                    fontSize = 11.5.sp,
+                                    fontWeight = if (isTagSelected) FontWeight.Bold else FontWeight.Normal,
+                                    color = if (isTagSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                )
+                            }
+                        }
+
+                        if (selectedHashtag != null) {
+                            Surface(
+                                shape = CircleShape,
+                                color = MaterialTheme.colorScheme.errorContainer,
+                                modifier = Modifier
+                                    .clip(CircleShape)
+                                    .clickable { selectedHashtag = null }
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Clear,
+                                    contentDescription = "Filtreyi Temizle",
+                                    tint = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier
+                                        .size(20.dp)
+                                        .padding(3.dp)
+                                )
+                            }
                         }
                     }
                 }
@@ -456,15 +444,15 @@ fun AkisScreen(
                                         modifier = Modifier
                                             .size(8.dp)
                                             .clip(CircleShape)
-                                            .background(Color(0xFF2E7D32)),
+                                            .background(if (weather.currentTempC == null) MaterialTheme.colorScheme.outline else Color(0xFF2E7D32)),
                                     )
                                     Text(
-                                        text = "CANLI HAVA",
+                                        text = if (weather.currentTempC == null) "HAVA VERİSİ BEKLENİYOR" else "CANLI HAVA",
                                         style = MaterialTheme.typography.labelSmall.copy(
                                             fontWeight = FontWeight.Bold,
                                             fontSize = 10.5.sp,
                                         ),
-                                        color = Color(0xFF2E7D32),
+                                        color = if (weather.currentTempC == null) MaterialTheme.colorScheme.onSurfaceVariant else Color(0xFF2E7D32),
                                     )
                                 }
                             }
@@ -490,7 +478,7 @@ fun AkisScreen(
 
                                     Column {
                                         Text(
-                                            text = "${weather.currentTempC}°",
+                                            text = weather.currentTempC?.let { "$it°" } ?: "--°",
                                             fontSize = 28.sp,
                                             fontWeight = FontWeight.Black,
                                             color = MaterialTheme.colorScheme.onSurface,
@@ -505,12 +493,12 @@ fun AkisScreen(
 
                                 Column(horizontalAlignment = Alignment.End) {
                                     Text(
-                                        text = "Hissedilen: ${weather.feelsLikeC}°",
+                                        text = "Hissedilen: ${weather.feelsLikeC?.let { "$it°" } ?: "—"}",
                                         style = MaterialTheme.typography.labelSmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
                                     Text(
-                                        text = "Nem: %${weather.humidityPct} · Rüzgar: ${weather.windKmh} km/s",
+                                        text = "Nem: ${weather.humidityPct?.let { "%$it" } ?: "—"} · Rüzgar: ${weather.windKmh?.let { "$it km/s" } ?: "—"}",
                                         style = MaterialTheme.typography.labelSmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
@@ -528,8 +516,10 @@ fun AkisScreen(
 
                 // Yalnızca "Tümü" veya "Gündem" sekmesindeyken Günün Özeti ve Canlı Spor Maçı Hızlı Bakışı
                 if (selectedTopic == "Tümü" || selectedTopic == "Gündem") {
+                    if (dailyDigestPoints.isNotEmpty()) {
                     item(key = "daily_digest") {
                         GununOzetiCard(points = dailyDigestPoints)
+                    }
                     }
 
                     if (nextMatch != null) {
