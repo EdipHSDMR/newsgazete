@@ -403,7 +403,7 @@ fun HaberDetayScreen(
                             )
                             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                 Text(
-                                    text = "KISA ÖZET · KAYNAK METNİNDEN",
+                                    text = "KISA ÖZET",
                                     style = MaterialTheme.typography.labelSmall.copy(
                                         fontWeight = FontWeight.Bold,
                                         letterSpacing = 0.8.sp,
