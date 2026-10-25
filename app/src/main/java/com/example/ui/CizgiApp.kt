@@ -104,7 +104,7 @@ fun CizgiApp(modifier: Modifier = Modifier) {
                     topBar = {
                         if (subScreen == SubScreen.None) {
                             CizgiTopBar(
-                                weatherTemp = "${weather.currentTempC}°",
+                                weatherTemp = "${weather.currentTempC?.let { "$it°" } ?: "--°"}",
                                 weatherCity = weather.cityName,
                                 unreadNotificationCount = unreadCount,
                                 onWeatherClick = { subScreen = SubScreen.Weather },
