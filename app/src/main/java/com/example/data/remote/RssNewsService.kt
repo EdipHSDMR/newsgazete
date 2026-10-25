@@ -3,6 +3,7 @@ package com.example.data.remote
 import com.example.model.SourceComparison
 import com.example.model.Story
 import com.example.util.NewsSummary
+import com.example.util.NewsStoryDeduplicator
 import android.text.Html
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -83,7 +84,7 @@ class RssNewsService(private val httpClient: OkHttpClient) {
             }.awaitAll().flatten()
         }
 
-        val uniqueStories = mergeDuplicateStories(allStories)
+        val uniqueStories = NewsStoryDeduplicator.merge(allStories)
             .sortedWith(compareByDescending<Story> { it.publishedAtEpochMs }.thenByDescending { it.id })
             .take(MAX_STORIES_PER_REFRESH)
             .toMutableList()
@@ -153,63 +154,6 @@ class RssNewsService(private val httpClient: OkHttpClient) {
 
         val imageSource = IMAGE_SOURCE_HREF.find(html)?.groupValues?.getOrNull(1).orEmpty()
         return normalizeImageUrl(imageSource, pageUrl).takeIf(String::isNotBlank)
-    }
-
-    private fun mergeDuplicateStories(stories: List<Story>): List<Story> {
-        val mergedById = LinkedHashMap<String, Story>()
-        val idByUrl = mutableMapOf<String, String>()
-        val idByTitle = mutableMapOf<String, String>()
-
-        for (story in stories.sortedByDescending { it.publishedAtEpochMs }) {
-            val urlKey = normalizeUrl(story.canonicalUrl)
-            val titleKey = normalizeTitle(story.title)
-            val existingId = (urlKey.takeIf(String::isNotBlank)?.let(idByUrl::get))
-                ?: titleKey.takeIf(String::isNotBlank)?.let(idByTitle::get)
-            val existing = existingId?.let(mergedById::get)
-            if (existing == null) {
-                mergedById[story.id] = story
-                if (urlKey.isNotBlank()) idByUrl[urlKey] = story.id
-                if (titleKey.isNotBlank()) idByTitle[titleKey] = story.id
-                continue
-            }
-
-            val comparisons = (existing.comparisons + story.comparisons)
-                .distinctBy { it.publisher.lowercase(Locale.ROOT) to normalizeUrl(it.url) }
-                .take(8)
-            mergedById[existing.id] = existing.copy(
-                sourceCount = comparisons.size.coerceAtLeast(existing.sourceCount),
-                comparisons = comparisons,
-                canonicalUrl = existing.canonicalUrl.ifBlank { story.canonicalUrl },
-                imageUrl = existing.imageUrl.ifBlank { story.imageUrl },
-            )
-            if (urlKey.isNotBlank()) idByUrl[urlKey] = existing.id
-            if (titleKey.isNotBlank()) idByTitle[titleKey] = existing.id
-        }
-
-        return mergedById.values.toList()
-    }
-
-    private fun normalizeTitle(title: String): String = title
-        .lowercase(Locale.forLanguageTag("tr-TR"))
-        .replace("[^a-z0-9çğıöşü]".toRegex(), " ")
-        .trim()
-        .replace("\\s+".toRegex(), " ")
-
-    private fun normalizeUrl(url: String): String {
-        if (url.isBlank()) return ""
-        return try {
-            val uri = java.net.URI(url.trim())
-            val host = uri.host?.lowercase(Locale.ROOT).orEmpty()
-            if (host.isBlank()) return url.trim().substringBefore('#').trimEnd('/')
-            val path = uri.rawPath.orEmpty().trimEnd('/').ifBlank { "/" }
-            val query = uri.rawQuery.orEmpty().split('&')
-                .filterNot { it.substringBefore('=').lowercase(Locale.ROOT).startsWith("utm_") ||
-                    it.substringBefore('=').lowercase(Locale.ROOT) in setOf("fbclid", "gclid") }
-                .joinToString("&")
-            "https://$host$path" + if (query.isBlank()) "" else "?$query"
-        } catch (_: Exception) {
-            url.trim().substringBefore('#').trimEnd('/')
-        }
     }
 
     /**
