@@ -27,6 +27,10 @@ object NewsStoryDeduplicator {
         val headlineTerms: Set<String>,
         bodyText: String,
     ) {
+        val bodyCandidateTerms: Set<String> = bodyTokens(bodyText.take(BODY_CANDIDATE_CHARS))
+            .filter { it.length >= MIN_BODY_CANDIDATE_TOKEN_LENGTH }
+            .take(MAX_BODY_CANDIDATE_TERMS)
+            .toSet()
         // Most stories have no plausible same-story headline candidate, so defer tokenizing
         // their full text. Archive entries can contain many thousands of long article bodies.
         val bodyTerms: Set<String> by lazy(LazyThreadSafetyMode.NONE) { bodyTokens(bodyText) }
@@ -39,6 +43,7 @@ object NewsStoryDeduplicator {
         val byUrl = mutableMapOf<String, String>()
         val byTitle = mutableMapOf<String, String>()
         val byToken = mutableMapOf<String, MutableSet<String>>()
+        val byBodyToken = mutableMapOf<String, MutableSet<String>>()
 
         for (story in stories.sortedWith(compareByDescending<Story> { it.publishedAtEpochMs }.thenBy { it.id })) {
             val indexed = index(story)
@@ -46,18 +51,19 @@ object NewsStoryDeduplicator {
             byUrl[indexed.urlKey]?.let(candidateIds::add)
             byTitle[indexed.headlineKey]?.let(candidateIds::add)
             indexed.headlineTerms.forEach { token -> byToken[token]?.let(candidateIds::addAll) }
+            indexed.bodyCandidateTerms.forEach { token -> byBodyToken[token]?.let(candidateIds::addAll) }
 
             val matchId = candidateIds.firstOrNull { id -> merged[id]?.let { isSameStory(it, indexed) } == true }
             if (matchId == null) {
                 merged[story.id] = indexed
-                addIndexes(indexed, story.id, byUrl, byTitle, byToken)
+                addIndexes(indexed, story.id, byUrl, byTitle, byToken, byBodyToken)
                 continue
             }
 
             val combined = index(mergeStory(merged.getValue(matchId).story, story))
             merged[matchId] = combined
-            addIndexes(indexed, matchId, byUrl, byTitle, byToken)
-            addIndexes(combined, matchId, byUrl, byTitle, byToken)
+            addIndexes(indexed, matchId, byUrl, byTitle, byToken, byBodyToken)
+            addIndexes(combined, matchId, byUrl, byTitle, byToken, byBodyToken)
         }
         return merged.values.map { it.story }
     }
@@ -68,10 +74,12 @@ object NewsStoryDeduplicator {
         byUrl: MutableMap<String, String>,
         byTitle: MutableMap<String, String>,
         byToken: MutableMap<String, MutableSet<String>>,
+        byBodyToken: MutableMap<String, MutableSet<String>>,
     ) {
         if (indexed.urlKey.isNotBlank()) byUrl[indexed.urlKey] = id
         if (indexed.headlineKey.isNotBlank()) byTitle[indexed.headlineKey] = id
         indexed.headlineTerms.forEach { token -> byToken.getOrPut(token) { linkedSetOf() }.add(id) }
+        indexed.bodyCandidateTerms.forEach { token -> byBodyToken.getOrPut(token) { linkedSetOf() }.add(id) }
     }
 
     private fun index(story: Story): IndexedStory = IndexedStory(
@@ -87,14 +95,14 @@ object NewsStoryDeduplicator {
 
         val publishedA = a.story.publishedAtEpochMs
         val publishedB = b.story.publishedAtEpochMs
-        if (publishedA > 0 && publishedB > 0 && abs(publishedA - publishedB) > DUPLICATE_WINDOW_MS) return false
-        if (a.headlineKey.isNotBlank() && a.headlineKey == b.headlineKey) return true
+        val withinWindow = publishedA <= 0 || publishedB <= 0 || abs(publishedA - publishedB) <= DUPLICATE_WINDOW_MS
+        if (withinWindow && a.headlineKey.isNotBlank() && a.headlineKey == b.headlineKey) return true
 
         val common = a.headlineTerms intersect b.headlineTerms
         val minimumSize = minOf(a.headlineTerms.size, b.headlineTerms.size)
         val sameTopic = a.story.topic.equals(b.story.topic, ignoreCase = true) ||
             a.story.topic == GENERAL_TOPIC || b.story.topic == GENERAL_TOPIC
-        if (sameTopic && minimumSize > 0 && common.size >= MIN_SHARED_HEADLINE_TERMS) {
+        if (withinWindow && sameTopic && minimumSize > 0 && common.size >= MIN_SHARED_HEADLINE_TERMS) {
             val overlap = common.size.toDouble() / minimumSize
             val union = (a.headlineTerms union b.headlineTerms).size
             val jaccard = if (union == 0) 0.0 else common.size.toDouble() / union
@@ -103,12 +111,15 @@ object NewsStoryDeduplicator {
 
         // Body comparison is only useful when the headlines share some key terms; this keeps
         // the thousands of stories in the archive fast to compare.
-        if (!sameTopic || common.size < MIN_BODY_HEADLINE_HINT ||
-            a.bodyTerms.size < MIN_BODY_TERMS || b.bodyTerms.size < MIN_BODY_TERMS
-        ) return false
+        if (a.bodyTerms.size < MIN_BODY_TERMS || b.bodyTerms.size < MIN_BODY_TERMS) return false
         val commonBodyTerms = (a.bodyTerms intersect b.bodyTerms).size
         val bodyOverlap = commonBodyTerms.toDouble() / minOf(a.bodyTerms.size, b.bodyTerms.size)
-        return commonBodyTerms >= MIN_SHARED_BODY_TERMS && bodyOverlap >= BODY_OVERLAP_THRESHOLD
+        if (withinWindow && sameTopic && common.size >= MIN_BODY_HEADLINE_HINT) {
+            return commonBodyTerms >= MIN_SHARED_BODY_TERMS && bodyOverlap >= BODY_OVERLAP_THRESHOLD
+        }
+        val minimumStrongTerms = if (withinWindow) MIN_STRONG_SHARED_BODY_TERMS else MIN_OLD_STORY_SHARED_BODY_TERMS
+        val strongOverlapThreshold = if (withinWindow) STRONG_BODY_OVERLAP_THRESHOLD else OLD_STORY_BODY_OVERLAP_THRESHOLD
+        return commonBodyTerms >= minimumStrongTerms && bodyOverlap >= strongOverlapThreshold
     }
 
     private fun mergeStory(existing: Story, incoming: Story): Story {
@@ -177,7 +188,14 @@ object NewsStoryDeduplicator {
     private const val HEADLINE_OVERLAP_THRESHOLD = 0.82
     private const val MIN_BODY_TERMS = 12
     private const val MIN_SHARED_BODY_TERMS = 10
+    private const val MIN_STRONG_SHARED_BODY_TERMS = 18
+    private const val MIN_OLD_STORY_SHARED_BODY_TERMS = 24
+    private const val MIN_BODY_CANDIDATE_TOKEN_LENGTH = 5
+    private const val MAX_BODY_CANDIDATE_TERMS = 18
+    private const val BODY_CANDIDATE_CHARS = 1_200
     private const val BODY_OVERLAP_THRESHOLD = 0.72
+    private const val STRONG_BODY_OVERLAP_THRESHOLD = 0.88
+    private const val OLD_STORY_BODY_OVERLAP_THRESHOLD = 0.94
     private const val DUPLICATE_WINDOW_MS = 36 * 60 * 60 * 1_000L
     private const val MAX_COMPARISONS = 8
     private val TRACKING_QUERY_KEYS = setOf("fbclid", "gclid", "ref", "source")
