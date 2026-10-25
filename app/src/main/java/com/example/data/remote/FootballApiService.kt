@@ -1,6 +1,5 @@
 package com.example.data.remote
 
-import com.example.BuildConfig
 import com.example.model.LeagueStanding
 import com.example.model.MatchEvent
 import com.example.model.MatchStatus
@@ -26,16 +25,8 @@ import java.util.Locale
 
 class FootballApiService(
     private val httpClient: OkHttpClient,
-    private val apiKeyProvider: () -> String = { "" },
 ) {
-
-    private val apiKey: String
-        get() {
-            val userKey = apiKeyProvider().trim()
-            if (userKey.isNotBlank() && !userKey.startsWith("YOUR_")) return userKey
-            return BuildConfig.API_FOOTBALL_KEY.trim().takeUnless { it.isBlank() || it.startsWith("YOUR_") }.orEmpty()
-        }
-    private val baseUrl = "https://v3.football.api-sports.io"
+    private val baseUrl = "${ApiGatewayConfig.BASE_URL}/v1/football"
     private val standingsCache = java.util.concurrent.ConcurrentHashMap<String, Pair<Long, List<LeagueStanding>>>()
     private val scorersCache = java.util.concurrent.ConcurrentHashMap<String, Pair<Long, List<TopScorer>>>()
     private val espnScheduleCache = java.util.concurrent.ConcurrentHashMap<String, EspnFixtureCache>()
@@ -114,13 +105,13 @@ class FootballApiService(
         else -> null
     }
 
-    private fun hasApiKey(): Boolean = apiKey.isNotBlank()
+    private fun hasApiKey(): Boolean = baseUrl.isNotBlank()
 
     fun topScorersUnavailableMessage(sportType: String): String = when {
         sportType == "BASKETBOL" -> "Bu lig için güncel sayı lideri verisi henüz yayınlanmadı."
         sportType != "FUTBOL" -> "Bu branş için oyuncu liderliği verisi bulunmuyor."
         apiFootballUnavailableReason != null -> apiFootballUnavailableReason!!
-        !hasApiKey() -> "Gol krallığı verisi için API_FOOTBALL_KEY ayarlanmalı."
+        !hasApiKey() -> "Spor veri servisi yapılandırılıyor."
         else -> "Gol krallığı verisi şu anda alınamadı; bağlantıyı veya API kotasını kontrol et."
     }
 
@@ -160,7 +151,6 @@ class FootballApiService(
                     try {
                         val request = Request.Builder()
                             .url(url)
-                            .header("x-apisports-key", apiKey)
                             .build()
                         httpClient.newCall(request).execute().use { response ->
                             val body = response.body?.string()
@@ -200,7 +190,6 @@ class FootballApiService(
                 val url = "$baseUrl/standings?league=$id&season=${currentSeasonYear()}"
                 val request = Request.Builder()
                     .url(url)
-                    .header("x-apisports-key", apiKey)
                     .build()
                 httpClient.newCall(request).execute().use { response ->
                     val body = response.body?.string()
@@ -241,7 +230,6 @@ class FootballApiService(
             val url = "$baseUrl/players/topscorers?league=$id&season=${currentSeasonYear()}"
             val request = Request.Builder()
                 .url(url)
-                .header("x-apisports-key", apiKey)
                 .build()
             httpClient.newCall(request).execute().use { response ->
                 val body = response.body?.string()
