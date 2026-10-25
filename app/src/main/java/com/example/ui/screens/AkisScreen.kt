@@ -86,6 +86,7 @@ fun AkisScreen(
     val matches by repository.matches.collectAsState()
     val prefs by repository.preferences.collectAsState()
     val isRefreshing by repository.isRefreshing.collectAsState()
+    val dailyDigestPoints by repository.dailyDigest.collectAsState()
     val bistStocks by repository.bistStocks.collectAsState()
     val financialAssets by repository.financialAssets.collectAsState()
 
@@ -138,10 +139,6 @@ fun AkisScreen(
 
     val feedStories = remember(filteredStories, mansetStory) {
         if (mansetStory != null) filteredStories.filter { it.id != mansetStory.id } else filteredStories
-    }
-
-    val dailyDigestPoints = remember(stories) {
-        NewsDiscoveryInsights.dailyDigest(stories)
     }
 
     val nextMatch = remember(matches) {
