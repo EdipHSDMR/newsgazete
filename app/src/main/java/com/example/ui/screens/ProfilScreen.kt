@@ -55,7 +55,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.CizgiRepository
-import com.example.data.CizgiSeedData
 import com.example.ui.theme.CizgiColor
 
 @Composable
