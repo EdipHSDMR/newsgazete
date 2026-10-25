@@ -663,13 +663,19 @@ fun AkisScreen(
                     }
                 }
 
-                if (stories.size < newsArchiveCount) {
+                if (stories.size < newsArchiveCount || repository.hasMorePressArchivePages) {
                     item(key = "load_older_news") {
                         TextButton(
                             onClick = { repository.loadOlderNews() },
                             modifier = Modifier.fillMaxWidth(),
                         ) {
-                            Text("Daha eski haberleri yükle · ${stories.size}/$newsArchiveCount")
+                            Text(
+                                if (stories.size < newsArchiveCount) {
+                                    "Daha eski haberleri yükle · ${stories.size}/$newsArchiveCount"
+                                } else {
+                                    "Daha eski haberleri yükle"
+                                }
+                            )
                         }
                     }
                 }
