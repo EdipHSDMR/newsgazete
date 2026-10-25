@@ -148,12 +148,10 @@ fun AkisScreen(
     }
 
     fun shareStory(story: Story) {
+        val sourceUrl = story.canonicalUrl.takeIf { it.startsWith("https://", ignoreCase = true) }
         val sendIntent = Intent().apply {
             action = Intent.ACTION_SEND
-            putExtra(
-                Intent.EXTRA_TEXT,
-                "${story.title}\n\n${story.summary}\n\nÇizgi üzerinden okundu: ${story.canonicalUrl.ifBlank { "https://cizgi.app" }}"
-            )
+            putExtra(Intent.EXTRA_TEXT, listOfNotNull(story.title, story.summary, sourceUrl).joinToString("\n\n"))
             type = "text/plain"
         }
         context.startActivity(Intent.createChooser(sendIntent, "Haberi Paylaş"))
@@ -465,6 +463,7 @@ fun AkisScreen(
                                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                                 ) {
                                     val emoji = when {
+                                        weather.currentTempC == null -> "⏳"
                                         weather.condition.contains("Güneş", ignoreCase = true) -> "☀️"
                                         weather.condition.contains("Yağmur", ignoreCase = true) -> "🌧️"
                                         weather.condition.contains("Kar", ignoreCase = true) -> "❄️"
@@ -710,3 +709,4 @@ fun AkisScreen(
         }
     }
 }
+
