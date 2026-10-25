@@ -1,5 +1,6 @@
 package com.example.ui.screens
 
+import android.app.TimePickerDialog
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -51,11 +52,14 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.CizgiRepository
 import com.example.ui.theme.CizgiColor
+import java.time.LocalTime
+import java.util.Locale
 
 @Composable
 fun ProfilScreen(
@@ -71,6 +75,8 @@ fun ProfilScreen(
     var showFontSizeDialog by remember { mutableStateOf(false) }
     var showClearDataDialog by remember { mutableStateOf(false) }
     var showAboutDialog by remember { mutableStateOf(false) }
+    var showQuietHoursDialog by remember { mutableStateOf(false) }
+    val context = LocalContext.current
 
     LazyColumn(
         modifier = modifier
@@ -199,21 +205,22 @@ fun ProfilScreen(
                     title = "Son Dakika Bildirimleri",
                     subtitle = "Önemli editoryal gelişmeler anlık iletilir",
                     checked = prefs.breakingAlerts,
-                    onCheckedChange = { },
+                    onCheckedChange = repository::setBreakingAlerts,
                 )
                 HorizontalDivider(color = CizgiColor.BorderLight.copy(alpha = 0.5f))
                 SettingSwitchRow(
                     title = "Maç Başlangıç ve Gol Alarmları",
                     subtitle = "Takip ettiğin takımların maçlarında",
                     checked = prefs.matchAlerts,
-                    onCheckedChange = { },
+                    onCheckedChange = repository::setMatchAlerts,
                 )
                 HorizontalDivider(color = CizgiColor.BorderLight.copy(alpha = 0.5f))
                 SettingSwitchRow(
                     title = "Sessiz Saatler (${prefs.quietHoursStart} - ${prefs.quietHoursEnd})",
-                    subtitle = "Gece saatlerinde bildirimler sessize alınır",
+                    subtitle = "Başlığa dokunup saatleri düzenle; bu aralıkta telefon bildirimleri susar",
                     checked = prefs.quietHoursEnabled,
                     onCheckedChange = { repository.setQuietHours(it) },
+                    onTitleClick = { showQuietHoursDialog = true },
                 )
             }
         }
@@ -228,7 +235,7 @@ fun ProfilScreen(
                 SettingNavigationRow(
                     icon = Icons.Default.Delete,
                     title = "Verileri ve Önbelleği Temizle",
-                    subtitle = "Arama geçmişi ve kayıtlı haberleri sıfırla",
+                    subtitle = "Kayıtlı haberleri ve cihazdaki haber önbelleğini temizle",
                     onClick = { showClearDataDialog = true },
                 )
                 HorizontalDivider(color = CizgiColor.BorderLight.copy(alpha = 0.5f))
@@ -314,6 +321,43 @@ fun ProfilScreen(
         )
     }
 
+    if (showQuietHoursDialog) {
+        AlertDialog(
+            onDismissRequest = { showQuietHoursDialog = false },
+            title = { Text("Sessiz Saatleri Ayarla") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Bu saatlerde telefon bildirimi gönderilmez; uygulama içi bildirim geçmişi korunur.")
+                    TextButton(
+                        onClick = {
+                            val start = runCatching { LocalTime.parse(prefs.quietHoursStart) }.getOrDefault(LocalTime.of(23, 0))
+                            TimePickerDialog(context, { _, hour, minute ->
+                                repository.setQuietHours(
+                                    prefs.quietHoursEnabled,
+                                    String.format(Locale.ROOT, "%02d:%02d", hour, minute),
+                                    prefs.quietHoursEnd,
+                                )
+                            }, start.hour, start.minute, true).show()
+                        },
+                    ) { Text("Başlangıç: ${prefs.quietHoursStart}") }
+                    TextButton(
+                        onClick = {
+                            val end = runCatching { LocalTime.parse(prefs.quietHoursEnd) }.getOrDefault(LocalTime.of(7, 0))
+                            TimePickerDialog(context, { _, hour, minute ->
+                                repository.setQuietHours(
+                                    prefs.quietHoursEnabled,
+                                    prefs.quietHoursStart,
+                                    String.format(Locale.ROOT, "%02d:%02d", hour, minute),
+                                )
+                            }, end.hour, end.minute, true).show()
+                        },
+                    ) { Text("Bitiş: ${prefs.quietHoursEnd}") }
+                }
+            },
+            confirmButton = { TextButton(onClick = { showQuietHoursDialog = false }) { Text("Tamam") } },
+        )
+    }
+
     // Clear Data Confirmation Dialog
     if (showClearDataDialog) {
         AlertDialog(
@@ -325,6 +369,7 @@ fun ProfilScreen(
                     onClick = {
                         repository.clearSavedStories()
                         repository.clearSearchHistory()
+                        repository.clearLocalNewsData()
                         showClearDataDialog = false
                     },
                 ) {
@@ -438,6 +483,7 @@ private fun SettingSwitchRow(
     subtitle: String,
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
+    onTitleClick: (() -> Unit)? = null,
 ) {
     Row(
         modifier = Modifier
@@ -446,7 +492,10 @@ private fun SettingSwitchRow(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween,
     ) {
-        Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+        Column(
+            modifier = Modifier.weight(1f).padding(end = 12.dp)
+                .then(if (onTitleClick != null) Modifier.clickable(onClick = onTitleClick) else Modifier),
+        ) {
             Text(
                 text = title,
                 style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
@@ -469,3 +518,4 @@ private fun SettingSwitchRow(
         )
     }
 }
+
