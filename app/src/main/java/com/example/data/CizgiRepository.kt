@@ -7,6 +7,7 @@ import com.example.data.local.NewsArticleEntity
 import com.example.data.local.SavedArticleEntity
 import com.example.data.remote.FootballApiService
 import com.example.data.remote.PressNewsApiService
+import com.example.data.remote.NewsSummaryApiService
 import com.example.data.remote.RssNewsService
 import com.example.data.remote.WeatherApiService
 import com.example.model.FinancialAsset
@@ -61,9 +62,10 @@ class CizgiRepository private constructor(private val context: Context) {
 
     // Remote Services
     private val rssNewsService = RssNewsService(httpClient)
-    private val pressNewsApiService = PressNewsApiService(httpClient) { _preferences.value.pressApiKey }
-    private val weatherApiService = WeatherApiService(httpClient) { _preferences.value.weatherApiKey }
-    private val footballApiService = FootballApiService(httpClient) { _preferences.value.footballApiKey }
+    private val pressNewsApiService = PressNewsApiService(httpClient)
+    private val newsSummaryApiService = NewsSummaryApiService(httpClient)
+    private val weatherApiService = WeatherApiService(httpClient)
+    private val footballApiService = FootballApiService(httpClient)
     private val marketApiService = com.example.data.remote.MarketApiService(httpClient)
 
     // State flows
@@ -153,9 +155,11 @@ class CizgiRepository private constructor(private val context: Context) {
         val fontSize = prefs.getString("font_size", "normal") ?: "normal"
         val followedTopics = prefs.getStringSet("followed_topics", setOf("Türkiye", "Ekonomi", "Teknoloji", "Spor")) ?: emptySet()
         val followedTeams = prefs.getStringSet("followed_teams", setOf("Galatasaray", "Fenerbahçe")) ?: emptySet()
-        val footballKey = prefs.getString("football_api_key", "") ?: ""
-        val weatherKey = prefs.getString("weather_api_key", "") ?: ""
-        val pressKey = prefs.getString("press_api_key", "") ?: ""
+        prefs.edit()
+            .remove("football_api_key")
+            .remove("weather_api_key")
+            .remove("press_api_key")
+            .apply()
         pressArchiveNextPage = prefs.getInt("press_archive_next_page", 2).coerceAtLeast(2)
         pressArchiveTotalPages = prefs.getInt("press_archive_total_pages", 0).coerceAtLeast(0)
 
@@ -167,37 +171,8 @@ class CizgiRepository private constructor(private val context: Context) {
                 fontSize = fontSize,
                 followedTopics = followedTopics,
                 followedTeams = followedTeams,
-                footballApiKey = footballKey,
-                weatherApiKey = weatherKey,
-                pressApiKey = pressKey,
             )
         }
-    }
-
-    fun setCustomApiKeys(footballKey: String?, weatherKey: String?, pressKey: String? = null) {
-        val oldPressKey = _preferences.value.pressApiKey
-        _preferences.update {
-            it.copy(
-                footballApiKey = footballKey?.trim() ?: it.footballApiKey,
-                weatherApiKey = weatherKey?.trim() ?: it.weatherApiKey,
-                pressApiKey = pressKey?.trim() ?: it.pressApiKey,
-            )
-        }
-        val editor = context.getSharedPreferences("cizgi_user_prefs", Context.MODE_PRIVATE).edit()
-        if (footballKey != null) editor.putString("football_api_key", footballKey.trim())
-        if (weatherKey != null) editor.putString("weather_api_key", weatherKey.trim())
-        if (pressKey != null) {
-            editor.putString("press_api_key", pressKey.trim())
-            if (oldPressKey != pressKey.trim()) {
-                pressArchiveNextPage = 2
-                pressArchiveTotalPages = 0
-                editor.putInt("press_archive_next_page", pressArchiveNextPage)
-                editor.putInt("press_archive_total_pages", pressArchiveTotalPages)
-            }
-        }
-        editor.apply()
-        footballApiService.resetApiFootballState()
-        refreshAll()
     }
 
     private fun observeSavedArticles() {
@@ -242,7 +217,7 @@ class CizgiRepository private constructor(private val context: Context) {
 
     private fun observeNewsArchive() {
         scope.launch {
-            newsArticleDao.observeLatest(NEWS_PAGE_SIZE).collect { latestArticles ->
+            newsArticleDao.observeLatest(INITIAL_NEWS_LOAD_LIMIT).collect { latestArticles ->
                 val savedIds = savedArticles.value.map { it.id }.toSet()
                 val latest = latestArticles.map { it.toStory().copy(isSaved = it.id in savedIds) }
                 _stories.update { current ->
@@ -338,10 +313,9 @@ class CizgiRepository private constructor(private val context: Context) {
 
     private suspend fun refreshNewsData() {
         try {
-            val pressKey = _preferences.value.pressApiKey
             val (rssStories, pressPage) = coroutineScope {
                 val rss = async { rssNewsService.fetchRealNews() }
-                val press = async { if (pressKey.isNotBlank()) pressNewsApiService.fetchPage(page = 1) else null }
+                val press = async { pressNewsApiService.fetchPage(page = 1) }
                 rss.await() to press.await()
             }
             pressPage?.let { page ->
@@ -421,7 +395,7 @@ class CizgiRepository private constructor(private val context: Context) {
     }
 
     private suspend fun loadNextPressArchivePage() {
-        if (_preferences.value.pressApiKey.isBlank() || pressArchiveNextPage > pressArchiveTotalPages) return
+        if (pressArchiveNextPage > pressArchiveTotalPages) return
         val pageNumber = pressArchiveNextPage
         val page = pressNewsApiService.fetchPage(page = pageNumber) ?: return
         pressArchiveTotalPages = maxOf(pressArchiveTotalPages, page.totalPages)
@@ -517,13 +491,21 @@ class CizgiRepository private constructor(private val context: Context) {
 
         scope.launch {
             try {
-                val metadata = rssNewsService.fetchSourceMetadata(story.canonicalUrl) ?: return@launch
-                val description = metadata.description?.takeIf { it.length >= MIN_SOURCE_DESCRIPTION_CHARS }
-                val imageUrl = story.imageUrl.ifBlank { metadata.imageUrl.orEmpty() }
-                val fullText = description ?: story.fullText
-                val summary = description?.let { rssNewsService.sourceSummary(it, title = story.title) }
-                    ?: story.summary.takeIf(String::isNotBlank)
-                    ?: rssNewsService.sourceSummary(fullText, title = story.title)
+                val metadata = rssNewsService.fetchSourceMetadata(story.canonicalUrl)
+                val description = metadata?.description?.takeIf { it.length >= MIN_SOURCE_DESCRIPTION_CHARS }
+                val imageUrl = story.imageUrl.ifBlank { metadata?.imageUrl.orEmpty() }
+                val sourceText = story.fullText.takeIf { it.length >= MIN_SOURCE_DESCRIPTION_CHARS }
+                    ?: description.orEmpty().ifBlank { story.summary }
+                val fullText = story.fullText.takeIf { it.length >= MIN_SOURCE_DESCRIPTION_CHARS }
+                    ?: description.orEmpty().ifBlank { story.fullText }
+                val generatedSummary = newsSummaryApiService.summarize(
+                    title = story.title,
+                    articleUrl = story.canonicalUrl,
+                    sourceText = sourceText,
+                )
+                val summary = generatedSummary
+                    ?: com.example.util.NewsSummary.concise(sourceText, story.title)
+                        .ifBlank { story.summary.takeIf(String::isNotBlank).orEmpty() }
                 if (summary == story.summary && (description == null || description == story.fullText.trim()) && imageUrl == story.imageUrl) return@launch
 
                 val updated = story.copy(
@@ -748,6 +730,7 @@ class CizgiRepository private constructor(private val context: Context) {
 
     companion object {
         private const val NEWS_PAGE_SIZE = 120
+        private const val INITIAL_NEWS_LOAD_LIMIT = 3_000
         private const val MAX_STORIES_PER_REFRESH = 3_000
         private const val MAX_IN_MEMORY_STORIES = 10_000
         private const val MAX_ARCHIVE_ARTICLES = 100_000
