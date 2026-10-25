@@ -47,9 +47,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.CizgiRepository
-import com.example.data.CizgiSeedData
 import com.example.ui.components.NewsFeedCard
 import com.example.ui.theme.CizgiColor
+import com.example.util.NewsDiscoveryInsights
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -65,14 +65,9 @@ fun KesfetScreen(
     var selectedSourceFilter by remember { mutableStateOf<String?>(null) }
     var showFilterSheet by remember { mutableStateOf(false) }
 
-    val trendingTags = listOf(
-        "Faiz Kararı",
-        "Süper Lig",
-        "Elektrikli Vapur",
-        "Yapay Zeka Çipi",
-        "Enflasyon",
-        "UNESCO Mozaik",
-    )
+    val trendingTags = remember(stories) {
+        NewsDiscoveryInsights.trendingTerms(stories, limit = 12)
+    }
 
     val allPublishers = remember(stories) {
         stories.map { it.publisher }.distinct()
@@ -201,24 +196,26 @@ fun KesfetScreen(
             }
 
             // Trending Tags Row
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                trendingTags.forEach { tag ->
-                    Surface(
-                        shape = RoundedCornerShape(16.dp),
-                        color = MaterialTheme.colorScheme.primaryContainer,
-                        onClick = { searchQuery = tag },
-                    ) {
-                        Text(
-                            text = "#$tag",
-                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
-                            color = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                        )
+            if (trendingTags.isNotEmpty()) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    trendingTags.forEach { tag ->
+                        Surface(
+                            shape = RoundedCornerShape(16.dp),
+                            color = MaterialTheme.colorScheme.primaryContainer,
+                            onClick = { searchQuery = tag },
+                        ) {
+                            Text(
+                                text = "#$tag",
+                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                            )
+                        }
                     }
                 }
             }
@@ -377,7 +374,8 @@ fun KesfetScreen(
                             .horizontalScroll(rememberScrollState()),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        CizgiSeedData.topics.filter { it != "Tümü" }.forEach { topic ->
+                        stories.asSequence().map { it.topic.trim() }
+                            .filter(String::isNotBlank).distinct().forEach { topic ->
                             val isSelected = selectedTopicFilter == topic
                             FilterChip(
                                 selected = isSelected,
