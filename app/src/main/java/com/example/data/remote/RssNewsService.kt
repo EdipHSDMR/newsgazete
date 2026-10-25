@@ -18,6 +18,7 @@ import java.net.URI
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.concurrent.TimeUnit
 import java.util.UUID
 import java.util.regex.Pattern
 
@@ -27,6 +28,11 @@ data class SourcePageMetadata(
 )
 
 class RssNewsService(private val httpClient: OkHttpClient) {
+    private val quickClient = httpClient.newBuilder()
+        .connectTimeout(3, TimeUnit.SECONDS)
+        .readTimeout(5, TimeUnit.SECONDS)
+        .callTimeout(6, TimeUnit.SECONDS)
+        .build()
 
     // Açık, telif dostu kamu & haber RSS akışları
     private val rssSources = listOf(
@@ -56,6 +62,38 @@ class RssNewsService(private val httpClient: OkHttpClient) {
         Triple("https://www.press.org.tr/ajans/rss.xml", "Press Haber Ajansı (PHA)", "Gündem"),
     )
     private val feedSemaphore = Semaphore(4)
+    private val quickSources = rssSources
+        .filter { (_, publisher, _) -> publisher in setOf("Ensonhaber", "BBC Türkçe", "NTV", "TRT Haber", "Habertürk", "Anadolu Ajansı") }
+        .distinctBy { it.second }
+
+    /** A small real-news batch for cold starts; remaining feeds are fetched immediately afterward. */
+    suspend fun fetchQuickNews(): List<Story> = withContext(Dispatchers.IO) {
+        val stories = coroutineScope {
+            quickSources.map { (feedUrl, publisherName, defaultTopic) ->
+                async {
+                    try {
+                        val request = Request.Builder()
+                            .url(feedUrl)
+                            .header("User-Agent", "Newsgazete/1.0 (RSS reader)")
+                            .header("Accept", "application/rss+xml, application/atom+xml, application/xml, text/xml;q=0.9, */*;q=0.8")
+                            .build()
+                        quickClient.newCall(request).execute().use { response ->
+                            if (!response.isSuccessful) emptyList()
+                            else parseRssFeedRobust(response.body?.string().orEmpty(), publisherName, defaultTopic)
+                                .take(MAX_ITEMS_PER_FEED)
+                        }
+                    } catch (_: Exception) {
+                        emptyList()
+                    }
+                }
+            }.awaitAll().flatten()
+        }
+        NewsStoryDeduplicator.merge(stories)
+            .sortedWith(compareByDescending<Story> { it.publishedAtEpochMs }.thenByDescending { it.id })
+            .take(NEWS_QUICK_START_LIMIT)
+            .toMutableList()
+            .also { if (it.isNotEmpty()) it[0] = it[0].copy(isManset = true) }
+    }
 
     suspend fun fetchRealNews(): List<Story> = withContext(Dispatchers.IO) {
         val semaphore = feedSemaphore
@@ -418,6 +456,7 @@ class RssNewsService(private val httpClient: OkHttpClient) {
     }
 
     private companion object {
+        const val NEWS_QUICK_START_LIMIT = 80
         const val MAX_ITEMS_PER_FEED = 300
         const val MAX_STORIES_PER_REFRESH = 3_000
         const val MAX_SOURCE_PAGE_BYTES = 512L * 1024L
@@ -433,3 +472,4 @@ class RssNewsService(private val httpClient: OkHttpClient) {
 
 
 }
+
