@@ -36,7 +36,6 @@ class WeatherApiService(
             if (!response.isSuccessful) return null
             val jsonStr = response.body?.string() ?: return null
             val current = JSONObject(jsonStr).optJSONObject("current") ?: return null
-            if (!current.has("temp_c")) return null
             parseWeatherApiResponse(query, jsonStr)
         }
     } catch (_: Exception) {
@@ -52,33 +51,31 @@ class WeatherApiService(
         .replace("ç", "c").replace("Ç", "C")
         .trim()
 
-    private fun parseWeatherApiResponse(requestedCity: String, jsonStr: String): WeatherInfo {
+    private fun parseWeatherApiResponse(requestedCity: String, jsonStr: String): WeatherInfo? {
         val root = JSONObject(jsonStr)
         val location = root.optJSONObject("location")
         val current = root.optJSONObject("current") ?: JSONObject()
         val forecast = root.optJSONObject("forecast") ?: JSONObject()
         val forecastDayArray = forecast.optJSONArray("forecastday")
 
-        val resolvedCity = location?.optString("name") ?: requestedCity
-        val tempC = current.optDouble("temp_c", 18.0).toInt()
-        val feelsLikeC = current.optDouble("feelslike_c", tempC.toDouble()).toInt()
-        val humidity = current.optInt("humidity", 60)
-        val windKmh = current.optDouble("wind_kph", 15.0).toInt()
-        val uv = current.optDouble("uv", 3.0).toInt()
+        val resolvedCity = location?.optString("name")?.takeIf(String::isNotBlank) ?: requestedCity
+        val tempC = current.finiteDouble("temp_c")?.toInt() ?: return null
+        val feelsLikeC = current.finiteDouble("feelslike_c")?.toInt()
+        val humidity = current.intInRange("humidity", 0..100)
+        val windKmh = current.finiteDouble("wind_kph")?.toInt()
+        val uv = current.finiteDouble("uv")?.toInt()
 
         val conditionObj = current.optJSONObject("condition")
-        val rawCondition = conditionObj?.optString("text", "Parçalı Bulutlu") ?: "Parçalı Bulutlu"
+        val rawCondition = conditionObj?.optString("text")?.takeIf(String::isNotBlank) ?: return null
         val condition = translateCondition(rawCondition)
 
         // Parse hourly forecast
         val hourlyList = mutableListOf<HourlyWeather>()
-        var rainChance = 10
+        val todayDay = forecastDayArray?.optJSONObject(0)?.optJSONObject("day")
+        val rainChance = todayDay?.intInRange("daily_chance_of_rain", 0..100)
 
         if (forecastDayArray != null && forecastDayArray.length() > 0) {
             val todayObj = forecastDayArray.getJSONObject(0)
-            val todayDay = todayObj.optJSONObject("day")
-            rainChance = todayDay?.optInt("daily_chance_of_rain", 10) ?: 10
-
             val hourArray = todayObj.optJSONArray("hour")
             if (hourArray != null) {
                 val currentEpoch = current.optLong("last_updated_epoch", 0L)
@@ -90,9 +87,10 @@ class WeatherApiService(
                     val hObj = hourArray.getJSONObject(h)
                     val timeStr = hObj.optString("time", "")
                     val hourLabel = timeStr.substringAfter(" ").take(5).ifBlank { "${h}:00" }
-                    val hTemp = hObj.optDouble("temp_c", 18.0).toInt()
-                    val hCond = translateCondition(hObj.optJSONObject("condition")?.optString("text", "") ?: "")
-                    val hRain = hObj.optInt("chance_of_rain", 10)
+                    val hTemp = hObj.finiteDouble("temp_c")?.toInt() ?: continue
+                    val hCondText = hObj.optJSONObject("condition")?.optString("text")?.takeIf(String::isNotBlank) ?: continue
+                    val hCond = translateCondition(hCondText)
+                    val hRain = hObj.intInRange("chance_of_rain", 0..100) ?: continue
 
                     hourlyList.add(
                         HourlyWeather(
@@ -112,10 +110,11 @@ class WeatherApiService(
             for (d in 0 until forecastDayArray.length()) {
                 val fObj = forecastDayArray.getJSONObject(d)
                 val dayObj = fObj.optJSONObject("day") ?: continue
-                val maxT = dayObj.optDouble("maxtemp_c", 20.0).toInt()
-                val minT = dayObj.optDouble("mintemp_c", 12.0).toInt()
-                val rain = dayObj.optInt("daily_chance_of_rain", 15)
-                val dayCond = translateCondition(dayObj.optJSONObject("condition")?.optString("text", "") ?: "")
+                val maxT = dayObj.finiteDouble("maxtemp_c")?.toInt() ?: continue
+                val minT = dayObj.finiteDouble("mintemp_c")?.toInt() ?: continue
+                val rain = dayObj.intInRange("daily_chance_of_rain", 0..100) ?: continue
+                val conditionText = dayObj.optJSONObject("condition")?.optString("text")?.takeIf(String::isNotBlank) ?: continue
+                val dayCond = translateCondition(conditionText)
 
                 val dayName = when (d) {
                     0 -> "Bugün"
@@ -139,6 +138,13 @@ class WeatherApiService(
             }
         }
 
+        val summary = listOfNotNull(
+            "$resolvedCity genelinde $condition.",
+            tempC.let { "Sıcaklık $it°C." },
+            feelsLikeC?.let { "Hissedilen $it°C." },
+            windKmh?.let { "Rüzgar $it km/s." },
+        ).joinToString(" ")
+
         return WeatherInfo(
             cityName = resolvedCity,
             condition = condition,
@@ -148,11 +154,21 @@ class WeatherApiService(
             windKmh = windKmh,
             uvIndex = uv,
             rainChancePct = rainChance,
-            summary = "$resolvedCity genelinde $condition. Sıcaklık $tempC°C, hissedilen $feelsLikeC°C. Rüzgar $windKmh km/s hızında esiyor.",
+            summary = summary,
             hourly = hourlyList,
             daily = dailyList,
-            lastUpdated = current.optString("last_updated", "WeatherAPI Canlı"),
+            lastUpdated = current.optString("last_updated").takeIf(String::isNotBlank) ?: "WeatherAPI",
         )
+    }
+
+    private fun JSONObject.finiteDouble(name: String): Double? {
+        if (!has(name) || isNull(name)) return null
+        return optDouble(name, Double.NaN).takeIf(Double::isFinite)
+    }
+
+    private fun JSONObject.intInRange(name: String, range: IntRange): Int? {
+        if (!has(name) || isNull(name)) return null
+        return optInt(name, Int.MIN_VALUE).takeIf { it in range }
     }
 
     private fun translateCondition(engText: String): String {
@@ -166,7 +182,6 @@ class WeatherApiService(
             lower.contains("thunder") -> "Gök Gürültülü Fırtına"
             lower.contains("snow") || lower.contains("blizzard") -> "Kar Yağışlı"
             lower.contains("rain") || lower.contains("shower") -> "Sağanak Yağmurlu"
-            engText.isBlank() -> "Açık"
             else -> engText
         }
     }
