@@ -33,7 +33,7 @@ object NewsSummary {
             .filterNot(::isBoilerplateLead)
         val sentences = if (hasTruncatedEnding && allSentences.size > 1) allSentences.dropLast(1) else allSentences
 
-        if (sentences.isEmpty()) return truncateAtWord(text, maxCharacters)
+        if (sentences.isEmpty()) return ""
         val chosen = sentences.withIndex()
             .sortedByDescending { (index, sentence) -> score(sentence, index, titleWords) }
             .take(MAX_SUMMARY_SENTENCES)
