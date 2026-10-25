@@ -16,6 +16,7 @@ import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONObject
+import org.json.JSONArray
 import java.time.LocalDate
 import java.time.Instant
 import java.time.OffsetDateTime
@@ -32,6 +33,7 @@ class FootballApiService(
     private val espnScheduleCache = java.util.concurrent.ConcurrentHashMap<String, EspnFixtureCache>()
     private val espnLiveEventCache = java.util.concurrent.ConcurrentHashMap<String, List<MatchEvent>>()
     private val basketballLeadersCache = java.util.concurrent.ConcurrentHashMap<String, Pair<Long, List<TopScorer>>>()
+    private val euroLeagueGamesCache = java.util.concurrent.ConcurrentHashMap<String, Pair<Long, List<SportsMatch>>>()
     @Volatile private var apiFootballUnavailableReason: String? = null
 
     fun resetApiFootballState() {
@@ -52,6 +54,7 @@ class FootballApiService(
         "UEFA Konferans Ligi" -> 848
         "İngiltere Premier Lig" -> 39
         "İngiltere Championship" -> 40
+        "Trendyol 1. Lig" -> 204
         "İspanya La Liga" -> 140
         "İspanya Segunda" -> 141
         "İtalya Serie A" -> 135
@@ -60,6 +63,10 @@ class FootballApiService(
         "Almanya 2. Bundesliga" -> 79
         "Fransa Ligue 1" -> 61
         "Fransa Ligue 2" -> 62
+        "İskoçya Premiership" -> 179
+        "Belçika Pro League" -> 144
+        "Suudi Arabistan Pro League" -> 307
+        "Arjantin Primera División" -> 128
         "Hollanda Eredivisie" -> 88
         "Portekiz Primeira Liga" -> 94
         "Trendyol Süper Lig" -> 203
@@ -77,6 +84,7 @@ class FootballApiService(
         "UEFA Konferans Ligi" -> "uefa.europa.conf"
         "İngiltere Premier Lig" -> "eng.1"
         "İngiltere Championship" -> "eng.2"
+        "Trendyol 1. Lig" -> "tur.2"
         "İspanya La Liga" -> "esp.1"
         "İspanya Segunda" -> "esp.2"
         "İtalya Serie A" -> "ita.1"
@@ -85,6 +93,10 @@ class FootballApiService(
         "Almanya 2. Bundesliga" -> "ger.2"
         "Fransa Ligue 1" -> "fra.1"
         "Fransa Ligue 2" -> "fra.2"
+        "İskoçya Premiership" -> "sco.1"
+        "Belçika Pro League" -> "bel.1"
+        "Suudi Arabistan Pro League" -> "ksa.1"
+        "Arjantin Primera División" -> "arg.1"
         "Hollanda Eredivisie" -> "ned.1"
         "Portekiz Primeira Liga" -> "por.1"
         "Trendyol Süper Lig" -> "tur.1"
@@ -97,6 +109,7 @@ class FootballApiService(
     }
 
     private fun basketballEspnSlug(competition: String): String? = when (competition) {
+        "EuroLeague" -> "euroleague"
         "NBA" -> "nba"
         "WNBA" -> "wnba"
         "NBA G League" -> "nba-development"
@@ -142,7 +155,7 @@ class FootballApiService(
 
     suspend fun fetchFixtures(competition: String, sportType: String = "FUTBOL"): List<SportsMatch> = withContext(Dispatchers.IO) {
         when (sportType) {
-            "BASKETBOL" -> if (basketballEspnSlug(competition) != null) fetchBasketballFixtures(competition) else emptyList()
+            "BASKETBOL" -> if (competition == "EuroLeague") fetchEuroLeagueFixtures() else if (basketballEspnSlug(competition) != null) fetchBasketballFixtures(competition) else emptyList()
             "FUTBOL" -> {
                 val id = leagueId(competition) ?: return@withContext emptyList()
                 if (hasApiKey() && apiFootballUnavailableReason == null) {
@@ -177,7 +190,7 @@ class FootballApiService(
     }
 
     suspend fun fetchStandings(competition: String, sportType: String = "FUTBOL"): List<LeagueStanding> = withContext(Dispatchers.IO) {
-        if (sportType == "BASKETBOL") return@withContext fetchBasketballStandings(competition)
+        if (sportType == "BASKETBOL") return@withContext if (competition == "EuroLeague") fetchEuroLeagueStandings() else fetchBasketballStandings(competition)
         if (sportType != "FUTBOL") return@withContext emptyList()
         val id = leagueId(competition) ?: return@withContext emptyList()
         val cacheKey = "$id-${currentSeasonYear()}"
@@ -635,6 +648,116 @@ class FootballApiService(
         return instant.toEpochMilli() to local.format(format)
     }
 
+    private fun fetchEuroLeagueGames(): JSONArray? {
+        val season = currentSeasonYear()
+        return fetchEspnJson("https://api-live.euroleague.net/v2/competitions/E/seasons/E$season/games")
+            ?.optJSONArray("data")
+    }
+
+    private fun fetchEuroLeagueFixtures(): List<SportsMatch> {
+        val season = currentSeasonYear()
+        val now = System.currentTimeMillis()
+        euroLeagueGamesCache["E$season"]?.let { (fetchedAt, matches) ->
+            if (now - fetchedAt < ESPN_LIVE_REFRESH_MS) return matches
+        }
+        val games = fetchEuroLeagueGames() ?: return emptyList()
+        val from = LocalDate.now().minusDays(7).atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
+        val to = LocalDate.now().plusDays(14).atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
+        val matches = (0 until games.length()).mapNotNull { index ->
+            val game = games.optJSONObject(index) ?: return@mapNotNull null
+            val time = runCatching { Instant.parse(game.optString("utcDate")).toEpochMilli() }.getOrDefault(0L)
+            if (time !in from..to) return@mapNotNull null
+            val local = game.optJSONObject("local") ?: return@mapNotNull null
+            val road = game.optJSONObject("road") ?: return@mapNotNull null
+            val homeClub = local.optJSONObject("club") ?: return@mapNotNull null
+            val awayClub = road.optJSONObject("club") ?: return@mapNotNull null
+            val played = game.optBoolean("played", false)
+            val statusText = game.optString("gameStatus").lowercase(Locale.ROOT)
+            val live = !played && ("live" in statusText || (time <= now && now - time < 3 * 60 * 60_000L))
+            val status = when {
+                played -> MatchStatus.FINISHED
+                live -> MatchStatus.LIVE
+                else -> MatchStatus.UPCOMING
+            }
+            val homeScore = local.optInt("score", 0).takeIf { status != MatchStatus.UPCOMING }
+            val awayScore = road.optInt("score", 0).takeIf { status != MatchStatus.UPCOMING }
+            val (_, kickoff) = formatKickoff(game.optString("utcDate"))
+            SportsMatch(
+                id = "euroleague-${game.optString("id", game.optString("identifier", index.toString()))}",
+                competition = "EuroLeague",
+                round = game.optString("roundName").ifBlank { game.optJSONObject("phaseType")?.optString("name", "Sezon") ?: "Sezon" },
+                homeTeam = homeClub.optString("name", "Ev Sahibi"),
+                awayTeam = awayClub.optString("name", "Deplasman"),
+                homeScore = homeScore,
+                awayScore = awayScore,
+                status = status,
+                statusLabel = when (status) {
+                    MatchStatus.LIVE -> "CANLI"
+                    MatchStatus.FINISHED -> "MS"
+                    MatchStatus.UPCOMING -> kickoff
+                },
+                kickoffTime = kickoff,
+                kickoffAtEpochMs = time,
+                sportType = "BASKETBOL",
+                liveAction = if (status == MatchStatus.LIVE) "🏀 Canlı skor: ${homeScore ?: 0} - ${awayScore ?: 0}" else "",
+            )
+        }.sortedWith(compareBy<SportsMatch> { it.kickoffAtEpochMs }.thenBy { it.homeTeam })
+        euroLeagueGamesCache["E$season"] = now to matches
+        return matches
+    }
+
+    private fun fetchEuroLeagueStandings(): List<LeagueStanding> {
+        val season = currentSeasonYear()
+        val cacheKey = "euroleague-E$season"
+        standingsCache[cacheKey]?.let { (fetchedAt, table) ->
+            if (System.currentTimeMillis() - fetchedAt < ESPN_LIVE_REFRESH_MS) return table
+        }
+        val games = fetchEuroLeagueGames() ?: return emptyList()
+        data class TeamRecord(var played: Int = 0, var wins: Int = 0, var losses: Int = 0, var scored: Int = 0, var conceded: Int = 0)
+        val records = linkedMapOf<String, TeamRecord>()
+        for (index in 0 until games.length()) {
+            val game = games.optJSONObject(index) ?: continue
+            val phase = game.optJSONObject("phaseType")?.optString("alias").orEmpty()
+            val group = game.optJSONObject("group")?.optString("rawName").orEmpty()
+            if (!game.optBoolean("played", false) || !(phase.contains("regular", true) || group.contains("regular", true))) continue
+            val local = game.optJSONObject("local") ?: continue
+            val road = game.optJSONObject("road") ?: continue
+            val homeName = local.optJSONObject("club")?.optString("name").orEmpty()
+            val awayName = road.optJSONObject("club")?.optString("name").orEmpty()
+            if (homeName.isBlank() || awayName.isBlank()) continue
+            val homeScore = local.optInt("score", -1)
+            val awayScore = road.optInt("score", -1)
+            if (homeScore < 0 || awayScore < 0) continue
+            val home = records.getOrPut(homeName) { TeamRecord() }
+            val away = records.getOrPut(awayName) { TeamRecord() }
+            home.played++; away.played++
+            home.scored += homeScore; home.conceded += awayScore
+            away.scored += awayScore; away.conceded += homeScore
+            if (homeScore > awayScore) { home.wins++; away.losses++ } else { away.wins++; home.losses++ }
+        }
+        val ranked = records.entries.sortedWith(
+            compareByDescending<Map.Entry<String, TeamRecord>> { it.value.wins }
+                .thenByDescending { it.value.scored - it.value.conceded }
+                .thenBy { it.key },
+        )
+        val table = ranked.mapIndexed { index, (name, row) ->
+            LeagueStanding(
+                rank = index + 1,
+                team = name,
+                played = row.played,
+                won = row.wins,
+                drawn = 0,
+                lost = row.losses,
+                goalDiff = row.scored - row.conceded,
+                points = row.wins * 2,
+                groupName = "Regular Season",
+                winPercentage = if (row.played == 0) null else row.wins.toDouble() / row.played,
+            )
+        }
+        if (table.isNotEmpty()) standingsCache[cacheKey] = System.currentTimeMillis() to table
+        return table
+    }
+
     private suspend fun fetchBasketballFixtures(competition: String): List<SportsMatch> {
         val slug = basketballEspnSlug(competition) ?: return emptyList()
         val cacheKey = "BASKETBOL|$competition"
@@ -800,6 +923,7 @@ class FootballApiService(
     }
 
     private suspend fun fetchBasketballLeaders(competition: String): List<TopScorer> {
+        if (competition == "EuroLeague") return emptyList()
         val slug = basketballEspnSlug(competition) ?: return emptyList()
         val season = basketballSeasonYear(slug)
         val cacheKey = "$slug-$season-points"
@@ -927,6 +1051,7 @@ class FootballApiService(
             "UEFA Konferans Ligi" -> "uefa.europa.conf"
             "İngiltere Premier Lig" -> "eng.1"
             "İngiltere Championship" -> "eng.2"
+            "Trendyol 1. Lig" -> "tur.2"
             "İspanya La Liga" -> "esp.1"
             "İspanya Segunda" -> "esp.2"
             "İtalya Serie A" -> "ita.1"
@@ -935,6 +1060,10 @@ class FootballApiService(
             "Almanya 2. Bundesliga" -> "ger.2"
             "Fransa Ligue 1" -> "fra.1"
             "Fransa Ligue 2" -> "fra.2"
+            "İskoçya Premiership" -> "sco.1"
+            "Belçika Pro League" -> "bel.1"
+            "Suudi Arabistan Pro League" -> "ksa.1"
+            "Arjantin Primera División" -> "arg.1"
             "Hollanda Eredivisie" -> "ned.1"
             "Portekiz Primeira Liga" -> "por.1"
             "Trendyol Süper Lig" -> "tur.1"
@@ -1026,3 +1155,4 @@ class FootballApiService(
         const val ESPN_LIVE_REFRESH_MS = 60_000L
     }
 }
+
