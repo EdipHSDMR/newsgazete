@@ -852,9 +852,11 @@ fun MiniMatchCard(
             }
 
             Text(
-                text = "Maç Merkezi ›",
+                text = "Detay ›",
                 style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
                 color = CizgiColor.Blue,
+                maxLines = 1,
+                softWrap = false,
             )
         }
     }
