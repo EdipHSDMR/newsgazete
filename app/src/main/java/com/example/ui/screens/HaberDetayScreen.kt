@@ -141,7 +141,7 @@ fun HaberDetayScreen(
     }
     LaunchedEffect(story.id) { repository.refreshStoryDescription(story.id) }
     val detailSummary = remember(story.id, story.summary, story.fullText) {
-        NewsSummary.concise(story.fullText.ifBlank { story.summary }, story.title)
+        NewsSummary.bestAvailableSummary(story.summary, story.fullText, story.title)
     }
     val sourceUri = remember(story.canonicalUrl) { runCatching { Uri.parse(story.canonicalUrl) }.getOrNull() }
     val hasSourceUrl = (sourceUri?.scheme == "http" || sourceUri?.scheme == "https") && !sourceUri?.host.isNullOrBlank()
@@ -177,7 +177,7 @@ fun HaberDetayScreen(
                 Intent.EXTRA_TEXT,
                 listOfNotNull(
                     currentStory.title,
-                    NewsSummary.concise(currentStory.fullText.ifBlank { currentStory.summary }, currentStory.title)
+                    NewsSummary.bestAvailableSummary(currentStory.summary, currentStory.fullText, currentStory.title)
                         .takeIf(String::isNotBlank),
                     currentStory.canonicalUrl.takeIf { value ->
                         val uri = runCatching { Uri.parse(value) }.getOrNull()
