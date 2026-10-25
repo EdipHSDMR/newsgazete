@@ -16,6 +16,8 @@ object NewsSummary {
     fun concise(sourceText: String, title: String = "", maxCharacters: Int = 380): String {
         val text = cleanText(sourceText)
         if (text.isBlank()) return ""
+        val hasTruncatedEnding = TRUNCATED_END.containsMatchIn(text)
+        val sourceWithoutTruncation = if (hasTruncatedEnding) text.replace(TRUNCATED_END, "").trimEnd() else text
 
         val titleKey = normalize(title)
         if (normalize(text) == titleKey) return ""
@@ -23,11 +25,12 @@ object NewsSummary {
             .map { it.value }
             .filter { it.length > 2 && it !in stopWords }
             .toSet()
-        val sentences = sentenceBoundary.split(text)
+        val allSentences = sentenceBoundary.split(sourceWithoutTruncation)
             .map { it.trim().trimStart('•', '-', '–', '—').trim() }
             .filter { it.length >= MIN_SENTENCE_CHARS }
             .distinctBy(::normalize)
             .filter { sentence -> normalize(sentence) != titleKey }
+        val sentences = if (hasTruncatedEnding && allSentences.size > 1) allSentences.dropLast(1) else allSentences
 
         if (sentences.isEmpty()) return truncateAtWord(text, maxCharacters)
         if (text.length <= maxCharacters) return sentences.joinToString(" ")
@@ -108,6 +111,7 @@ object NewsSummary {
 
     private const val MIN_SENTENCE_CHARS = 24
     private const val MAX_SUMMARY_SENTENCES = 3
+    private val TRUNCATED_END = Regex("(?:\\.\\.\\.|…)$")
     private val DIGIT = Regex("\\d")
     private val FACT_VERB = Regex(
         "\\b(açıkladı|duyurdu|belirtti|kabul edildi|reddedildi|başladı|tamamlandı|gerçekleşti|arttı|azaldı|yayımlandı|bulundu|açıldı|kapandı|seçildi|kazandı|kaybetti)\\b",
