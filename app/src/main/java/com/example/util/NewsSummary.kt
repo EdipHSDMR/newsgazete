@@ -35,7 +35,7 @@ object NewsSummary {
 
         if (sentences.isEmpty()) return ""
         val chosen = sentences.withIndex()
-            .sortedByDescending { (index, sentence) -> score(sentence, index, titleWords) }
+            .sortedByDescending { (index, sentence) -> score(sentence, index, titleWords, title) }
             .take(MAX_SUMMARY_SENTENCES)
             .sortedBy { it.index }
             .map { it.value }
@@ -48,7 +48,7 @@ object NewsSummary {
             result.append(sentence)
         }
         return if (result.isNotEmpty()) result.toString() else truncateAtWord(
-            sentences.maxByOrNull { score(it, 0, titleWords) } ?: sentences.first(),
+            sentences.maxByOrNull { score(it, 0, titleWords, title) } ?: sentences.first(),
             maxCharacters,
         )
     }
@@ -77,7 +77,7 @@ object NewsSummary {
             .chunked(3)
             .map { it.joinToString(" ") }
 
-    private fun score(sentence: String, index: Int, titleWords: Set<String>): Int {
+    private fun score(sentence: String, index: Int, titleWords: Set<String>, title: String): Int {
         val words = wordPattern.findAll(normalize(sentence)).map { it.value }.toSet()
         val titleMatches = words.count { it in titleWords }
         val lengthScore = when (sentence.length) {
@@ -87,9 +87,20 @@ object NewsSummary {
         }
         val hasConcreteDetail = DIGIT.containsMatchIn(sentence) || DATE_OR_TIME.containsMatchIn(sentence)
         val hasNewsAction = FACT_VERB.containsMatchIn(sentence)
+        val normalizedTitle = normalize(title)
+        val asksForTime = TIME_QUESTION.containsMatchIn(normalizedTitle)
+        val asksWhy = WHY_QUESTION.containsMatchIn(normalizedTitle)
+        val asksForCause = CAUSE_QUESTION.containsMatchIn(normalizedTitle)
+        val asksForResult = RESULT_QUESTION.containsMatchIn(normalizedTitle)
+        val answersTime = asksForTime && DATE_OR_TIME.containsMatchIn(sentence)
+        val answersWhy = asksWhy && WHY_ANSWER.containsMatchIn(normalize(sentence))
+        val answersCause = asksForCause && CAUSE_ANSWER.containsMatchIn(normalize(sentence))
+        val answersResult = asksForResult && RESULT_ANSWER.containsMatchIn(normalize(sentence))
         val positionScore = (index.coerceAtMost(4) - 2).coerceIn(-2, 2)
         return titleMatches * 2 + lengthScore + (if (hasConcreteDetail) 5 else 0) +
-            (if (hasNewsAction) 4 else 0) + positionScore - (if (isBoilerplateLead(sentence)) 8 else 0)
+            (if (hasNewsAction) 4 else 0) + (if (answersTime) 12 else 0) +
+            (if (answersWhy) 10 else 0) + (if (answersCause) 8 else 0) +
+            (if (answersResult) 8 else 0) + positionScore - (if (isBoilerplateLead(sentence)) 8 else 0)
     }
 
     private fun isBoilerplateLead(sentence: String): Boolean = BOILERPLATE_LEAD.containsMatchIn(sentence)
@@ -124,6 +135,13 @@ object NewsSummary {
         "\\b(?:\\d{1,2}[./:-]){1,2}\\d{2,4}\\b|\\b\\d{1,2}\\s+(?:ocak|şubat|mart|nisan|mayıs|haziran|temmuz|ağustos|eylül|ekim|kasım|aralık)\\b",
         RegexOption.IGNORE_CASE,
     )
+    private val TIME_QUESTION = Regex("\\b(?:ne zaman|saat kaç|hangi gün|tarihi ne|ne zaman gerçekleşecek)\\b")
+    private val WHY_QUESTION = Regex("\\b(?:neden|niçin|sebebi ne|nedir)\\b")
+    private val CAUSE_QUESTION = Regex("\\b(?:sebep|kaynak|neden)\\b")
+    private val RESULT_QUESTION = Regex("\\b(?:ne oldu|sonuç|nasıl sonuçlandı|kim kazandı|kaç gol|kaç sayı)\\b")
+    private val WHY_ANSWER = Regex("\\b(?:çünkü|nedeni|sebebi|bu nedenle|sonucunda)\\b")
+    private val CAUSE_ANSWER = Regex("\\b(?:neden|sebep|sonucunda|yüzünden|dolayı|ile başladı)\\b")
+    private val RESULT_ANSWER = Regex("\\b(?:kazandı|kaybetti|sonuçlandı|berabere|arttı|azaldı|tamamlandı|iptal edildi)\\b")
     private val BOILERPLATE_LEAD = Regex(
         "\\b(?:gündemindeki yerini aldı|gündeminde yer aldı|meraklılarının gündeminde|gündeme geldi|" +
             "göz kamaştıran|büyüleyici manzara sunan|dikkatleri üzerine çeken|öne çıkan gelişme)\\b",
