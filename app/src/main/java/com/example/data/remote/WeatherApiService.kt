@@ -1,6 +1,5 @@
 package com.example.data.remote
 
-import com.example.BuildConfig
 import com.example.model.DailyWeather
 import com.example.model.HourlyWeather
 import com.example.model.WeatherInfo
@@ -17,30 +16,21 @@ import java.nio.charset.StandardCharsets
 
 class WeatherApiService(
     private val httpClient: OkHttpClient,
-    private val apiKeyProvider: () -> String = { "" },
 ) {
 
-    private fun getApiKey(): String {
-        val userKey = apiKeyProvider().trim()
-        if (userKey.isNotBlank() && !userKey.startsWith("YOUR_")) return userKey
-        return BuildConfig.WEATHER_API_KEY.trim().takeUnless { it.isBlank() || it.startsWith("YOUR_") }.orEmpty()
-    }
-
     suspend fun fetchWeather(cityName: String): WeatherInfo? = withContext(Dispatchers.IO) {
-        val apiKey = getApiKey()
-        if (apiKey.isBlank()) return@withContext null
         val sanitized = sanitizeTurkishChars(cityName)
         val queries = linkedSetOf(cityName, sanitized)
         if (cityName.contains(",")) queries += sanitizeTurkishChars(cityName.substringAfter(",").trim())
         for (query in queries) {
-            tryFetchWeatherApi(apiKey, query)?.let { return@withContext it }
+            tryFetchWeatherApi(query)?.let { return@withContext it }
         }
         null
     }
 
-    private fun tryFetchWeatherApi(apiKey: String, query: String): WeatherInfo? = try {
+    private fun tryFetchWeatherApi(query: String): WeatherInfo? = try {
         val encodedCity = URLEncoder.encode(query, StandardCharsets.UTF_8.toString())
-        val url = "https://api.weatherapi.com/v1/forecast.json?key=$apiKey&q=$encodedCity&days=5&aqi=no&alerts=no"
+        val url = "${ApiGatewayConfig.BASE_URL}/v1/weather?q=$encodedCity&days=5&aqi=no&alerts=no"
         val request = Request.Builder().url(url).build()
         httpClient.newCall(request).execute().use { response ->
             if (!response.isSuccessful) return null
