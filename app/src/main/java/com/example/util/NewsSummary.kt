@@ -31,6 +31,8 @@ object NewsSummary {
             .distinctBy(::normalize)
             .filter { sentence -> normalize(sentence) != titleKey }
             .filterNot(::isBoilerplateLead)
+            .filterNot { it.trimEnd().endsWith('?') }
+            .filter(::containsSourceFact)
         val sentences = if (hasTruncatedEnding && allSentences.size > 1) allSentences.dropLast(1) else allSentences
 
         if (sentences.isEmpty()) return ""
@@ -92,18 +94,25 @@ object NewsSummary {
         val asksWhy = WHY_QUESTION.containsMatchIn(normalizedTitle)
         val asksForCause = CAUSE_QUESTION.containsMatchIn(normalizedTitle)
         val asksForResult = RESULT_QUESTION.containsMatchIn(normalizedTitle)
+        val asksYesNo = YES_NO_QUESTION.containsMatchIn(title.lowercase(Locale.forLanguageTag("tr-TR")))
         val answersTime = asksForTime && DATE_OR_TIME.containsMatchIn(sentence)
         val answersWhy = asksWhy && WHY_ANSWER.containsMatchIn(normalize(sentence))
         val answersCause = asksForCause && CAUSE_ANSWER.containsMatchIn(normalize(sentence))
         val answersResult = asksForResult && RESULT_ANSWER.containsMatchIn(normalize(sentence))
+        val answersYesNo = asksYesNo && titleMatches >= 2 && QUESTION_ANSWER_FACT.containsMatchIn(sentence)
         val positionScore = (index.coerceAtMost(4) - 2).coerceIn(-2, 2)
         return titleMatches * 2 + lengthScore + (if (hasConcreteDetail) 5 else 0) +
             (if (hasNewsAction) 4 else 0) + (if (answersTime) 12 else 0) +
             (if (answersWhy) 10 else 0) + (if (answersCause) 8 else 0) +
-            (if (answersResult) 8 else 0) + positionScore - (if (isBoilerplateLead(sentence)) 8 else 0)
+            (if (answersResult) 8 else 0) + (if (answersYesNo) 12 else 0) + positionScore -
+            (if (isBoilerplateLead(sentence)) 8 else 0)
     }
 
     private fun isBoilerplateLead(sentence: String): Boolean = BOILERPLATE_LEAD.containsMatchIn(sentence)
+
+    private fun containsSourceFact(sentence: String): Boolean =
+        DIGIT.containsMatchIn(sentence) || DATE_OR_TIME.containsMatchIn(sentence) ||
+            FACT_VERB.containsMatchIn(sentence) || RESULT_ANSWER.containsMatchIn(normalize(sentence))
 
     private fun cleanText(value: String): String = Html.fromHtml(
         value.replace("<script\\b[^>]*>.*?</script>".toRegex(RegexOption.IGNORE_CASE), " ")
@@ -138,17 +147,25 @@ object NewsSummary {
     private val TIME_QUESTION = Regex("\\b(?:ne zaman|saat kaç|hangi gün|tarihi ne|ne zaman gerçekleşecek)\\b")
     private val WHY_QUESTION = Regex("\\b(?:neden|niçin|sebebi ne|nedir)\\b")
     private val CAUSE_QUESTION = Regex("\\b(?:sebep|kaynak|neden)\\b")
-    private val RESULT_QUESTION = Regex("\\b(?:ne oldu|sonuç|nasıl sonuçlandı|kim kazandı|kaç gol|kaç sayı)\\b")
+    private val RESULT_QUESTION = Regex("\\b(?:ne oldu|sonuç|nasıl sonuçlandı|kim kazandı|kaç gol|kaç sayı|mi oldu|mı oldu|mu oldu|mü oldu)\\b")
+    private val YES_NO_QUESTION = Regex("\\b(?:mi|mı|mu|mü)\\b.*\\?$")
     private val WHY_ANSWER = Regex("\\b(?:çünkü|nedeni|sebebi|bu nedenle|sonucunda)\\b")
     private val CAUSE_ANSWER = Regex("\\b(?:neden|sebep|sonucunda|yüzünden|dolayı|ile başladı)\\b")
-    private val RESULT_ANSWER = Regex("\\b(?:kazandı|kaybetti|sonuçlandı|berabere|arttı|azaldı|tamamlandı|iptal edildi)\\b")
+    private val RESULT_ANSWER = Regex("\\b(?:kazandı|kaybetti|sonuçlandı|berabere|arttı|azaldı|tamamlandı|iptal edildi|yaşandı|meydana geldi|kaydedildi|ölçüldü)\\b")
     private val BOILERPLATE_LEAD = Regex(
         "\\b(?:gündemindeki yerini aldı|gündeminde yer aldı|meraklılarının gündeminde|gündeme geldi|" +
-            "göz kamaştıran|büyüleyici manzara sunan|dikkatleri üzerine çeken|öne çıkan gelişme)\\b",
+            "göz kamaştıran|büyüleyici manzara sunan|dikkatleri üzerine çeken|öne çıkan gelişme|" +
+            "haber(?:in)? detay(?:ında|larında)|detaylar haberimizde|merak konusu oldu|" +
+            "en çok merak edilenlerin cevabı|cevabı haberde|cevabı haberimizde|ayrıntılar haberde|" +
+            "son depremler|son dakika haberleri|afad son depremler)\\b",
         RegexOption.IGNORE_CASE,
     )
     private val FACT_VERB = Regex(
-        "\\b(açıkladı|duyurdu|belirtti|kabul edildi|reddedildi|başladı|tamamlandı|gerçekleşti|arttı|azaldı|yayımlandı|bulundu|açıldı|kapandı|seçildi|kazandı|kaybetti)\\b",
+        "\\b(açıkladı|duyurdu|belirtti|kabul edildi|reddedildi|başladı|tamamlandı|gerçekleşti|arttı|azaldı|yayımlandı|bulundu|açıldı|kapandı|seçildi|kazandı|kaybetti|kaydedildi|meydana geldi|yaşandı|ölçüldü|hissedildi|gözlendi|tespit edildi|görüldü|düştü|yükseldi|devam ediyor|etkiliyor|karar verdi|gözaltına alındı|hayatını kaybetti|yaralandı|tutuklandı|yakalandı|iptal edildi|durduruldu|onaylandı|reddetti)\\b",
+        RegexOption.IGNORE_CASE,
+    )
+    private val QUESTION_ANSWER_FACT = Regex(
+        "\\b(açıkladı|doğruladı|yalanladı|yaşandı|meydana geldi|kaydedildi|ölçüldü|hissedildi|gözlendi|tespit edildi|görüldü|bulunmadı)\\b",
         RegexOption.IGNORE_CASE,
     )
 }
