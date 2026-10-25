@@ -184,4 +184,5 @@ data class UserPreferences(
     val quietHoursEnd: String = "07:00",
     val footballApiKey: String = "",
     val weatherApiKey: String = "",
+    val pressApiKey: String = "",
 )

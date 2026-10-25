@@ -71,6 +71,7 @@ import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.example.data.CizgiRepository
 import com.example.model.Story
+import com.example.util.NewsSummary
 import com.example.ui.components.ModernNewsCard
 import com.example.ui.components.PublisherAvatar
 import com.example.ui.theme.CizgiColor
@@ -108,6 +109,9 @@ fun HaberDetayScreen(
         return
     }
     LaunchedEffect(story.id) { repository.refreshStoryDescription(story.id) }
+    val detailSummary = remember(story.id, story.summary, story.fullText) {
+        NewsSummary.concise(story.summary.ifBlank { story.fullText }, story.title)
+    }
 
     val relatedStories = remember(stories, story) {
         stories.filter { it.id != story.id && (it.topic == story.topic || it.isManset) }.take(3)
@@ -399,7 +403,7 @@ fun HaberDetayScreen(
                             )
                             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                 Text(
-                                text = "KAYNAĞIN AÇIKLAMASI",
+                                    text = "KISA ÖZET · KAYNAK METNİNDEN",
                                     style = MaterialTheme.typography.labelSmall.copy(
                                         fontWeight = FontWeight.Bold,
                                         letterSpacing = 0.8.sp,
@@ -407,7 +411,7 @@ fun HaberDetayScreen(
                                     color = MaterialTheme.colorScheme.primary,
                                 )
                                 Text(
-                                    text = story.summary.ifBlank { "Kaynak bu haber için kısa bir açıklama paylaşmamış." },
+                                    text = detailSummary.ifBlank { "Bu haber için henüz yeterli kaynak açıklaması yok. Kaynak bağlantısını açarak ayrıntıyı okuyabilirsin." },
                                     style = MaterialTheme.typography.bodyMedium.copy(
                                         fontSize = if (isLargeFont) 16.sp else 14.5.sp,
                                         lineHeight = if (isLargeFont) 24.sp else 22.sp,
@@ -420,26 +424,23 @@ fun HaberDetayScreen(
                     }
                 }
 
-                // RSS usually carries an excerpt, not the complete publisher article.
+                // Show additional source text only when it adds details beyond the short summary.
                 item(key = "article_paragraphs") {
                     Column(
                         modifier = Modifier.fillMaxWidth(),
                         verticalArrangement = Arrangement.spacedBy(14.dp),
                     ) {
                         val sourceText = story.fullText.trim()
-                        val additionalSourceText = if (sourceText.length > story.summary.trim().length + 30) {
-                            sourceText
-                        } else {
-                            ""
-                        }
+                        val additionalSourceText = NewsSummary.remainingSourceText(sourceText, detailSummary)
+                            .takeIf { it.length >= 80 }.orEmpty()
 
                         if (additionalSourceText.isNotBlank()) {
                             Text(
-                                text = "KAYNAK AKIŞINDA PAYLAŞILAN EK AÇIKLAMA",
+                                text = "HABERİN KAYNAK METNİ",
                                 style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
                                 color = MaterialTheme.colorScheme.primary,
                             )
-                            val paragraphs = story.paragraphs.ifEmpty { listOf(additionalSourceText) }
+                            val paragraphs = NewsSummary.paragraphs(additionalSourceText).ifEmpty { listOf(additionalSourceText) }
                             paragraphs.forEach { paragraph ->
                                 Text(
                                     text = paragraph,
@@ -450,12 +451,6 @@ fun HaberDetayScreen(
                                     color = MaterialTheme.colorScheme.onSurface,
                                 )
                             }
-                        } else {
-                            Text(
-                                text = "Kaynak akışında kısa açıklamadan başka bir metin yok. Haber ayrıntıları için yayıncı bağlantısını açabilirsin.",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
                         }
                     }
                 }

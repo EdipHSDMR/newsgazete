@@ -10,12 +10,15 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForwardIos
 import androidx.compose.material.icons.filled.Brightness4
@@ -231,11 +234,11 @@ fun ProfilScreen(
             SettingCard {
                 SettingNavigationRow(
                     icon = Icons.Default.VpnKey,
-                    title = "Canlı API Ayarları (Spor & Hava Durumu)",
-                    subtitle = if (prefs.footballApiKey.isNotBlank() || prefs.weatherApiKey.isNotBlank()) {
+                    title = "Canlı API Ayarları (Spor, Hava, Haber)",
+                    subtitle = if (prefs.footballApiKey.isNotBlank() || prefs.weatherApiKey.isNotBlank() || prefs.pressApiKey.isNotBlank()) {
                         "Özel API Anahtarları Kayıtlı ve Aktif"
                     } else {
-                        "api-football.com & weatherapi.com yapılandırması"
+                        "api-football.com · weatherapi.com · press.org.tr"
                     },
                     onClick = { showApiKeysDialog = true },
                 )
@@ -389,6 +392,7 @@ fun ProfilScreen(
     if (showApiKeysDialog) {
         var footballInput by remember { mutableStateOf(prefs.footballApiKey) }
         var weatherInput by remember { mutableStateOf(prefs.weatherApiKey) }
+        var pressInput by remember { mutableStateOf(prefs.pressApiKey) }
         var statusMsg by remember { mutableStateOf("") }
 
         AlertDialog(
@@ -408,7 +412,10 @@ fun ProfilScreen(
             },
             text = {
                 Column(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 520.dp)
+                        .verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(14.dp),
                 ) {
                     Text(
@@ -439,7 +446,35 @@ fun ProfilScreen(
                         )
                     }
 
-                    // 2. Weather API Key
+                    // 2. Press Haber API Key
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(
+                            text = "📰 Press Haber Ajansı (press.org.tr)",
+                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                        Text(
+                            text = "Basın Masası → Haber API → API anahtarım",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontSize = 11.sp,
+                        )
+                        OutlinedTextField(
+                            value = pressInput,
+                            onValueChange = { pressInput = it },
+                            placeholder = { Text("pha_… API anahtarınızı girin") },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true,
+                            visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                        )
+                        Text(
+                            text = "Anahtar cihazınızda saklanır; kaynak koda veya GitHub'a eklenmez. API sayfalı arşiv sunar. Anahtarsız RSS yalnızca son 50 haberi verir.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+
+                    // 3. Weather API Key
                     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Text(
                             text = "☀️ WeatherAPI (weatherapi.com)",
@@ -480,7 +515,7 @@ fun ProfilScreen(
             confirmButton = {
                 Button(
                     onClick = {
-                        repository.setCustomApiKeys(footballInput, weatherInput)
+                        repository.setCustomApiKeys(footballInput, weatherInput, pressInput)
                         statusMsg = "API anahtarları kaydedildi ve canlı akışlar güncellendi!"
                         showApiKeysDialog = false
                     }

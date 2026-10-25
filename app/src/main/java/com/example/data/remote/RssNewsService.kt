@@ -2,6 +2,7 @@ package com.example.data.remote
 
 import com.example.model.SourceComparison
 import com.example.model.Story
+import com.example.util.NewsSummary
 import android.text.Html
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -51,6 +52,7 @@ class RssNewsService(private val httpClient: OkHttpClient) {
         Triple("https://www.sozcu.com.tr/rss/sondakika.xml", "Sözcü", "Gündem"),
         Triple("https://www.hurriyet.com.tr/rss/gundem", "Hürriyet", "Gündem"),
         Triple("https://www.milliyet.com.tr/rss/rssnew/gundem.xml", "Milliyet", "Gündem"),
+        Triple("https://www.press.org.tr/ajans/rss.xml", "Press Haber Ajansı (PHA)", "Gündem"),
     )
     private val feedSemaphore = Semaphore(4)
 
@@ -114,21 +116,8 @@ class RssNewsService(private val httpClient: OkHttpClient) {
         }
     }
 
-    fun sourceSummary(description: String, maxCharacters: Int = 440): String {
-        val text = description.trim()
-        if (text.length <= maxCharacters) return text
-        val sentences = SENTENCE_BOUNDARY.split(text).filter(String::isNotBlank)
-        val complete = StringBuilder()
-        for (sentence in sentences) {
-            val nextLength = complete.length + (if (complete.isEmpty()) 0 else 1) + sentence.length
-            if (nextLength > maxCharacters) break
-            if (complete.isNotEmpty()) complete.append(' ')
-            complete.append(sentence)
-        }
-        if (complete.isNotEmpty()) return complete.toString()
-        val boundary = text.lastIndexOf(' ', maxCharacters - 2).takeIf { it > 0 } ?: maxCharacters - 1
-        return text.take(boundary).trimEnd() + "…"
-    }
+    fun sourceSummary(description: String, maxCharacters: Int = 380, title: String = ""): String =
+        NewsSummary.concise(description, title, maxCharacters)
 
     fun sourceParagraphs(description: String): List<String> =
         SENTENCE_BOUNDARY.split(description.trim())
@@ -269,7 +258,7 @@ class RssNewsService(private val httpClient: OkHttpClient) {
                     Story(
                         id = id,
                         title = cleanTitle,
-                        summary = sourceSummary(sourceText),
+                        summary = sourceSummary(sourceText, title = cleanTitle),
                         topic = classifiedTopic,
                         publisher = publisher,
                         publishedAt = timeAgo,
