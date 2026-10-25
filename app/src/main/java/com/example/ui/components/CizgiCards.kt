@@ -1101,7 +1101,7 @@ fun ModernNewsCard(
 
                         if (story.sourceCount > 1) {
                             Text(
-                                text = "${story.sourceCount} kaynak tarafından doğrulandı",
+                                text = "${story.sourceCount} farklı kaynak",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = CizgiColor.Blue,
                             )

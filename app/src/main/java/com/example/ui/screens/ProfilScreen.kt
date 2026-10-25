@@ -373,7 +373,7 @@ fun ProfilScreen(
                         style = MaterialTheme.typography.bodyMedium,
                     )
                     Text(
-                        text = "• Çoklu Kaynak Şeffaflığı: Her haber birden fazla bağımsız kaynakla teyit edilir.\n• Reklamsız Haber Hiyerarşisi: İçerik akışı yanıltıcı başlıklar ve tam ekran reklamlarla bölünmez.\n• Gizlilik Önceliği: Konum ve ilgi alanları sunucuda profil oluşturulmadan cihazınızda tutulur.",
+                        text = "• Kaynak şeffaflığı: Haberin kaynağı ve varsa diğer kaynaklarla karşılaştırması gösterilir; kaynak sayısı habere göre değişir.\n• Reklamsız haber akışı.\n• Gizlilik: Konum ve ilgi alanları cihazında tutulur.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )

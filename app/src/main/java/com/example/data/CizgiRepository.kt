@@ -124,6 +124,7 @@ class CizgiRepository private constructor(private val context: Context) {
     private var activeSportsKey: String? = null
     private var sportsRefreshJob: Job? = null
     private val newsPageMutex = Mutex()
+    private val sourceDescriptionAttempts = mutableMapOf<String, Long>()
 
     init {
         loadSavedPreferences()
@@ -405,6 +406,35 @@ class CizgiRepository private constructor(private val context: Context) {
         }
     }
 
+    fun refreshStoryDescription(storyId: String) {
+        val story = _stories.value.firstOrNull { it.id == storyId } ?: return
+        if (story.canonicalUrl.isBlank()) return
+        val now = System.currentTimeMillis()
+        if (now - (sourceDescriptionAttempts[storyId] ?: 0L) < SOURCE_DESCRIPTION_RETRY_MS) return
+        sourceDescriptionAttempts[storyId] = now
+
+        scope.launch {
+            try {
+                val description = rssNewsService.fetchSourceDescription(story.canonicalUrl)
+                    ?.takeIf { it.length >= MIN_SOURCE_DESCRIPTION_CHARS }
+                    ?: return@launch
+                if (description == story.fullText.trim()) return@launch
+
+                val updated = story.copy(
+                    summary = rssNewsService.sourceSummary(description),
+                    fullText = description,
+                    paragraphs = rssNewsService.sourceParagraphs(description),
+                    readTimeMin = maxOf(2, description.length / 220),
+                    whatHappened = "",
+                    whyItMatters = "",
+                    whatIsUnknown = "",
+                )
+                _stories.update { current -> current.map { if (it.id == storyId) updated else it } }
+                newsArticleDao.upsertAll(listOf(NewsArticleEntity.fromStory(updated)))
+            } catch (_: Exception) {}
+        }
+    }
+
     fun fetchLiveSports(competition: String = "Trendyol Süper Lig", sportType: String = "FUTBOL") {
         val requestKey = "$sportType|$competition"
         if (activeSportsKey != requestKey) {
@@ -566,6 +596,8 @@ class CizgiRepository private constructor(private val context: Context) {
         private const val NEWS_PAGE_SIZE = 120
         private const val MAX_IN_MEMORY_STORIES = 10_000
         private const val MAX_ARCHIVE_ARTICLES = 100_000
+        private const val MIN_SOURCE_DESCRIPTION_CHARS = 40
+        private const val SOURCE_DESCRIPTION_RETRY_MS = 12 * 60 * 60 * 1_000L
 
         @Volatile
         private var instance: CizgiRepository? = null

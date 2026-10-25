@@ -12,6 +12,7 @@ import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import java.net.URI
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -27,11 +28,17 @@ class RssNewsService(private val httpClient: OkHttpClient) {
         Triple("https://www.ntv.com.tr/gundem.rss", "NTV", "Gündem"),
         Triple("https://www.ntv.com.tr/ekonomi.rss", "NTV", "Ekonomi"),
         Triple("https://www.ntv.com.tr/teknoloji.rss", "NTV", "Teknoloji"),
+        Triple("https://www.ntv.com.tr/spor.rss", "NTV", "Spor"),
         Triple("https://www.trthaber.com/sondakika.rss", "TRT Haber", "Gündem"),
         Triple("https://www.trthaber.com/ekonomi_articles.rss", "TRT Haber", "Ekonomi"),
         Triple("https://www.trthaber.com/bilim_teknoloji_articles.rss", "TRT Haber", "Teknoloji"),
         Triple("https://www.trthaber.com/spor_articles.rss", "TRT Spor", "Spor"),
         Triple("https://www.haberturk.com/rss", "Habertürk", "Gündem"),
+        Triple("https://www.haberturk.com/rss/ekonomi.xml", "Habertürk", "Ekonomi"),
+        Triple("https://www.haberturk.com/rss/spor.xml", "Habertürk", "Spor"),
+        Triple("https://www.aa.com.tr/tr/rss/default?cat=guncel", "Anadolu Ajansı", "Gündem"),
+        Triple("https://www.aa.com.tr/tr/rss/default?cat=ekonomi", "Anadolu Ajansı", "Ekonomi"),
+        Triple("https://www.aa.com.tr/tr/rss/default?cat=spor", "Anadolu Ajansı", "Spor"),
         Triple("https://www.cnnturk.com/feed/rss/all/news", "CNN Türk", "Gündem"),
         Triple("https://www.cnnturk.com/feed/rss/ekonomi/news", "CNN Türk", "Ekonomi"),
         Triple("https://www.cnnturk.com/feed/rss/spor/news", "CNN Türk", "Spor"),
@@ -41,53 +48,6 @@ class RssNewsService(private val httpClient: OkHttpClient) {
         Triple("https://www.milliyet.com.tr/rss/rssnew/gundem.xml", "Milliyet", "Gündem"),
     )
     private val feedSemaphore = Semaphore(4)
-
-    // Unsplash curated editorial fallback news imagery (high resolution, CDN backed)
-    private val topicFallbackImages = mapOf(
-        "Siyaset" to listOf(
-            "https://images.unsplash.com/photo-1541872703-74c5e44368f9?auto=format&fit=crop&w=800&q=80",
-            "https://images.unsplash.com/photo-1529107386315-e1a2ed48a620?auto=format&fit=crop&w=800&q=80",
-            "https://images.unsplash.com/photo-1585829365295-ab7cd400c167?auto=format&fit=crop&w=800&q=80",
-        ),
-        "Ekonomi" to listOf(
-            "https://images.unsplash.com/photo-1611974789855-9c2a0a7236a3?auto=format&fit=crop&w=800&q=80",
-            "https://images.unsplash.com/photo-1590283603385-17ffb3a7f29f?auto=format&fit=crop&w=800&q=80",
-            "https://images.unsplash.com/photo-1526304640581-d334cdbbf45e?auto=format&fit=crop&w=800&q=80",
-        ),
-        "Teknoloji" to listOf(
-            "https://images.unsplash.com/photo-1518770660439-4636190af475?auto=format&fit=crop&w=800&q=80",
-            "https://images.unsplash.com/photo-1550751827-4bd374c3f58b?auto=format&fit=crop&w=800&q=80",
-            "https://images.unsplash.com/photo-1485827404703-89b55fcc595e?auto=format&fit=crop&w=800&q=80",
-        ),
-        "Spor" to listOf(
-            "https://images.unsplash.com/photo-1508098682722-e99c43a406b2?auto=format&fit=crop&w=800&q=80",
-            "https://images.unsplash.com/photo-1574629810360-7efbbe195018?auto=format&fit=crop&w=800&q=80",
-            "https://images.unsplash.com/photo-1546519638-68e109498ffc?auto=format&fit=crop&w=800&q=80",
-            "https://images.unsplash.com/photo-1612872087720-bb876e2e67d1?auto=format&fit=crop&w=800&q=80",
-        ),
-        "Dünya" to listOf(
-            "https://images.unsplash.com/photo-1451187580459-43490279c0fa?auto=format&fit=crop&w=800&q=80",
-            "https://images.unsplash.com/photo-1529107386315-e1a2ed48a620?auto=format&fit=crop&w=800&q=80",
-            "https://images.unsplash.com/photo-1534447677768-be436bb09401?auto=format&fit=crop&w=800&q=80",
-        ),
-        "Gündem" to listOf(
-            "https://images.unsplash.com/photo-1585829365295-ab7cd400c167?auto=format&fit=crop&w=800&q=80",
-            "https://images.unsplash.com/photo-1504711434969-e33886168f5c?auto=format&fit=crop&w=800&q=80",
-            "https://images.unsplash.com/photo-1495020689067-958852a7765e?auto=format&fit=crop&w=800&q=80",
-        ),
-        "Kültür-Sanat" to listOf(
-            "https://images.unsplash.com/photo-1507676184212-d03ab07a01bf?auto=format&fit=crop&w=800&q=80",
-            "https://images.unsplash.com/photo-1460723237483-7a6dc9d0b212?auto=format&fit=crop&w=800&q=80",
-        ),
-        "Sağlık" to listOf(
-            "https://images.unsplash.com/photo-1505751172876-fa1923c5c528?auto=format&fit=crop&w=800&q=80",
-            "https://images.unsplash.com/photo-1576091160399-112ba8d25d1d?auto=format&fit=crop&w=800&q=80",
-        ),
-        "Türkiye" to listOf(
-            "https://images.unsplash.com/photo-1541432901042-2d8bd64b4a9b?auto=format&fit=crop&w=800&q=80",
-            "https://images.unsplash.com/photo-1524231757912-21f4fe3a7200?auto=format&fit=crop&w=800&q=80",
-        )
-    )
 
     suspend fun fetchRealNews(): List<Story> = withContext(Dispatchers.IO) {
         val semaphore = feedSemaphore
@@ -123,6 +83,64 @@ class RssNewsService(private val httpClient: OkHttpClient) {
 
         if (uniqueStories.isNotEmpty()) uniqueStories[0] = uniqueStories[0].copy(isManset = true)
         uniqueStories
+    }
+
+    /** Reads only a publisher-provided meta description; it never invents or copies article body text. */
+    suspend fun fetchSourceDescription(url: String): String? = withContext(Dispatchers.IO) {
+        val uri = runCatching { URI(url) }.getOrNull() ?: return@withContext null
+        if (uri.scheme !in setOf("http", "https") || uri.host.isNullOrBlank()) return@withContext null
+
+        try {
+            val request = Request.Builder()
+                .url(url)
+                .header("User-Agent", "Newsgazete/1.0 (RSS reader)")
+                .header("Accept", "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8")
+                .build()
+            httpClient.newCall(request).execute().use { response ->
+                if (!response.isSuccessful || response.body == null) return@withContext null
+                val html = response.peekBody(MAX_SOURCE_PAGE_BYTES).string()
+                extractMetaDescription(html)
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    fun sourceSummary(description: String, maxCharacters: Int = 440): String {
+        val text = description.trim()
+        if (text.length <= maxCharacters) return text
+        val sentences = SENTENCE_BOUNDARY.split(text).filter(String::isNotBlank)
+        val complete = StringBuilder()
+        for (sentence in sentences) {
+            val nextLength = complete.length + (if (complete.isEmpty()) 0 else 1) + sentence.length
+            if (nextLength > maxCharacters) break
+            if (complete.isNotEmpty()) complete.append(' ')
+            complete.append(sentence)
+        }
+        if (complete.isNotEmpty()) return complete.toString()
+        val boundary = text.lastIndexOf(' ', maxCharacters - 2).takeIf { it > 0 } ?: maxCharacters - 1
+        return text.take(boundary).trimEnd() + "…"
+    }
+
+    fun sourceParagraphs(description: String): List<String> =
+        SENTENCE_BOUNDARY.split(description.trim())
+            .map(String::trim)
+            .filter(String::isNotBlank)
+            .chunked(3)
+            .map { it.joinToString(" ") }
+
+    private fun extractMetaDescription(html: String): String? {
+        val acceptedNames = setOf("og:description", "twitter:description", "description")
+        val metaTags = META_TAG.findAll(html)
+        for (match in metaTags) {
+            val tag = match.value
+            val name = META_NAME.find(tag)?.groupValues?.getOrNull(1)?.lowercase(Locale.ROOT) ?: continue
+            if (name !in acceptedNames) continue
+            val content = META_CONTENT.find(tag)?.groupValues?.getOrNull(1).orEmpty()
+            val clean = cleanHtml(content)
+            if (clean.length >= 40) return clean.take(MAX_SOURCE_DESCRIPTION_CHARS)
+        }
+        return null
     }
 
     private fun mergeDuplicateStories(stories: List<Story>): List<Story> {
@@ -191,7 +209,6 @@ class RssNewsService(private val httpClient: OkHttpClient) {
         val itemPattern = Pattern.compile("<(?:[\\w.-]+:)?(?:item|entry)\\b[^>]*>(.*?)</(?:[\\w.-]+:)?(?:item|entry)\\s*>", Pattern.DOTALL or Pattern.CASE_INSENSITIVE)
         val matcher = itemPattern.matcher(xml)
 
-        var counter = 0
         while (matcher.find()) {
             val itemBlock = matcher.group(1) ?: continue
 
@@ -213,34 +230,22 @@ class RssNewsService(private val httpClient: OkHttpClient) {
                 // Classify topic intelligently by content and category
                 val classifiedTopic = classifyTopic(cleanTitle, cleanDesc, rawCategory, defaultTopic)
 
-                // Extract image
-                var imageUrl = extractImageUrl(itemBlock)
-                if (imageUrl.isBlank()) {
-                    val fallbacks = topicFallbackImages[classifiedTopic] ?: topicFallbackImages["Gündem"] ?: emptyList()
-                    if (fallbacks.isNotEmpty()) {
-                        imageUrl = fallbacks[counter % fallbacks.size]
-                    }
-                }
+                // Keep only an image explicitly supplied by the publisher's feed.
+                val imageUrl = extractImageUrl(itemBlock)
 
                 val timeAgo = formatPubDate(rawPubDate)
                 val readMin = maxOf(2, cleanDesc.length / 220)
+                val publishedAtEpochMs = parsePubDateEpochMs(rawPubDate)
+                // Keep the existing title-based ID so refreshes update the user's old cache
+                // instead of duplicating every story after the app upgrade.
                 val id = UUID.nameUUIDFromBytes(cleanTitle.toByteArray(Charsets.UTF_8)).toString()
-                val publishedAtEpochMs = parsePubDateEpochMs(rawPubDate).takeIf { it > 0 }
-                    ?: System.currentTimeMillis()
-
-                val paragraphs = if (cleanDesc.isNotBlank() && cleanDesc.contains(". ")) {
-                    cleanDesc.split(". ")
-                        .filter { it.isNotBlank() }
-                        .map { it.trim().removeSuffix(".") + "." }
-                } else {
-                    listOf(cleanTitle, cleanDesc).filter { it.isNotBlank() }
-                }
+                val sourceText = cleanDesc.take(MAX_SOURCE_DESCRIPTION_CHARS)
 
                 list.add(
                     Story(
                         id = id,
                         title = cleanTitle,
-                        summary = cleanDesc.take(190) + if (cleanDesc.length > 190) "..." else "",
+                        summary = sourceSummary(sourceText),
                         topic = classifiedTopic,
                         publisher = publisher,
                         publishedAt = timeAgo,
@@ -249,11 +254,11 @@ class RssNewsService(private val httpClient: OkHttpClient) {
                         imageUrl = imageUrl,
                         isBreaking = cleanTitle.contains("son dakika", ignoreCase = true),
                         isManset = false,
-                        whatHappened = cleanTitle,
-                        whyItMatters = cleanDesc.take(140),
+                        whatHappened = "",
+                        whyItMatters = "",
                         whatIsUnknown = "",
-                        fullText = cleanDesc.ifBlank { cleanTitle },
-                        paragraphs = paragraphs,
+                        fullText = sourceText,
+                        paragraphs = sourceParagraphs(sourceText),
                         comparisons = listOf(
                             SourceComparison(
                                 publisher = publisher,
@@ -267,7 +272,6 @@ class RssNewsService(private val httpClient: OkHttpClient) {
                         isSaved = false,
                     )
                 )
-                counter++
             }
         }
         return list
@@ -379,16 +383,19 @@ class RssNewsService(private val httpClient: OkHttpClient) {
     private fun cleanHtml(text: String): String {
         val withoutCdata = text.replace("<!\\[CDATA\\[".toRegex(), "")
             .replace("\\]\\]>".toRegex(), "")
+            .replace("<script\\b[^>]*>.*?</script>".toRegex(RegexOption.IGNORE_CASE), " ")
+            .replace("<style\\b[^>]*>.*?</style>".toRegex(RegexOption.IGNORE_CASE), " ")
         return Html.fromHtml(withoutCdata, Html.FROM_HTML_MODE_LEGACY)
             .toString()
-            .replace("\\s+".toRegex(), " ")
+            .replace('\u00a0', ' ')
+            .replace("[\\s\\u200B]+".toRegex(), " ")
             .trim()
     }
 
     private fun formatPubDate(pubDate: String): String {
-        if (pubDate.isBlank()) return "Az önce"
+        if (pubDate.isBlank()) return "Tarih bilgisi yok"
         val timestamp = parsePubDateEpochMs(pubDate)
-        if (timestamp <= 0) return "Bugün"
+        if (timestamp <= 0) return "Tarih bilgisi yok"
         val diffMs = (System.currentTimeMillis() - timestamp).coerceAtLeast(0)
         val minutes = (diffMs / 60_000L).toInt()
         val hours = (diffMs / 3_600_000L).toInt()
@@ -427,6 +434,12 @@ class RssNewsService(private val httpClient: OkHttpClient) {
     private companion object {
         const val MAX_ITEMS_PER_FEED = 300
         const val MAX_STORIES_PER_REFRESH = 3_000
+        const val MAX_SOURCE_PAGE_BYTES = 512L * 1024L
+        const val MAX_SOURCE_DESCRIPTION_CHARS = 6_000
+        val SENTENCE_BOUNDARY = Regex("(?<=[.!?])\\s+")
+        val META_TAG = Regex("<meta\\b[^>]*>", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
+        val META_NAME = Regex("(?:property|name)\\s*=\\s*[\"']([^\"']+)[\"']", RegexOption.IGNORE_CASE)
+        val META_CONTENT = Regex("\\bcontent\\s*=\\s*[\"']([^\"']*)[\"']", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
     }
 
 
