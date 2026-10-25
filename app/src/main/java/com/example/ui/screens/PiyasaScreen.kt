@@ -52,7 +52,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -63,14 +62,12 @@ import com.example.data.CizgiRepository
 import com.example.data.remote.BISTStock
 import com.example.model.FinancialAsset
 import com.example.ui.theme.CizgiColor
-import com.example.util.CizgiNotificationHelper
 
 @Composable
 fun PiyasaScreen(
     repository: CizgiRepository,
     modifier: Modifier = Modifier,
 ) {
-    val context = LocalContext.current
     val assets by repository.financialAssets.collectAsState()
     val bistStocks by repository.bistStocks.collectAsState()
 
@@ -97,14 +94,16 @@ fun PiyasaScreen(
     }
 
     val activeConverterAsset = remember(assets, selectedConverterAsset) {
-        assets.firstOrNull { it.code == selectedConverterAsset } ?: assets.firstOrNull() ?: FinancialAsset("USD/TRY", "Dolar", "$", 34.32, 0.28, 34.40, 34.20)
+        assets.firstOrNull { it.code == selectedConverterAsset }
     }
 
     val convertedValue = remember(converterAmount, activeConverterAsset) {
-        val amount = converterAmount.toDoubleOrNull() ?: 0.0
-        val total = amount * activeConverterAsset.currentPrice
-        String.format(java.util.Locale.US, "%,.2f", total)
+        activeConverterAsset?.let { asset ->
+            val amount = converterAmount.toDoubleOrNull() ?: 0.0
+            String.format(java.util.Locale.US, "%,.2f", amount * asset.currentPrice)
+        }
     }
+    val hasMarketData = assets.isNotEmpty() || bistStocks.isNotEmpty()
 
     LazyColumn(
         modifier = modifier
@@ -132,11 +131,12 @@ fun PiyasaScreen(
                         )
                         Surface(
                             shape = RoundedCornerShape(4.dp),
-                            color = Color(0xFF16A34A).copy(alpha = 0.15f),
+                            color = (if (hasMarketData) Color(0xFF16A34A) else MaterialTheme.colorScheme.outline)
+                                .copy(alpha = 0.15f),
                         ) {
                             Text(
-                                text = "BIST: CANLI VERİ",
-                                color = Color(0xFF16A34A),
+                                text = if (hasMarketData) "VERİ ALINDI" else "VERİ BEKLENİYOR",
+                                color = if (hasMarketData) Color(0xFF16A34A) else MaterialTheme.colorScheme.onSurfaceVariant,
                                 fontSize = 10.sp,
                                 fontWeight = FontWeight.Bold,
                                 modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
@@ -144,7 +144,7 @@ fun PiyasaScreen(
                         }
                     }
                     Text(
-                        text = "Canlı Piyasalar",
+                        text = "Piyasalar",
                         style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.Bold),
                         color = MaterialTheme.colorScheme.onSurface,
                     )
@@ -157,13 +157,6 @@ fun PiyasaScreen(
                     IconButton(
                         onClick = {
                             repository.refreshMarkets()
-                            val usd = assets.firstOrNull { it.code == "USD/TRY" }?.currentPrice ?: 34.32
-                            val ga = assets.firstOrNull { it.code == "GA" }?.currentPrice ?: 3020.0
-                            CizgiNotificationHelper.sendMarketNotification(
-                                context,
-                                "Piyasalar Güncellendi",
-                                "Dolar: $usd ₺ · Gram Altın: $ga ₺ · BIST 100 takibi devrede"
-                            )
                         },
                         modifier = Modifier.size(38.dp),
                     ) {
@@ -213,7 +206,7 @@ fun PiyasaScreen(
                         }
 
                         Text(
-                            text = "Canlı Kur",
+                            text = activeConverterAsset?.name ?: "Güncel fiyat bekleniyor",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -231,6 +224,7 @@ fun PiyasaScreen(
                             FilterChip(
                                 selected = isSel,
                                 onClick = { selectedConverterAsset = code },
+                                enabled = assets.any { it.code == code },
                                 label = { Text(name, fontSize = 12.sp) },
                                 colors = FilterChipDefaults.filterChipColors(
                                     selectedContainerColor = MaterialTheme.colorScheme.primary,
@@ -270,7 +264,7 @@ fun PiyasaScreen(
                                 contentAlignment = Alignment.Center,
                             ) {
                                 Text(
-                                    text = "$convertedValue ₺",
+                                    text = convertedValue?.let { "$it ₺" } ?: "Fiyat bekleniyor",
                                     style = MaterialTheme.typography.titleMedium.copy(
                                         fontWeight = FontWeight.Black,
                                         fontSize = 17.sp,
