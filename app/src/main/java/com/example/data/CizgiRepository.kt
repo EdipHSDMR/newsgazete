@@ -19,7 +19,9 @@ import com.example.model.Story
 import com.example.model.UserPreferences
 import com.example.model.WeatherInfo
 import com.example.util.CizgiNotificationHelper
+import com.example.util.NewsDiscoveryInsights
 import com.example.util.NewsStoryDeduplicator
+import com.example.util.NewsSummary
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -77,6 +79,10 @@ class CizgiRepository private constructor(private val context: Context) {
     // State flows
     private val _stories = MutableStateFlow<List<Story>>(emptyList())
     val stories: StateFlow<List<Story>> = _stories.asStateFlow()
+    private val _dailyDigest = MutableStateFlow<List<String>>(emptyList())
+    val dailyDigest: StateFlow<List<String>> = _dailyDigest.asStateFlow()
+    private var dailyDigestKey = ""
+    private var dailyDigestJob: Job? = null
     val newsArchiveCount: StateFlow<Int> = newsArticleDao.observeCount()
         .stateIn(scope, SharingStarted.Eagerly, 0)
 
@@ -247,6 +253,52 @@ class CizgiRepository private constructor(private val context: Context) {
                         .sortedWith(compareByDescending<Story> { it.publishedAtEpochMs }.thenByDescending { it.id })
                         .take(MAX_IN_MEMORY_STORIES)
                 }
+                refreshDailyDigest(_stories.value)
+            }
+        }
+    }
+
+    private fun refreshDailyDigest(stories: List<Story>) {
+        val candidates = NewsDiscoveryInsights.dailyDigestStories(stories)
+        if (candidates.isEmpty()) {
+            dailyDigestKey = ""
+            dailyDigestJob?.cancel()
+            _dailyDigest.value = emptyList()
+            return
+        }
+
+        val key = candidates.joinToString("|") { story ->
+            "${story.id}:${story.fullText.hashCode()}:${story.summary.hashCode()}"
+        }
+        if (key == dailyDigestKey) return
+        dailyDigestKey = key
+        dailyDigestJob?.cancel()
+        _dailyDigest.value = NewsDiscoveryInsights.dailyDigest(stories)
+
+        dailyDigestJob = scope.launch {
+            val summaries = coroutineScope {
+                candidates.map { story ->
+                    async {
+                        val sourceText = story.fullText.takeIf { it.length >= NewsDiscoveryInsights.MIN_SOURCE_CHARS }
+                            ?: story.summary
+                        val generated = newsSummaryApiService.summarize(
+                            title = story.title,
+                            articleUrl = story.canonicalUrl,
+                            sourceText = sourceText,
+                        )
+                        generated?.takeIf { it.length >= NewsDiscoveryInsights.MIN_DIGEST_ITEM_CHARS }
+                            ?: NewsSummary.concise(
+                                sourceText,
+                                story.title,
+                                NewsDiscoveryInsights.MAX_DIGEST_ITEM_CHARS,
+                            ).takeIf { it.length >= NewsDiscoveryInsights.MIN_DIGEST_ITEM_CHARS }
+                    }
+                }.awaitAll()
+            }
+            if (dailyDigestKey == key) {
+                _dailyDigest.value = summaries.filterNotNull()
+                    .distinctBy { it.lowercase(java.util.Locale.forLanguageTag("tr-TR")) }
+                    .take(NewsDiscoveryInsights.DIGEST_SIZE)
             }
         }
     }
