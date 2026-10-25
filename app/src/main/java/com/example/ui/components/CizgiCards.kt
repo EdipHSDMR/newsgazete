@@ -634,6 +634,7 @@ fun KompaktHavaKarti(
                 ) {
                     Text(
                         text = when {
+                            weather.currentTempC == null -> "⏳"
                             weather.condition.contains("Güneşli", ignoreCase = true) -> "☀️"
                             weather.condition.contains("Yağmur", ignoreCase = true) -> "🌧️"
                             weather.condition.contains("Bulutlu", ignoreCase = true) -> "⛅"
@@ -1236,51 +1237,59 @@ fun BistWatchlistCard(
             .testTag("bist_watchlist_widget"),
     ) {
         Column(modifier = Modifier.padding(14.dp)) {
+            val hasMarketData = financialAssets.isNotEmpty() || stocks.isNotEmpty()
+            val statusColor = if (hasMarketData) Color(0xFF15803D) else MaterialTheme.colorScheme.onSurfaceVariant
             // Header Row
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Row(
+                    modifier = Modifier.weight(1f),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
                     Box(
                         modifier = Modifier
-                            .size(10.dp)
+                            .size(8.dp)
                             .clip(CircleShape)
-                            .background(Color(0xFF16A34A)),
+                            .background(statusColor),
                     )
                     Text(
-                        text = "BORSA İSTANBUL & PİYASA TAKİBİ",
+                        text = "PİYASA TAKİBİ",
                         style = MaterialTheme.typography.labelSmall.copy(
                             fontWeight = FontWeight.Bold,
                             letterSpacing = 0.8.sp,
                         ),
                         color = MaterialTheme.colorScheme.primary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
                     )
                     Surface(
                         shape = RoundedCornerShape(4.dp),
-                        color = Color(0xFF16A34A).copy(alpha = 0.15f),
+                        color = statusColor.copy(alpha = 0.12f),
                     ) {
                         Text(
-                            text = "CANLI RETROFIT",
+                            text = if (hasMarketData) "VERİ ALINDI" else "VERİ YOK",
                             fontSize = 9.sp,
                             fontWeight = FontWeight.Bold,
-                            color = Color(0xFF16A34A),
-                            modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp),
+                            color = statusColor,
+                            maxLines = 1,
+                            modifier = Modifier.padding(horizontal = 5.dp, vertical = 3.dp),
                         )
                     }
                 }
 
                 Text(
-                    text = "Tüm Piyasalar ›",
-                    style = MaterialTheme.typography.labelMedium.copy(
+                    text = "Tüm piyasalar ›",
+                    style = MaterialTheme.typography.labelSmall.copy(
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.primary,
                     ),
-                    modifier = Modifier.clickable(onClick = onViewMarketsClick),
+                    maxLines = 1,
+                    softWrap = false,
+                    modifier = Modifier.padding(start = 8.dp).clickable(onClick = onViewMarketsClick),
                 )
             }
 
@@ -1426,3 +1435,4 @@ private fun BistMiniItem(
         }
     }
 }
+
