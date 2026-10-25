@@ -182,7 +182,4 @@ data class UserPreferences(
     val quietHoursEnabled: Boolean = true,
     val quietHoursStart: String = "23:00",
     val quietHoursEnd: String = "07:00",
-    val footballApiKey: String = "",
-    val weatherApiKey: String = "",
-    val pressApiKey: String = "",
 )
