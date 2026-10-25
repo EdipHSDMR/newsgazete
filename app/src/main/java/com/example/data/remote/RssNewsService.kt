@@ -19,6 +19,11 @@ import java.util.Locale
 import java.util.UUID
 import java.util.regex.Pattern
 
+data class SourcePageMetadata(
+    val description: String?,
+    val imageUrl: String?,
+)
+
 class RssNewsService(private val httpClient: OkHttpClient) {
 
     // Açık, telif dostu kamu & haber RSS akışları
@@ -85,8 +90,8 @@ class RssNewsService(private val httpClient: OkHttpClient) {
         uniqueStories
     }
 
-    /** Reads only a publisher-provided meta description; it never invents or copies article body text. */
-    suspend fun fetchSourceDescription(url: String): String? = withContext(Dispatchers.IO) {
+    /** Reads only publisher-provided metadata. It never invents or copies article body text. */
+    suspend fun fetchSourceMetadata(url: String): SourcePageMetadata? = withContext(Dispatchers.IO) {
         val uri = runCatching { URI(url) }.getOrNull() ?: return@withContext null
         if (uri.scheme !in setOf("http", "https") || uri.host.isNullOrBlank()) return@withContext null
 
@@ -99,7 +104,10 @@ class RssNewsService(private val httpClient: OkHttpClient) {
             httpClient.newCall(request).execute().use { response ->
                 if (!response.isSuccessful || response.body == null) return@withContext null
                 val html = response.peekBody(MAX_SOURCE_PAGE_BYTES).string()
-                extractMetaDescription(html)
+                SourcePageMetadata(
+                    description = extractMetaDescription(html),
+                    imageUrl = extractMetaImage(html, url),
+                ).takeIf { it.description != null || it.imageUrl != null }
             }
         } catch (_: Exception) {
             null
@@ -143,6 +151,21 @@ class RssNewsService(private val httpClient: OkHttpClient) {
         return null
     }
 
+    private fun extractMetaImage(html: String, pageUrl: String): String? {
+        val acceptedNames = setOf("og:image", "og:image:url", "twitter:image", "twitter:image:src", "image")
+        for (match in META_TAG.findAll(html)) {
+            val tag = match.value
+            val name = META_NAME.find(tag)?.groupValues?.getOrNull(1)?.lowercase(Locale.ROOT)
+            if (name in acceptedNames) {
+                val content = META_CONTENT.find(tag)?.groupValues?.getOrNull(1).orEmpty()
+                normalizeImageUrl(content, pageUrl).takeIf(String::isNotBlank)?.let { return it }
+            }
+        }
+
+        val imageSource = IMAGE_SOURCE_HREF.find(html)?.groupValues?.getOrNull(1).orEmpty()
+        return normalizeImageUrl(imageSource, pageUrl).takeIf(String::isNotBlank)
+    }
+
     private fun mergeDuplicateStories(stories: List<Story>): List<Story> {
         val mergedById = LinkedHashMap<String, Story>()
         val idByUrl = mutableMapOf<String, String>()
@@ -168,6 +191,7 @@ class RssNewsService(private val httpClient: OkHttpClient) {
                 sourceCount = comparisons.size.coerceAtLeast(existing.sourceCount),
                 comparisons = comparisons,
                 canonicalUrl = existing.canonicalUrl.ifBlank { story.canonicalUrl },
+                imageUrl = existing.imageUrl.ifBlank { story.imageUrl },
             )
             if (urlKey.isNotBlank()) idByUrl[urlKey] = existing.id
             if (titleKey.isNotBlank()) idByTitle[titleKey] = existing.id
@@ -231,7 +255,7 @@ class RssNewsService(private val httpClient: OkHttpClient) {
                 val classifiedTopic = classifyTopic(cleanTitle, cleanDesc, rawCategory, defaultTopic)
 
                 // Keep only an image explicitly supplied by the publisher's feed.
-                val imageUrl = extractImageUrl(itemBlock)
+                val imageUrl = extractImageUrl(itemBlock, rawLink)
 
                 val timeAgo = formatPubDate(rawPubDate)
                 val readMin = maxOf(2, cleanDesc.length / 220)
@@ -345,39 +369,68 @@ class RssNewsService(private val httpClient: OkHttpClient) {
         return if (textMatcher.find()) cleanHtml(textMatcher.group(1) ?: "") else ""
     }
 
-    private fun extractImageUrl(block: String): String {
-        // 1. Check enclosure tag
-        val encPattern = Pattern.compile("<enclosure[^>]+url=[\"'](https?://[^\"']+)[\"']", Pattern.CASE_INSENSITIVE)
-        val encMatcher = encPattern.matcher(block)
-        if (encMatcher.find()) {
-            val u = encMatcher.group(1)
-            if (!u.isNullOrBlank() && isLikelyImageUrl(u)) return u
+    private fun extractImageUrl(block: String, articleUrl: String): String {
+        // Publisher media:content is usually the highest resolution image.
+        val mediaContent = Regex("<media:content\\b[^>]*>", RegexOption.IGNORE_CASE)
+        for (tag in mediaContent.findAll(block)) {
+            val url = URL_ATTRIBUTE.find(tag.value)?.groupValues?.getOrNull(1).orEmpty()
+            if (url.isNotBlank()) normalizeImageUrl(url, articleUrl).takeIf(String::isNotBlank)?.let { return it }
         }
 
-        // 2. Check media:content or media:thumbnail
-        val mediaPattern = Pattern.compile("<media:(?:content|thumbnail)[^>]+url=[\"'](https?://[^\"']+)[\"']", Pattern.CASE_INSENSITIVE)
-        val mediaMatcher = mediaPattern.matcher(block)
-        if (mediaMatcher.find()) {
-            val u = mediaMatcher.group(1)
-            if (!u.isNullOrBlank()) return u
+        // Some feeds publish images only as an enclosure, thumbnail, or inline HTML image.
+        val enclosure = Regex("<enclosure\\b[^>]*>", RegexOption.IGNORE_CASE)
+        for (tag in enclosure.findAll(block)) {
+            val value = tag.value
+            val url = URL_ATTRIBUTE.find(value)?.groupValues?.getOrNull(1).orEmpty()
+            val type = TYPE_ATTRIBUTE.find(value)?.groupValues?.getOrNull(1).orEmpty()
+            if (url.isNotBlank() && (type.startsWith("image/", ignoreCase = true) || isLikelyImageUrl(url))) {
+                normalizeImageUrl(url, articleUrl).takeIf(String::isNotBlank)?.let { return it }
+            }
         }
 
-        // 3. Check <img> tag inside description or content:encoded
-        val imgPattern = Pattern.compile("<img[^>]+src=[\"'](https?://[^\"']+\\.(?:jpg|jpeg|png|webp)[^\"']*)[\"']", Pattern.CASE_INSENSITIVE)
-        val imgMatcher = imgPattern.matcher(block)
-        if (imgMatcher.find()) {
-            val u = imgMatcher.group(1)
-            if (!u.isNullOrBlank()) return u
+        val thumbnail = Regex("<media:thumbnail\\b[^>]*>", RegexOption.IGNORE_CASE)
+        for (tag in thumbnail.findAll(block)) {
+            val url = URL_ATTRIBUTE.find(tag.value)?.groupValues?.getOrNull(1).orEmpty()
+            if (url.isNotBlank()) normalizeImageUrl(url, articleUrl).takeIf(String::isNotBlank)?.let { return it }
         }
 
+        val imageTag = Regex("<img\\b[^>]*>", RegexOption.IGNORE_CASE)
+        val preferredAttributes = listOf("data-src", "data-original", "data-lazy-src", "data-image", "src", "srcset")
+        for (tag in imageTag.findAll(block)) {
+            for (attribute in preferredAttributes) {
+                val value = attributeValue(tag.value, attribute)
+                val candidate = if (attribute == "srcset") value.substringBefore(',').trim().substringBefore(' ') else value
+                if (candidate.isNotBlank()) normalizeImageUrl(candidate, articleUrl).takeIf(String::isNotBlank)?.let { return it }
+            }
+        }
         return ""
     }
 
+    private fun attributeValue(tag: String, attribute: String): String =
+        Regex("\\b${Regex.escape(attribute)}\\s*=\\s*[\"']([^\"']+)[\"']", RegexOption.IGNORE_CASE)
+            .find(tag)?.groupValues?.getOrNull(1).orEmpty()
+
+    private fun normalizeImageUrl(rawUrl: String, baseUrl: String): String {
+        val decoded = Html.fromHtml(rawUrl.trim(), Html.FROM_HTML_MODE_LEGACY).toString().trim()
+            .trim('"', '\'', ' ', '\t', '\r', '\n')
+        if (decoded.isBlank() || decoded.startsWith("data:", ignoreCase = true)) return ""
+        return try {
+            val rawUri = URI(decoded)
+            val baseUri = URI(baseUrl)
+            val resolved = if (rawUri.isAbsolute) rawUri else baseUri.resolve(rawUri)
+            if (resolved.scheme !in setOf("http", "https") || resolved.host.isNullOrBlank()) ""
+            else resolved.toASCIIString()
+        } catch (_: Exception) {
+            ""
+        }
+    }
+
     private fun isLikelyImageUrl(url: String): Boolean {
-        val lower = url.lowercase()
+        val lower = url.substringBefore('?').substringBefore('#').lowercase(Locale.ROOT)
         return lower.endsWith(".jpg") || lower.endsWith(".jpeg") || lower.endsWith(".png") ||
-                lower.endsWith(".webp") || lower.contains("image") || lower.contains("/resim/") ||
-                lower.contains("/images/") || lower.contains("trthaber.com")
+            lower.endsWith(".webp") || lower.endsWith(".gif") || lower.endsWith(".avif") ||
+            lower.contains("/jpg/") || lower.contains("/image") || lower.contains("/resim/") ||
+            lower.contains("/images/") || lower.contains("trthaber.com")
     }
 
     private fun cleanHtml(text: String): String {
@@ -440,6 +493,9 @@ class RssNewsService(private val httpClient: OkHttpClient) {
         val META_TAG = Regex("<meta\\b[^>]*>", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
         val META_NAME = Regex("(?:property|name)\\s*=\\s*[\"']([^\"']+)[\"']", RegexOption.IGNORE_CASE)
         val META_CONTENT = Regex("\\bcontent\\s*=\\s*[\"']([^\"']*)[\"']", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
+        val IMAGE_SOURCE_HREF = Regex("<link\\b(?=[^>]*\\brel=[\"'][^\"']*image_src[^\"']*[\"'])[^>]*\\bhref=[\"']([^\"']+)[\"'][^>]*>", RegexOption.IGNORE_CASE)
+        val URL_ATTRIBUTE = Regex("\\burl\\s*=\\s*[\"']([^\"']+)[\"']", RegexOption.IGNORE_CASE)
+        val TYPE_ATTRIBUTE = Regex("\\btype\\s*=\\s*[\"']([^\"']+)[\"']", RegexOption.IGNORE_CASE)
     }
 
 

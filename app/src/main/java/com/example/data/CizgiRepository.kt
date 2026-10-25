@@ -18,6 +18,8 @@ import com.example.model.UserPreferences
 import com.example.model.WeatherInfo
 import com.example.util.CizgiNotificationHelper
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -32,6 +34,8 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
 
@@ -48,6 +52,9 @@ class CizgiRepository private constructor(private val context: Context) {
     private val savedArticleDao = database.savedArticleDao()
     private val cachedSportStatDao = database.cachedSportStatDao()
     private val newsArticleDao = database.newsArticleDao()
+    private val imageEnrichmentAttempts = mutableMapOf<String, Long>()
+    private val pendingImageEnrichment = mutableMapOf<String, Story>()
+    private var imageEnrichmentJob: Job? = null
 
     // Remote Services
     private val rssNewsService = RssNewsService(httpClient)
@@ -328,6 +335,8 @@ class CizgiRepository private constructor(private val context: Context) {
                     .take(MAX_IN_MEMORY_STORIES)
             }
 
+            enrichMissingStoryImages(_stories.value.take(NEWS_PAGE_SIZE))
+
             val now = System.currentTimeMillis()
             val criticalBreaking = liveFeed.firstOrNull { story ->
                 story.isBreaking && story.id !in sentBreakingStoryIds &&
@@ -392,12 +401,13 @@ class CizgiRepository private constructor(private val context: Context) {
                 )
                 if (older.isNotEmpty()) {
                     val savedIds = savedArticles.value.map { it.id }.toSet()
+                    val olderStories = older.map { it.toStory().copy(isSaved = it.id in savedIds) }
                     _stories.update { current ->
                         val currentIds = current.mapTo(mutableSetOf()) { it.id }
-                        (current + older.map { it.toStory().copy(isSaved = it.id in savedIds) }
-                            .filterNot { it.id in currentIds })
+                        (current + olderStories.filterNot { it.id in currentIds })
                             .take(MAX_IN_MEMORY_STORIES)
                     }
+                    enrichMissingStoryImages(olderStories)
                 }
             } catch (_: Exception) {
             } finally {
@@ -415,23 +425,71 @@ class CizgiRepository private constructor(private val context: Context) {
 
         scope.launch {
             try {
-                val description = rssNewsService.fetchSourceDescription(story.canonicalUrl)
-                    ?.takeIf { it.length >= MIN_SOURCE_DESCRIPTION_CHARS }
-                    ?: return@launch
-                if (description == story.fullText.trim()) return@launch
+                val metadata = rssNewsService.fetchSourceMetadata(story.canonicalUrl) ?: return@launch
+                val description = metadata.description?.takeIf { it.length >= MIN_SOURCE_DESCRIPTION_CHARS }
+                val imageUrl = story.imageUrl.ifBlank { metadata.imageUrl.orEmpty() }
+                if ((description == null || description == story.fullText.trim()) && imageUrl == story.imageUrl) return@launch
 
                 val updated = story.copy(
-                    summary = rssNewsService.sourceSummary(description),
-                    fullText = description,
-                    paragraphs = rssNewsService.sourceParagraphs(description),
-                    readTimeMin = maxOf(2, description.length / 220),
-                    whatHappened = "",
-                    whyItMatters = "",
-                    whatIsUnknown = "",
+                    summary = description?.let(rssNewsService::sourceSummary) ?: story.summary,
+                    fullText = description ?: story.fullText,
+                    paragraphs = description?.let(rssNewsService::sourceParagraphs) ?: story.paragraphs,
+                    readTimeMin = description?.let { maxOf(2, it.length / 220) } ?: story.readTimeMin,
+                    imageUrl = imageUrl,
+                    whatHappened = if (description != null) "" else story.whatHappened,
+                    whyItMatters = if (description != null) "" else story.whyItMatters,
+                    whatIsUnknown = if (description != null) "" else story.whatIsUnknown,
                 )
                 _stories.update { current -> current.map { if (it.id == storyId) updated else it } }
                 newsArticleDao.upsertAll(listOf(NewsArticleEntity.fromStory(updated)))
             } catch (_: Exception) {}
+        }
+    }
+
+    private fun enrichMissingStoryImages(stories: List<Story>) {
+        val now = System.currentTimeMillis()
+        stories.asSequence()
+            .filter { it.imageUrl.isBlank() && it.canonicalUrl.isNotBlank() }
+            .filter { now - (imageEnrichmentAttempts[it.id] ?: 0L) >= IMAGE_ENRICHMENT_RETRY_MS }
+            .forEach { pendingImageEnrichment[it.id] = it }
+        if (imageEnrichmentJob?.isActive == true || pendingImageEnrichment.isEmpty()) return
+
+        imageEnrichmentJob = scope.launch {
+            try {
+                val semaphore = Semaphore(IMAGE_ENRICHMENT_CONCURRENCY)
+                while (pendingImageEnrichment.isNotEmpty()) {
+                    val candidates = pendingImageEnrichment.values.take(MAX_IMAGES_PER_ENRICHMENT)
+                    candidates.forEach {
+                        pendingImageEnrichment.remove(it.id)
+                        imageEnrichmentAttempts[it.id] = System.currentTimeMillis()
+                    }
+                    val missingImages = candidates.filter { candidate ->
+                        _stories.value.firstOrNull { it.id == candidate.id }?.imageUrl.isNullOrBlank()
+                    }
+                    if (missingImages.isEmpty()) continue
+
+                    val results = coroutineScope {
+                        missingImages.map { candidate ->
+                            async {
+                                semaphore.withPermit {
+                                    candidate.id to rssNewsService.fetchSourceMetadata(candidate.canonicalUrl)?.imageUrl
+                                }
+                            }
+                        }.awaitAll()
+                    }
+
+                    for ((storyId, imageUrl) in results) {
+                        if (imageUrl.isNullOrBlank()) continue
+                        val current = _stories.value.firstOrNull { it.id == storyId } ?: continue
+                        if (current.imageUrl.isNotBlank()) continue
+                        val updated = current.copy(imageUrl = imageUrl)
+                        _stories.update { list -> list.map { if (it.id == storyId) updated else it } }
+                        newsArticleDao.upsertAll(listOf(NewsArticleEntity.fromStory(updated)))
+                    }
+                }
+            } catch (_: Exception) {
+                // RSS articles remain readable even if a publisher blocks page metadata requests.
+            }
         }
     }
 
@@ -598,6 +656,9 @@ class CizgiRepository private constructor(private val context: Context) {
         private const val MAX_ARCHIVE_ARTICLES = 100_000
         private const val MIN_SOURCE_DESCRIPTION_CHARS = 40
         private const val SOURCE_DESCRIPTION_RETRY_MS = 12 * 60 * 60 * 1_000L
+        private const val MAX_IMAGES_PER_ENRICHMENT = 24
+        private const val IMAGE_ENRICHMENT_CONCURRENCY = 4
+        private const val IMAGE_ENRICHMENT_RETRY_MS = 12 * 60 * 60 * 1_000L
 
         @Volatile
         private var instance: CizgiRepository? = null

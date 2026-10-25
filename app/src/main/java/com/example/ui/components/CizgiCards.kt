@@ -92,12 +92,36 @@ fun MansetHeroCard(
                     .aspectRatio(16f / 9f)
                     .background(CizgiColor.NavyDark),
             ) {
-                AsyncImage(
-                    model = story.imageUrl,
-                    contentDescription = story.title,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize(),
-                )
+                if (story.imageUrl.isNotBlank()) {
+                    AsyncImage(
+                        model = story.imageUrl,
+                        contentDescription = story.title,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                } else {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(
+                                Brush.linearGradient(
+                                    listOf(
+                                        MaterialTheme.colorScheme.primaryContainer,
+                                        MaterialTheme.colorScheme.surfaceVariant,
+                                    ),
+                                ),
+                            ),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            text = "ÇİZGİ · ${story.topic.uppercase()}",
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 15.sp,
+                            letterSpacing = 1.sp,
+                        )
+                    }
+                }
 
                 // Top Badges
                 Row(
