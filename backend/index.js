@@ -6,6 +6,7 @@ const { http } = require("@google-cloud/functions-framework");
 const PHA_API = "https://www.press.org.tr/api/v1/haberler";
 const WEATHER_API = "https://api.weatherapi.com/v1/forecast.json";
 const FOOTBALL_API = "https://v3.football.api-sports.io";
+const VOLLEYBALL_API = "https://v1.volleyball.api-sports.io";
 const GEMINI_API = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent";
 const NEWS_HOSTS = new Set([
   "aa.com.tr", "bbc.com", "bbc.co.uk", "cnnturk.com", "diken.com.tr", "ensonhaber.com",
@@ -16,6 +17,7 @@ const FOOTBALL_ENDPOINTS = new Set([
   "countries", "fixtures", "injuries", "leagues", "players", "predictions", "standings",
   "teams", "timezone", "topassists", "topscorers", "transfers", "trophies", "venues",
 ]);
+const VOLLEYBALL_ENDPOINTS = new Set(["games", "leagues", "standings", "teams"]);
 const cache = new Map();
 const requestCounts = new Map();
 const CACHE_MS = 2 * 60 * 1000;
@@ -35,6 +37,7 @@ http("cizgiApi", async (req, res) => {
         configured: {
           press: Boolean(process.env.PRESS_API_KEY),
           football: Boolean(process.env.FOOTBALL_API_KEY),
+          volleyball: Boolean(process.env.VOLLEYBALL_API_KEY || process.env.FOOTBALL_API_KEY),
           weather: Boolean(process.env.WEATHER_API_KEY),
           summaries: Boolean(process.env.GEMINI_API_KEY),
         },
@@ -43,6 +46,7 @@ http("cizgiApi", async (req, res) => {
     if (req.method === "GET" && path === "/v1/news") return await handleNews(req, res);
     if (req.method === "GET" && path === "/v1/weather") return await handleWeather(req, res);
     if (req.method === "GET" && path.startsWith("/v1/football/")) return await handleFootball(req, res, path);
+    if (req.method === "GET" && path.startsWith("/v1/volleyball/")) return await handleVolleyball(req, res, path);
     if (req.method === "POST" && path === "/v1/summary") return await handleSummary(req, res);
     return sendJson(res, 404, { error: "not_found" });
   } catch (error) {
@@ -100,6 +104,26 @@ async function handleFootball(req, res, path) {
     url.searchParams.set(name, String(value).slice(0, 120));
   }
   const cacheKey = `football:${url.pathname}${url.search}`;
+  const cached = getCache(cacheKey);
+  if (cached) return sendJson(res, 200, cached);
+  const response = await fetch(url, {
+    headers: { "x-apisports-key": key, Accept: "application/json" },
+    signal: AbortSignal.timeout(10_000),
+  });
+  return forwardJson(response, res, cacheKey, 60_000);
+}
+
+async function handleVolleyball(req, res, path) {
+  const key = process.env.VOLLEYBALL_API_KEY || process.env.FOOTBALL_API_KEY;
+  if (!key) return sendJson(res, 503, { error: "volleyball_provider_not_configured" });
+  const endpoint = path.substring("/v1/volleyball/".length).split("/")[0];
+  if (!VOLLEYBALL_ENDPOINTS.has(endpoint)) return sendJson(res, 404, { error: "volleyball_endpoint_not_allowed" });
+  const url = new URL(`${VOLLEYBALL_API}/${endpoint}`);
+  for (const [name, value] of Object.entries(req.query)) {
+    if (!/^[a-z][a-z0-9_]{0,31}$/i.test(name)) continue;
+    url.searchParams.set(name, String(value).slice(0, 120));
+  }
+  const cacheKey = `volleyball:${url.pathname}${url.search}`;
   const cached = getCache(cacheKey);
   if (cached) return sendJson(res, 200, cached);
   const response = await fetch(url, {
@@ -327,3 +351,4 @@ function applyCors(req, res) {
 function sendJson(res, status, body) {
   res.status(status).set("Content-Type", "application/json; charset=utf-8").send(JSON.stringify(body));
 }
+
