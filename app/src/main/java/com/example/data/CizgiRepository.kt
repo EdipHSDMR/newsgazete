@@ -19,6 +19,7 @@ import com.example.model.Story
 import com.example.model.UserPreferences
 import com.example.model.WeatherInfo
 import com.example.util.CizgiNotificationHelper
+import com.example.util.NewsStoryDeduplicator
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -35,8 +36,10 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
@@ -137,6 +140,7 @@ class CizgiRepository private constructor(private val context: Context) {
     private var activeSportsKey: String? = null
     private var sportsRefreshJob: Job? = null
     private val newsPageMutex = Mutex()
+    private val newsRefreshMutex = Mutex()
     private val sourceDescriptionAttempts = mutableMapOf<String, Long>()
 
     init {
@@ -216,14 +220,15 @@ class CizgiRepository private constructor(private val context: Context) {
     }
 
     private fun observeNewsArchive() {
-        scope.launch {
+        scope.launch(Dispatchers.Default) {
             newsArticleDao.observeLatest(INITIAL_NEWS_LOAD_LIMIT).collect { latestArticles ->
                 val savedIds = savedArticles.value.map { it.id }.toSet()
-                val latest = latestArticles.map { it.toStory().copy(isSaved = it.id in savedIds) }
+                val latest = NewsStoryDeduplicator.merge(
+                    latestArticles.map { it.toStory().copy(isSaved = it.id in savedIds) },
+                ).take(MAX_STORIES_PER_REFRESH)
                 _stories.update { current ->
                     val latestIds = latest.mapTo(mutableSetOf()) { it.id }
-                    (latest + current.filterNot { it.id in latestIds })
-                        .distinctBy { it.id }
+                    NewsStoryDeduplicator.merge(latest + current.filterNot { it.id in latestIds })
                         .sortedWith(compareByDescending<Story> { it.publishedAtEpochMs }.thenByDescending { it.id })
                         .take(MAX_IN_MEMORY_STORIES)
                 }
@@ -311,13 +316,16 @@ class CizgiRepository private constructor(private val context: Context) {
         scope.launch { refreshNewsData() }
     }
 
-    private suspend fun refreshNewsData() {
+    suspend fun refreshNewsInBackground(): Boolean = refreshNewsData()
+
+    private suspend fun refreshNewsData(): Boolean = newsRefreshMutex.withLock {
         try {
             val (rssStories, pressPage) = coroutineScope {
                 val rss = async { rssNewsService.fetchRealNews() }
                 val press = async { pressNewsApiService.fetchPage(page = 1) }
                 rss.await() to press.await()
             }
+            if (rssStories.isEmpty() && pressPage == null) return@withLock false
             pressPage?.let { page ->
                 pressArchiveTotalPages = page.totalPages.coerceAtLeast(page.page)
                 if (pressArchiveNextPage > pressArchiveTotalPages && pressArchiveTotalPages > 1) {
@@ -325,20 +333,30 @@ class CizgiRepository private constructor(private val context: Context) {
                 }
                 persistPressArchiveProgress()
             }
-            val liveFeed = mergePressAndRss(pressPage?.stories.orEmpty(), rssStories)
-            if (liveFeed.isEmpty()) return
+            val liveFeed = withContext(Dispatchers.Default) {
+                mergePressAndRss(pressPage?.stories.orEmpty(), rssStories)
+            }
+            if (liveFeed.isEmpty()) return@withLock true
 
-            newsArticleDao.upsertAll(liveFeed.map(NewsArticleEntity::fromStory))
+            val currentStories = _stories.value
+            val currentById = currentStories.associateBy { it.id }
+            val mergedStories = withContext(Dispatchers.Default) {
+                NewsStoryDeduplicator.merge(currentStories + liveFeed)
+            }
+            val changedStories = mergedStories.filter { currentById[it.id] != it }
+            if (changedStories.isNotEmpty()) {
+                newsArticleDao.upsertAll(changedStories.map(NewsArticleEntity::fromStory))
+            }
             newsArticleDao.pruneOldest(MAX_ARCHIVE_ARTICLES)
 
             val savedIds = savedArticles.value.map { it.id }.toSet()
-            _stories.update { current ->
+            withContext(Dispatchers.Default) {
+                _stories.update { current ->
                 val incoming = liveFeed.map { it.copy(isSaved = it.id in savedIds) }
-                val incomingIds = incoming.mapTo(mutableSetOf()) { it.id }
-                (incoming + current.filterNot { it.id in incomingIds })
-                    .distinctBy { it.id }
+                NewsStoryDeduplicator.merge(current + incoming)
                     .sortedWith(compareByDescending<Story> { it.publishedAtEpochMs }.thenByDescending { it.id })
                     .take(MAX_IN_MEMORY_STORIES)
+                }
             }
 
             enrichMissingStoryImages(_stories.value.take(NEWS_PAGE_SIZE))
@@ -376,20 +394,16 @@ class CizgiRepository private constructor(private val context: Context) {
                     storyId = criticalBreaking.id,
                 )
             }
-        } catch (_: Exception) {}
+            true
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            false
+        }
     }
 
     private fun mergePressAndRss(pressStories: List<Story>, rssStories: List<Story>): List<Story> {
-        val pressUrls = pressStories.mapNotNullTo(mutableSetOf()) {
-            normalizeNewsUrl(it.canonicalUrl).takeIf(String::isNotBlank)
-        }
-        val pressTitles = pressStories.mapTo(mutableSetOf()) { normalizeNewsTitle(it.title) }
-        val combined = pressStories + rssStories.filterNot { story ->
-            val url = normalizeNewsUrl(story.canonicalUrl)
-            val title = normalizeNewsTitle(story.title)
-            (url.isNotBlank() && url in pressUrls) || title in pressTitles
-        }
-        return combined.distinctBy { it.id }
+        return NewsStoryDeduplicator.merge(pressStories + rssStories)
             .sortedWith(compareByDescending<Story> { it.publishedAtEpochMs }.thenByDescending { it.id })
             .take(MAX_STORIES_PER_REFRESH)
     }
@@ -426,18 +440,6 @@ class CizgiRepository private constructor(private val context: Context) {
             .apply()
     }
 
-    private fun normalizeNewsTitle(title: String): String = title
-        .lowercase(java.util.Locale.forLanguageTag("tr-TR"))
-        .replace("[^a-z0-9çğıöşü]".toRegex(), " ")
-        .trim()
-        .replace("\\s+".toRegex(), " ")
-
-    private fun normalizeNewsUrl(url: String): String = url
-        .trim()
-        .substringBefore('#')
-        .trimEnd('/')
-        .lowercase(java.util.Locale.ROOT)
-
     fun fetchLiveWeather(city: String) {
         scope.launch { refreshWeatherData(city) }
     }
@@ -467,10 +469,21 @@ class CizgiRepository private constructor(private val context: Context) {
                 if (older.isNotEmpty()) {
                     val savedIds = savedArticles.value.map { it.id }.toSet()
                     val olderStories = older.map { it.toStory().copy(isSaved = it.id in savedIds) }
-                    _stories.update { current ->
-                        val currentIds = current.mapTo(mutableSetOf()) { it.id }
-                        (current + olderStories.filterNot { it.id in currentIds })
+                    val current = _stories.value
+                    val currentById = current.associateBy { it.id }
+                    val merged = withContext(Dispatchers.Default) {
+                        NewsStoryDeduplicator.merge(current + olderStories)
+                    }
+                        .sortedWith(compareByDescending<Story> { it.publishedAtEpochMs }.thenByDescending { it.id })
+                        .take(MAX_IN_MEMORY_STORIES)
+                    val changed = merged.filter { currentById[it.id] != it }
+                    if (changed.isNotEmpty()) newsArticleDao.upsertAll(changed.map(NewsArticleEntity::fromStory))
+                    withContext(Dispatchers.Default) {
+                        _stories.update { current ->
+                        NewsStoryDeduplicator.merge(current + olderStories)
+                            .sortedWith(compareByDescending<Story> { it.publishedAtEpochMs }.thenByDescending { it.id })
                             .take(MAX_IN_MEMORY_STORIES)
+                        }
                     }
                     enrichMissingStoryImages(olderStories)
                 }
