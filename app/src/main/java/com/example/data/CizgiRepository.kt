@@ -32,6 +32,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
@@ -81,7 +82,8 @@ class CizgiRepository private constructor(private val context: Context) {
 
     // Room-persisted saved articles
     val savedArticles: StateFlow<List<Story>> = savedArticleDao.getAllSavedArticles()
-        .map { list -> list.map { it.toStory() } }
+        .map { list -> NewsStoryDeduplicator.merge(list.map { it.toStory() }) }
+        .flowOn(Dispatchers.Default)
         .stateIn(scope, SharingStarted.Eagerly, emptyList())
 
     private val _sportsSnapshot = MutableStateFlow(SportsSnapshot())
@@ -100,12 +102,12 @@ class CizgiRepository private constructor(private val context: Context) {
         WeatherInfo(
             cityName = "İstanbul",
             condition = "Veri bekleniyor",
-            currentTempC = 0,
-            feelsLikeC = 0,
-            humidityPct = 0,
-            windKmh = 0,
-            uvIndex = 0,
-            rainChancePct = 0,
+            currentTempC = null,
+            feelsLikeC = null,
+            humidityPct = null,
+            windKmh = null,
+            uvIndex = null,
+            rainChancePct = null,
             summary = "Güncel hava verisi yükleniyor.",
             hourly = emptyList(),
             daily = emptyList(),
@@ -225,9 +227,20 @@ class CizgiRepository private constructor(private val context: Context) {
         scope.launch(Dispatchers.Default) {
             newsArticleDao.observeLatest(INITIAL_NEWS_LOAD_LIMIT).collect { latestArticles ->
                 val savedIds = savedArticles.value.map { it.id }.toSet()
-                val latest = NewsStoryDeduplicator.merge(
-                    latestArticles.map { it.toStory().copy(isSaved = it.id in savedIds) },
-                ).take(MAX_STORIES_PER_REFRESH)
+                val articleStories = latestArticles.map { it.toStory().copy(isSaved = it.id in savedIds) }
+                val storiesById = articleStories.associateBy { it.id }
+                val latest = NewsStoryDeduplicator.merge(articleStories).take(MAX_STORIES_PER_REFRESH)
+                val retainedIds = latest.mapTo(mutableSetOf()) { it.id }
+                val duplicateIds = articleStories.asSequence()
+                    .map { it.id }
+                    .filterNot { it in retainedIds }
+                    .distinct()
+                    .toList()
+                val updatedRepresentatives = latest.filter { storiesById[it.id] != it }
+                if (updatedRepresentatives.isNotEmpty()) {
+                    newsArticleDao.upsertAll(updatedRepresentatives.map(NewsArticleEntity::fromStory))
+                }
+                if (duplicateIds.isNotEmpty()) newsArticleDao.deleteByIds(duplicateIds)
                 _stories.update { current ->
                     val latestIds = latest.mapTo(mutableSetOf()) { it.id }
                     NewsStoryDeduplicator.merge(latest + current.filterNot { it.id in latestIds })
@@ -419,15 +432,22 @@ class CizgiRepository private constructor(private val context: Context) {
         val incoming = page.stories.map { it.copy(isSaved = it.id in savedIds) }
 
         if (incoming.isNotEmpty()) {
-            newsArticleDao.upsertAll(incoming.map(NewsArticleEntity::fromStory))
-            newsArticleDao.pruneOldest(MAX_ARCHIVE_ARTICLES)
-            _stories.update { current ->
-                (current + incoming)
-                    .distinctBy { it.id }
-                    .sortedWith(compareByDescending<Story> { it.publishedAtEpochMs }.thenByDescending { it.id })
-                    .take(MAX_IN_MEMORY_STORIES)
+            newsRefreshMutex.withLock {
+                val current = _stories.value
+                val merged = withContext(Dispatchers.Default) {
+                    NewsStoryDeduplicator.merge(current + incoming)
+                        .sortedWith(compareByDescending<Story> { it.publishedAtEpochMs }.thenByDescending { it.id })
+                        .take(MAX_IN_MEMORY_STORIES)
+                }
+                val currentById = current.associateBy { it.id }
+                val changed = merged.filter { currentById[it.id] != it }
+                if (changed.isNotEmpty()) {
+                    newsArticleDao.upsertAll(changed.map(NewsArticleEntity::fromStory))
+                    newsArticleDao.pruneOldest(MAX_ARCHIVE_ARTICLES)
+                }
+                _stories.value = merged
+                enrichMissingStoryImages(changed.filterNot { it.id in currentById })
             }
-            enrichMissingStoryImages(incoming)
         }
 
         pressArchiveNextPage = pageNumber + 1
@@ -480,6 +500,10 @@ class CizgiRepository private constructor(private val context: Context) {
                         .take(MAX_IN_MEMORY_STORIES)
                     val changed = merged.filter { currentById[it.id] != it }
                     if (changed.isNotEmpty()) newsArticleDao.upsertAll(changed.map(NewsArticleEntity::fromStory))
+                    val mergedIds = merged.mapTo(mutableSetOf()) { it.id }
+                    val duplicateIds = olderStories.asSequence().map { it.id }
+                        .filterNot { it in mergedIds }.distinct().toList()
+                    if (duplicateIds.isNotEmpty()) newsArticleDao.deleteByIds(duplicateIds)
                     withContext(Dispatchers.Default) {
                         _stories.update { current ->
                         NewsStoryDeduplicator.merge(current + olderStories)
@@ -520,7 +544,6 @@ class CizgiRepository private constructor(private val context: Context) {
                 )
                 val summary = generatedSummary
                     ?: com.example.util.NewsSummary.concise(sourceText, story.title)
-                        .ifBlank { story.summary.takeIf(String::isNotBlank).orEmpty() }
                 if (summary == story.summary && (description == null || description == story.fullText.trim()) && imageUrl == story.imageUrl) return@launch
 
                 val updated = story.copy(
