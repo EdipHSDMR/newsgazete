@@ -54,7 +54,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -64,7 +63,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -78,7 +76,6 @@ import com.example.model.MatchStatus
 import com.example.model.SportsMatch
 import com.example.model.TopScorer
 import com.example.ui.theme.CizgiColor
-import com.example.util.CizgiNotificationHelper
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 
@@ -87,31 +84,48 @@ fun SporScreen(
     repository: CizgiRepository,
     modifier: Modifier = Modifier,
 ) {
-    val context = LocalContext.current
     val sportsSnapshot by repository.sportsSnapshot.collectAsState()
     val prefs by repository.preferences.collectAsState()
 
     // Only show sports and leagues backed by a real data source.
     var selectedSport by remember { mutableStateOf("FUTBOL") }
-    val sportCategories = listOf("FUTBOL" to "⚽ Futbol", "BASKETBOL" to "🏀 Basketbol")
+    val sportCategories = listOf(
+        "FUTBOL" to "⚽ Futbol",
+        "BASKETBOL" to "🏀 Basketbol",
+        "VOLEYBOL" to "🏐 Voleybol",
+    )
 
     // League choices depending on sport
     val competitions = when (selectedSport) {
         "BASKETBOL" -> listOf(
+            "EuroLeague" to "🇪🇺 EuroLeague",
             "NBA" to "🇺🇸 NBA",
             "WNBA" to "🇺🇸 WNBA",
             "NBA G League" to "🏀 NBA G League",
             "NCAA Erkekler" to "🇺🇸 NCAA Erkekler",
             "NCAA Kadınlar" to "🇺🇸 NCAA Kadınlar",
         )
+        "VOLEYBOL" -> listOf(
+            "Türkiye Efeler Ligi" to "🇹🇷 Efeler Ligi",
+            "Türkiye Sultanlar Ligi" to "🇹🇷 Sultanlar Ligi",
+            "CEV Şampiyonlar Ligi Erkekler" to "🇪🇺 CEV Şampiyonlar Ligi (E)",
+            "CEV Şampiyonlar Ligi Kadınlar" to "🇪🇺 CEV Şampiyonlar Ligi (K)",
+            "CEV Cup Erkekler" to "🇪🇺 CEV Cup (E)",
+            "CEV Cup Kadınlar" to "🇪🇺 CEV Cup (K)",
+        )
         else -> listOf(
             "Trendyol Süper Lig" to "🇹🇷 Süper Lig",
+            "Trendyol 1. Lig" to "🇹🇷 1. Lig",
             "UEFA Şampiyonlar Ligi" to "🏆 Şampiyonlar Ligi",
             "İngiltere Premier Lig" to "🏴󠁧󠁢󠁥󠁮󠁧󠁿 Premier Lig",
             "İspanya La Liga" to "🇪🇸 La Liga",
             "Almanya Bundesliga" to "🇩🇪 Bundesliga",
             "İtalya Serie A" to "🇮🇹 Serie A",
             "Fransa Ligue 1" to "🇫🇷 Ligue 1",
+            "İskoçya Premiership" to "🏴 İskoçya Premiership",
+            "Belçika Pro League" to "🇧🇪 Belçika Pro League",
+            "Suudi Arabistan Pro League" to "🇸🇦 Suudi Arabistan",
+            "Arjantin Primera División" to "🇦🇷 Arjantin Primera",
             "UEFA Avrupa Ligi" to "🏆 Avrupa Ligi",
             "UEFA Konferans Ligi" to "🏆 Konferans Ligi",
             "Hollanda Eredivisie" to "🇳🇱 Eredivisie",
@@ -133,12 +147,16 @@ fun SporScreen(
     var selectedTab by remember { mutableIntStateOf(0) }
     val tabs = if (selectedSport == "BASKETBOL") {
         listOf("Canlı Skorlar", "Puan Durumu", "Sayı Liderleri", "Tüm Maçlar", "Canlı Aksiyonlar")
+    } else if (selectedSport == "VOLEYBOL") {
+        listOf("Canlı Skorlar", "Puan Durumu", "Fikstür", "Maç Bildirimleri")
     } else {
         listOf("Canlı Skorlar", "Puan Durumu", "Gol Krallığı", "Tüm Maçlar", "Gol Bildirimleri")
     }
+    LaunchedEffect(selectedSport) { selectedTab = 0 }
 
     // Match alert toggles
-    val matchAlerts = remember { mutableStateMapOf<String, Boolean>() }
+    val matchAlertIds by repository.matchAlertIds.collectAsState()
+    val matchAlerts = remember(matchAlertIds) { matchAlertIds.associateWith { true } }
 
     // Live scores refresh once a minute; standings and scorer tables are cached by the service.
     LaunchedEffect(selectedCompetition, selectedSport) {
@@ -373,19 +391,7 @@ fun SporScreen(
                     liveMatches = liveMatches,
                     allMatches = snapshotMatches,
                     matchAlerts = matchAlerts,
-                    onToggleAlert = { match ->
-                        val current = matchAlerts[match.id] ?: false
-                        matchAlerts[match.id] = !current
-                        if (!current) {
-                            CizgiNotificationHelper.sendGoalNotification(
-                                context,
-                                "${match.homeTeam} vs ${match.awayTeam}",
-                                match.minute ?: 1,
-                                "${match.homeTeam} Takipte",
-                                "${match.homeScore ?: 0} - ${match.awayScore ?: 0}"
-                            )
-                        }
-                    },
+                    onToggleAlert = { match -> repository.toggleMatchAlert(match.id) },
                 )
             }
             1 -> {
@@ -400,29 +406,39 @@ fun SporScreen(
                 )
             }
             2 -> {
-                // GOL KRALLIĞI VE İSTATİSTİKLER TAB
-                MackolikScorersTab(
-                    scorers = topScorers,
-                    sportType = selectedSport,
-                    competition = selectedCompetition,
-                    emptyMessage = scorerMessage,
-                )
+                if (selectedSport == "VOLEYBOL") {
+                    MackolikAllFixturesList(
+                        liveMatches = liveMatches,
+                        finishedMatches = finishedMatches,
+                        upcomingMatches = upcomingMatches,
+                        matchAlerts = matchAlerts,
+                        isLoading = sportsLoading,
+                        onToggleAlert = { match -> repository.toggleMatchAlert(match.id) },
+                    )
+                } else {
+                    MackolikScorersTab(
+                        scorers = topScorers,
+                        sportType = selectedSport,
+                        competition = selectedCompetition,
+                        emptyMessage = scorerMessage,
+                    )
+                }
             }
             3 -> {
-                // TÜM MAÇLAR & FİKSTÜR TAB
-                MackolikAllFixturesList(
-                    liveMatches = liveMatches,
-                    finishedMatches = finishedMatches,
-                    upcomingMatches = upcomingMatches,
-                    matchAlerts = matchAlerts,
-                    isLoading = sportsLoading,
-                    onToggleAlert = { match ->
-                        val current = matchAlerts[match.id] ?: false
-                        matchAlerts[match.id] = !current
-                    },
-                )
+                if (selectedSport == "VOLEYBOL") {
+                    MackolikGoalAlertsFeed(matches = snapshotMatches, sportType = selectedSport)
+                } else {
+                    MackolikAllFixturesList(
+                        liveMatches = liveMatches,
+                        finishedMatches = finishedMatches,
+                        upcomingMatches = upcomingMatches,
+                        matchAlerts = matchAlerts,
+                        isLoading = sportsLoading,
+                        onToggleAlert = { match -> repository.toggleMatchAlert(match.id) },
+                    )
+                }
             }
-            4 -> {
+            4 -> if (selectedSport != "VOLEYBOL") {
                 // GOL & SAYI BİLDİRİMLERİ TAB
                 MackolikGoalAlertsFeed(
                     matches = snapshotMatches,
@@ -471,7 +487,7 @@ fun MackolikLiveMatchesList(
                             textAlign = TextAlign.Center,
                         )
                         Text(
-                            text = "Günün diğer karşılaşmalarını ve canlı kadroları aşağıdan detaylı inceleyebilirsiniz.",
+                            text = "Günün maçlarını, fikstürü ve alınan sonuçları aşağıdan inceleyebilirsiniz.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             textAlign = TextAlign.Center,
@@ -521,7 +537,7 @@ fun MackolikLiveMatchesList(
                                 .background(Color(0xFFE53935)),
                         )
                         Text(
-                            text = "Canlı karşılaşmalar otomatik saniyelik güncellenmektedir.",
+                            text = "Canlı maç verileri yaklaşık dakikada bir yenilenir.",
                             style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold),
                             color = Color(0xFFC62828),
                         )
@@ -888,20 +904,11 @@ fun GlowingMatchCard(
                         }
                         if (!hasMatchStats) {
                             Text(
-                                text = if (match.status == MatchStatus.UPCOMING) "Canlı istatistikler maç başladıktan sonra sağlayıcı paylaşır." else "Bu maç için sağlayıcı istatistik verisi sunmadı.",
+                                text = if (match.status == MatchStatus.UPCOMING) "Maç başladıktan sonra sağlayıcı veri sunarsa burada gösterilir." else "Bu maç için istatistik verisi sağlayıcı tarafından paylaşılmadı.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
-                    }
-
-                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text("KADROLAR", style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold), color = MaterialTheme.colorScheme.primary)
-                        Text(
-                            text = "Bu maç için kadro bilgisi şu anda kaynakta mevcut değil.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
                     }
 
                     if (match.stadium.isNotBlank() || match.referee.isNotBlank()) {
@@ -1088,7 +1095,7 @@ fun MackolikStandingsTable(
                 )
             }
 
-            // Basketball has wins/losses and win percentage, not football draws and points.
+            // Each sport shows the statistics used by its own standings.
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -1100,12 +1107,18 @@ fun MackolikStandingsTable(
                 Text("Takım", fontWeight = FontWeight.Bold, fontSize = 11.sp, modifier = Modifier.weight(1f))
                 Text("O", fontWeight = FontWeight.Bold, fontSize = 11.sp, modifier = Modifier.width(24.dp), textAlign = TextAlign.Center)
                 Text("G", fontWeight = FontWeight.Bold, fontSize = 11.sp, modifier = Modifier.width(22.dp), textAlign = TextAlign.Center)
-                if (sportType != "BASKETBOL") {
-                    Text("B", fontWeight = FontWeight.Bold, fontSize = 11.sp, modifier = Modifier.width(22.dp), textAlign = TextAlign.Center)
+                if (sportType == "VOLEYBOL") {
+                    Text("M", fontWeight = FontWeight.Bold, fontSize = 11.sp, modifier = Modifier.width(22.dp), textAlign = TextAlign.Center)
+                    Text("Set", fontWeight = FontWeight.Bold, fontSize = 10.sp, modifier = Modifier.width(38.dp), textAlign = TextAlign.Center)
+                    Text("P", fontWeight = FontWeight.Bold, fontSize = 11.sp, color = MaterialTheme.colorScheme.primary, modifier = Modifier.width(28.dp), textAlign = TextAlign.Center)
+                } else {
+                    if (sportType != "BASKETBOL") {
+                        Text("B", fontWeight = FontWeight.Bold, fontSize = 11.sp, modifier = Modifier.width(22.dp), textAlign = TextAlign.Center)
+                    }
+                    Text("M", fontWeight = FontWeight.Bold, fontSize = 11.sp, modifier = Modifier.width(22.dp), textAlign = TextAlign.Center)
+                    Text("AV", fontWeight = FontWeight.Bold, fontSize = 11.sp, modifier = Modifier.width(28.dp), textAlign = TextAlign.Center)
+                    Text(if (sportType == "BASKETBOL") "W%" else "P", fontWeight = FontWeight.Bold, fontSize = 11.sp, color = MaterialTheme.colorScheme.primary, modifier = Modifier.width(32.dp), textAlign = TextAlign.Center)
                 }
-                Text("M", fontWeight = FontWeight.Bold, fontSize = 11.sp, modifier = Modifier.width(22.dp), textAlign = TextAlign.Center)
-                Text("AV", fontWeight = FontWeight.Bold, fontSize = 11.sp, modifier = Modifier.width(28.dp), textAlign = TextAlign.Center)
-                Text(if (sportType == "BASKETBOL") "W%" else "P", fontWeight = FontWeight.Bold, fontSize = 11.sp, color = MaterialTheme.colorScheme.primary, modifier = Modifier.width(32.dp), textAlign = TextAlign.Center)
             }
 
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
@@ -1187,23 +1200,31 @@ fun MackolikStandingsTable(
                             Text("★", color = CizgiColor.Gold, fontSize = 11.sp)
                         }
 
-                        Text("${team.played}", fontSize = 11.5.sp, modifier = Modifier.width(24.dp), textAlign = TextAlign.Center)
-                        Text("${team.won}", fontSize = 11.5.sp, modifier = Modifier.width(22.dp), textAlign = TextAlign.Center)
-                        if (sportType != "BASKETBOL") {
-                            Text("${team.drawn}", fontSize = 11.5.sp, modifier = Modifier.width(22.dp), textAlign = TextAlign.Center)
+                        if (sportType == "VOLEYBOL") {
+                            Text("${team.played}", fontSize = 11.5.sp, modifier = Modifier.width(24.dp), textAlign = TextAlign.Center)
+                            Text("${team.won}", fontSize = 11.5.sp, modifier = Modifier.width(22.dp), textAlign = TextAlign.Center)
+                            Text("${team.lost}", fontSize = 11.5.sp, modifier = Modifier.width(22.dp), textAlign = TextAlign.Center)
+                            Text("${team.goalsFor}:${team.goalsAgainst}", fontSize = 10.5.sp, modifier = Modifier.width(38.dp), textAlign = TextAlign.Center)
+                            Text("${team.points}", fontWeight = FontWeight.Bold, fontSize = 12.5.sp, color = MaterialTheme.colorScheme.primary, modifier = Modifier.width(28.dp), textAlign = TextAlign.Center)
+                        } else {
+                            Text("${team.played}", fontSize = 11.5.sp, modifier = Modifier.width(24.dp), textAlign = TextAlign.Center)
+                            Text("${team.won}", fontSize = 11.5.sp, modifier = Modifier.width(22.dp), textAlign = TextAlign.Center)
+                            if (sportType != "BASKETBOL") {
+                                Text("${team.drawn}", fontSize = 11.5.sp, modifier = Modifier.width(22.dp), textAlign = TextAlign.Center)
+                            }
+                            Text("${team.lost}", fontSize = 11.5.sp, modifier = Modifier.width(22.dp), textAlign = TextAlign.Center)
+                            Text("${if (team.goalDiff > 0) "+" else ""}${team.goalDiff}", fontSize = 11.5.sp, modifier = Modifier.width(28.dp), textAlign = TextAlign.Center)
+                            Text(
+                                text = if (sportType == "BASKETBOL") {
+                                    team.winPercentage?.let { String.format(java.util.Locale.US, "%.3f", it) } ?: "—"
+                                } else "${team.points}",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 12.5.sp,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.width(32.dp),
+                                textAlign = TextAlign.Center,
+                            )
                         }
-                        Text("${team.lost}", fontSize = 11.5.sp, modifier = Modifier.width(22.dp), textAlign = TextAlign.Center)
-                        Text("${if (team.goalDiff > 0) "+" else ""}${team.goalDiff}", fontSize = 11.5.sp, modifier = Modifier.width(28.dp), textAlign = TextAlign.Center)
-                        Text(
-                            text = if (sportType == "BASKETBOL") {
-                                team.winPercentage?.let { String.format(java.util.Locale.US, "%.3f", it) } ?: "—"
-                            } else "${team.points}",
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 12.5.sp,
-                            color = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.width(32.dp),
-                            textAlign = TextAlign.Center,
-                        )
                     }
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
                 }
@@ -1508,4 +1529,5 @@ fun MackolikGoalAlertsFeed(
         }
     }
 }
+
 
