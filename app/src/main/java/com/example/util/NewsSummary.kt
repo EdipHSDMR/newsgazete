@@ -55,6 +55,24 @@ object NewsSummary {
         )
     }
 
+    /** Prefer a generated stored summary, but reject a verbatim one-sentence source lead. */
+    fun bestAvailableSummary(
+        summaryCandidate: String,
+        sourceText: String,
+        title: String,
+        maxCharacters: Int = 280,
+    ): String {
+        val candidate = cleanText(summaryCandidate).trim()
+        if (candidate.isBlank()) return concise(sourceText, title, maxCharacters)
+        val candidateSentences = sentenceBoundary.split(candidate).map(String::trim).filter(String::isNotBlank)
+        val lead = sentenceBoundary.split(cleanText(sourceText)).firstOrNull()?.trim().orEmpty()
+        val candidateKey = normalize(candidate)
+        val leadKey = normalize(lead)
+        val isVerbatimLead = candidateSentences.size == 1 && leadKey.isNotBlank() &&
+            (candidateKey == leadKey || candidateKey.startsWith(leadKey) || leadKey.startsWith(candidateKey))
+        if (!isVerbatimLead) return candidate.take(maxCharacters)
+        return concise(sourceText, title, maxCharacters).takeIf { normalize(it) != candidateKey }.orEmpty()
+    }
     /** Removes source sentences already shown in the short summary to avoid a repeated lead. */
     fun remainingSourceText(sourceText: String, summary: String): String {
         val sourceSentences = sentenceBoundary.split(cleanText(sourceText)).map(String::trim).filter(String::isNotBlank)
@@ -169,3 +187,4 @@ object NewsSummary {
         RegexOption.IGNORE_CASE,
     )
 }
+
