@@ -1,7 +1,18 @@
 package com.example.ui.screens
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.Handler
+import android.os.Looper
+import android.speech.tts.TextToSpeech
+import android.speech.tts.UtteranceProgressListener
+import android.webkit.WebResourceRequest
+import android.webkit.WebSettings
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
@@ -35,7 +46,9 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CompareArrows
 import androidx.compose.material.icons.filled.FormatSize
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -48,7 +61,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
@@ -64,10 +79,13 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import coil.compose.AsyncImage
 import com.example.data.CizgiRepository
 import com.example.model.Story
@@ -76,6 +94,8 @@ import com.example.ui.components.ModernNewsCard
 import com.example.ui.components.PublisherAvatar
 import com.example.ui.theme.CizgiColor
 import kotlinx.coroutines.launch
+import java.util.Locale
+import android.widget.Toast
 
 @Composable
 fun HaberDetayScreen(
@@ -89,13 +109,24 @@ fun HaberDetayScreen(
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
     val listState = rememberLazyListState()
-
-    // 1. Android Sistem Geri Hareketi Desteği (BackHandler)
-    BackHandler(enabled = true) {
-        onBack()
+    var showFullArticle by remember(storyId) { mutableStateOf(false) }
+    val ttsReady = remember { mutableStateOf(false) }
+    var isSpeaking by remember { mutableStateOf(false) }
+    val textToSpeech = remember(context) {
+        TextToSpeech(context.applicationContext) { status -> ttsReady.value = status == TextToSpeech.SUCCESS }
+    }
+    DisposableEffect(textToSpeech) {
+        onDispose {
+            textToSpeech.stop()
+            textToSpeech.shutdown()
+        }
     }
 
+    BackHandler(enabled = showFullArticle) { showFullArticle = false }
+    BackHandler(enabled = !showFullArticle) { onBack() }
+
     val stories by repository.stories.collectAsState()
+    val preferences by repository.preferences.collectAsState()
     val story = remember(stories, storyId) { stories.firstOrNull { it.id == storyId } }
     if (story == null) {
         Column(
@@ -112,6 +143,8 @@ fun HaberDetayScreen(
     val detailSummary = remember(story.id, story.summary, story.fullText) {
         NewsSummary.concise(story.fullText.ifBlank { story.summary }, story.title)
     }
+    val sourceUri = remember(story.canonicalUrl) { runCatching { Uri.parse(story.canonicalUrl) }.getOrNull() }
+    val hasSourceUrl = (sourceUri?.scheme == "http" || sourceUri?.scheme == "https") && !sourceUri?.host.isNullOrBlank()
 
     val relatedStories = remember(stories, story) {
         stories.filter { it.id != story.id && (it.topic == story.topic || it.isManset) }.take(3)
@@ -124,9 +157,6 @@ fun HaberDetayScreen(
             .size
             .coerceAtLeast(1)
     }
-
-    // Okuma fontu boyutu değiştirici (Standart vs Büyük font)
-    var isLargeFont by remember { mutableStateOf(false) }
 
     // Okuma ilerleme çubuğu hesaplaması
     val readingProgress by remember {
@@ -145,7 +175,15 @@ fun HaberDetayScreen(
             action = Intent.ACTION_SEND
             putExtra(
                 Intent.EXTRA_TEXT,
-                "${currentStory.title}\n\n${currentStory.summary}\n\nÇizgi üzerinden okundu: ${currentStory.canonicalUrl.ifBlank { "https://cizgi.app" }}"
+                listOfNotNull(
+                    currentStory.title,
+                    NewsSummary.concise(currentStory.fullText.ifBlank { currentStory.summary }, currentStory.title)
+                        .takeIf(String::isNotBlank),
+                    currentStory.canonicalUrl.takeIf { value ->
+                        val uri = runCatching { Uri.parse(value) }.getOrNull()
+                        (uri?.scheme == "http" || uri?.scheme == "https") && !uri?.host.isNullOrBlank()
+                    },
+                ).joinToString("\n\n")
             )
             type = "text/plain"
         }
@@ -208,48 +246,90 @@ fun HaberDetayScreen(
                             )
                         }
 
-                        // Üst Sağ Eylemler: Font Değiştir, Paylaş, Kaydet
+                        // Üst Sağ Eylemler: Özeti Dinle, Yazı Boyutu, Bağlantıyı Kopyala, Paylaş, Kaydet
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(2.dp),
                         ) {
                             IconButton(
-                                onClick = { isLargeFont = !isLargeFont },
-                                modifier = Modifier.size(40.dp),
+                                onClick = {
+                                    if (isSpeaking) {
+                                        textToSpeech.stop()
+                                        isSpeaking = false
+                                    } else if (ttsReady.value && detailSummary.isNotBlank()) {
+                                        textToSpeech.language = Locale.forLanguageTag("tr-TR")
+                                        textToSpeech.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+                                            private fun setSpeaking(value: Boolean) {
+                                                Handler(Looper.getMainLooper()).post { isSpeaking = value }
+                                            }
+                                            override fun onStart(utteranceId: String?) = setSpeaking(true)
+                                            override fun onDone(utteranceId: String?) = setSpeaking(false)
+                                            override fun onError(utteranceId: String?) = setSpeaking(false)
+                                        })
+                                        val result = textToSpeech.speak(detailSummary, TextToSpeech.QUEUE_FLUSH, null, "cizgi-summary")
+                                        if (result == TextToSpeech.ERROR) isSpeaking = false
+                                    }
+                                },
+                                enabled = ttsReady.value,
+                                modifier = Modifier.size(36.dp),
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.VolumeUp,
+                                    contentDescription = if (isSpeaking) "Özeti durdur" else "Kısa özeti dinle",
+                                    tint = if (isSpeaking) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                                    modifier = Modifier.size(19.dp),
+                                )
+                            }
+                            IconButton(
+                                onClick = { repository.setFontSize(if (preferences.fontSize == "large") "normal" else "large") },
+                                modifier = Modifier.size(36.dp),
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.FormatSize,
-                                    contentDescription = if (isLargeFont) "Standart Yazı Boyutu" else "Büyük Yazı Boyutu",
-                                    tint = if (isLargeFont) CizgiColor.Blue else MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.size(20.dp),
+                                    contentDescription = if (preferences.fontSize == "large") "Standart Yazı Boyutu" else "Büyük Yazı Boyutu",
+                                    tint = if (preferences.fontSize == "large") CizgiColor.Blue else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(19.dp),
                                 )
+                            }
+
+                            if (hasSourceUrl) {
+                                IconButton(
+                                    onClick = {
+                                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                                        clipboard?.setPrimaryClip(ClipData.newPlainText("Haber bağlantısı", story.canonicalUrl))
+                                        Toast.makeText(context, "Haber bağlantısı kopyalandı", Toast.LENGTH_SHORT).show()
+                                    },
+                                    modifier = Modifier.size(36.dp).testTag("detail_copy_link_button"),
+                                ) {
+                                    Icon(Icons.Default.Link, contentDescription = "Haber bağlantısını kopyala", modifier = Modifier.size(19.dp))
+                                }
                             }
 
                             IconButton(
                                 onClick = { shareCurrentStory(story) },
                                 modifier = Modifier
-                                    .size(40.dp)
+                                    .size(36.dp)
                                     .testTag("detail_share_button"),
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.Share,
                                     contentDescription = "Haberi Paylaş",
                                     tint = MaterialTheme.colorScheme.onSurface,
-                                    modifier = Modifier.size(20.dp),
+                                    modifier = Modifier.size(19.dp),
                                 )
                             }
 
                             IconButton(
                                 onClick = { repository.toggleSaveStory(story) },
                                 modifier = Modifier
-                                    .size(40.dp)
+                                    .size(36.dp)
                                     .testTag("detail_save_button"),
                             ) {
                                 Icon(
                                     imageVector = if (story.isSaved) Icons.Filled.Bookmark else Icons.Default.BookmarkBorder,
                                     contentDescription = if (story.isSaved) "Kaydedildi" else "Kaydet",
                                     tint = if (story.isSaved) CizgiColor.Gold else MaterialTheme.colorScheme.onSurface,
-                                    modifier = Modifier.size(22.dp),
+                                    modifier = Modifier.size(20.dp),
                                 )
                             }
                         }
@@ -310,8 +390,8 @@ fun HaberDetayScreen(
                             text = story.title,
                             style = MaterialTheme.typography.displayMedium.copy(
                                 fontWeight = FontWeight.Bold,
-                                fontSize = if (isLargeFont) 26.sp else 23.sp,
-                                lineHeight = if (isLargeFont) 36.sp else 32.sp,
+                                fontSize = if (preferences.fontSize == "large") 26.sp else 23.sp,
+                                lineHeight = if (preferences.fontSize == "large") 36.sp else 32.sp,
                             ),
                             color = MaterialTheme.colorScheme.onSurface,
                         )
@@ -413,8 +493,8 @@ fun HaberDetayScreen(
                                 Text(
                                     text = detailSummary.ifBlank { "Bu haber için henüz yeterli kaynak açıklaması yok. Kaynak bağlantısını açarak ayrıntıyı okuyabilirsin." },
                                     style = MaterialTheme.typography.bodyMedium.copy(
-                                        fontSize = if (isLargeFont) 16.sp else 14.5.sp,
-                                        lineHeight = if (isLargeFont) 24.sp else 22.sp,
+                                        fontSize = if (preferences.fontSize == "large") 16.sp else 14.5.sp,
+                                        lineHeight = if (preferences.fontSize == "large") 24.sp else 22.sp,
                                         fontWeight = FontWeight.Medium,
                                     ),
                                     color = MaterialTheme.colorScheme.onSurface,
@@ -445,8 +525,8 @@ fun HaberDetayScreen(
                                 Text(
                                     text = paragraph,
                                     style = MaterialTheme.typography.bodyLarge.copy(
-                                        fontSize = if (isLargeFont) 18.sp else 16.sp,
-                                        lineHeight = if (isLargeFont) 28.sp else 25.sp,
+                                        fontSize = if (preferences.fontSize == "large") 18.sp else 16.sp,
+                                        lineHeight = if (preferences.fontSize == "large") 28.sp else 25.sp,
                                     ),
                                     color = MaterialTheme.colorScheme.onSurface,
                                 )
@@ -553,11 +633,27 @@ fun HaberDetayScreen(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                             Button(
+                                onClick = { showFullArticle = true },
+                                enabled = hasSourceUrl,
+                                colors = ButtonDefaults.buttonColors(containerColor = CizgiColor.Navy),
+                                shape = RoundedCornerShape(10.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(48.dp)
+                                    .testTag("open_full_article_button"),
+                            ) {
+                                Text(
+                                    text = if (hasSourceUrl) "Haberin Tamamını Uygulamada Oku" else "Kaynak bağlantısı yok",
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color.White,
+                                )
+                            }
+                            Button(
                                 onClick = {
-                                    val url = story.canonicalUrl.ifBlank { "https://google.com/search?q=${Uri.encode(story.title)}" }
-                                    val browserIntent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
+                                    val browserIntent = Intent(Intent.ACTION_VIEW, Uri.parse(story.canonicalUrl))
                                     context.startActivity(browserIntent)
                                 },
+                                enabled = hasSourceUrl,
                                 colors = ButtonDefaults.buttonColors(containerColor = CizgiColor.Navy),
                                 shape = RoundedCornerShape(10.dp),
                                 modifier = Modifier
@@ -643,5 +739,56 @@ fun HaberDetayScreen(
             }
         }
     }
+
+    if (showFullArticle && hasSourceUrl) {
+        Dialog(
+            onDismissRequest = { showFullArticle = false },
+            properties = DialogProperties(usePlatformDefaultWidth = false),
+        ) {
+            Surface(
+                modifier = Modifier.fillMaxSize().padding(10.dp),
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.surface,
+            ) {
+                Column {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("${story.publisher} · Kaynak sayfası", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                            Text("Metin ve görseller yayıncının sitesinden yükleniyor", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        TextButton(onClick = { showFullArticle = false }) { Text("Kapat") }
+                    }
+                    HorizontalDivider()
+                    AndroidView(
+                        modifier = Modifier.fillMaxWidth().weight(1f),
+                        factory = { viewContext ->
+                            WebView(viewContext).apply {
+                                settings.javaScriptEnabled = true
+                                settings.domStorageEnabled = true
+                                settings.allowFileAccess = false
+                                settings.allowContentAccess = false
+                                settings.mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
+                                webViewClient = object : WebViewClient() {
+                                    override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest): Boolean {
+                                        val uri = request.url
+                                        return (uri.scheme != "https" && uri.scheme != "http") || uri.host.isNullOrBlank()
+                                    }
+                                }
+                                loadUrl(story.canonicalUrl)
+                            }
+                        },
+                        onRelease = { webView ->
+                            webView.stopLoading()
+                            webView.destroy()
+                        },
+                    )
+                }
+            }
+        }
+    }
 }
+
 
