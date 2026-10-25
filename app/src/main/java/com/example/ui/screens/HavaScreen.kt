@@ -102,6 +102,7 @@ fun HavaScreen(
     fun getWeatherEmoji(condition: String): String {
         val lower = condition.lowercase()
         return when {
+            lower.contains("bekleniyor") || lower.contains("veri yok") || lower.contains("alınamadı") -> "⏳"
             lower.contains("kar") || lower.contains("blizzard") || lower.contains("buz") -> "❄️"
             lower.contains("fırtına") || lower.contains("şimşek") || lower.contains("gök gürültü") -> "⛈️"
             lower.contains("sağanak") || lower.contains("yağmur") || lower.contains("çise") -> "🌧️"
@@ -385,13 +386,14 @@ fun HavaScreen(
                                         color = Color.White,
                                     ),
                                 )
+                                val hasWeatherData = weather.currentTempC != null
                                 Surface(
                                     shape = RoundedCornerShape(4.dp),
-                                    color = Color(0xFF16A34A).copy(alpha = 0.25f),
+                                    color = (if (hasWeatherData) Color(0xFF16A34A) else Color.White).copy(alpha = if (hasWeatherData) 0.25f else 0.12f),
                                 ) {
                                     Text(
-                                        text = "CANLI",
-                                        color = Color(0xFF4ADE80),
+                                        text = if (hasWeatherData) "CANLI" else "BEKLENİYOR",
+                                        color = if (hasWeatherData) Color(0xFF4ADE80) else Color(0xFFCBD5E1),
                                         fontSize = 10.sp,
                                         fontWeight = FontWeight.Bold,
                                         modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
@@ -612,3 +614,4 @@ private fun MetricItem(label: String, value: String) {
         Text(text = value, fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color.White)
     }
 }
+
