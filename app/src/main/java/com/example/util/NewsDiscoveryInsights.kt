@@ -45,12 +45,27 @@ object NewsDiscoveryInsights {
 
     /** Five varied, source-grounded bullets from the last day of live news. */
     fun dailyDigest(stories: List<Story>, nowEpochMs: Long = System.currentTimeMillis()): List<String> {
+        return dailyDigestStories(stories, nowEpochMs)
+            .mapNotNull { story ->
+                val source = story.fullText.takeIf { it.length >= MIN_SOURCE_CHARS }
+                    ?: story.summary.takeIf { it.length >= MIN_SOURCE_CHARS }
+                    ?: return@mapNotNull null
+                NewsSummary.concise(source, story.title, MAX_DIGEST_ITEM_CHARS)
+                    .takeIf { it.length >= MIN_DIGEST_ITEM_CHARS }
+            }
+            .distinctBy(::normalize)
+            .take(DIGEST_SIZE)
+    }
+
+    /** Current, distinct source articles eligible for automatic daily summaries. */
+    fun dailyDigestStories(stories: List<Story>, nowEpochMs: Long = System.currentTimeMillis()): List<Story> {
         val recent = stories.asSequence()
             .filter { story ->
                 story.publishedAtEpochMs in (nowEpochMs - DAY_MS)..(nowEpochMs + FUTURE_TOLERANCE_MS)
             }
             .take(MAX_DIGEST_CANDIDATES)
             .sortedWith(compareByDescending<Story> { it.isBreaking }.thenByDescending { it.publishedAtEpochMs })
+            .filter { it.fullText.length >= MIN_SOURCE_CHARS || it.summary.length >= MIN_SOURCE_CHARS }
             .toList()
         if (recent.isEmpty()) return emptyList()
 
@@ -64,18 +79,13 @@ object NewsDiscoveryInsights {
             recent.filterNot { it.id in usedIds }.forEach { add(it) }
         }
 
-        return diverseStories.asSequence()
-            .mapNotNull { story ->
-                val source = story.fullText.takeIf { it.length >= MIN_SOURCE_CHARS }
-                    ?: story.summary.takeIf { it.length >= MIN_SOURCE_CHARS }
-                    ?: return@mapNotNull null
-                NewsSummary.concise(source, story.title, MAX_DIGEST_ITEM_CHARS)
-                    .takeIf { it.length >= MIN_DIGEST_ITEM_CHARS }
-            }
-            .distinctBy(::normalize)
-            .take(DIGEST_SIZE)
-            .toList()
+        return diverseStories.distinctBy { it.id }.take(DIGEST_SIZE)
     }
+
+    const val DIGEST_SIZE = 5
+    const val MIN_DIGEST_ITEM_CHARS = 45
+    const val MAX_DIGEST_ITEM_CHARS = 190
+    const val MIN_SOURCE_CHARS = 50
 
     private fun formatWord(value: String): String = when {
         value.length <= 5 && value.all { !it.isLetter() || it.isUpperCase() } -> value
@@ -90,10 +100,6 @@ object NewsDiscoveryInsights {
     private const val MAX_TREND_STORIES = 500
     private const val MIN_TREND_WORD_LENGTH = 4
     private const val MAX_DIGEST_CANDIDATES = 24
-    private const val MIN_SOURCE_CHARS = 50
-    private const val MIN_DIGEST_ITEM_CHARS = 45
-    private const val MAX_DIGEST_ITEM_CHARS = 190
-    private const val DIGEST_SIZE = 5
     private const val DAY_MS = 24 * 60 * 60 * 1_000L
     private const val FUTURE_TOLERANCE_MS = 5 * 60 * 1_000L
 }
