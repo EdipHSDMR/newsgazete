@@ -62,6 +62,8 @@ class CizgiRepository private constructor(private val context: Context) {
     private var imageEnrichmentJob: Job? = null
     private var pressArchiveNextPage = 2
     private var pressArchiveTotalPages = 0
+    val hasMorePressArchivePages: Boolean
+        get() = pressArchiveTotalPages > 1 && pressArchiveNextPage <= pressArchiveTotalPages
 
     // Remote Services
     private val rssNewsService = RssNewsService(httpClient)
