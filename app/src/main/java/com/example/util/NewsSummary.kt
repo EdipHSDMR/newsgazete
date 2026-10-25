@@ -13,7 +13,7 @@ object NewsSummary {
         "yeni", "üzere",
     )
 
-    fun concise(sourceText: String, title: String = "", maxCharacters: Int = 380): String {
+    fun concise(sourceText: String, title: String = "", maxCharacters: Int = 280): String {
         val text = cleanText(sourceText)
         if (text.isBlank()) return ""
         val hasTruncatedEnding = TRUNCATED_END.containsMatchIn(text)
@@ -30,11 +30,10 @@ object NewsSummary {
             .filter { it.length >= MIN_SENTENCE_CHARS }
             .distinctBy(::normalize)
             .filter { sentence -> normalize(sentence) != titleKey }
+            .filterNot(::isBoilerplateLead)
         val sentences = if (hasTruncatedEnding && allSentences.size > 1) allSentences.dropLast(1) else allSentences
 
         if (sentences.isEmpty()) return truncateAtWord(text, maxCharacters)
-        if (text.length <= maxCharacters) return sentences.joinToString(" ")
-
         val chosen = sentences.withIndex()
             .sortedByDescending { (index, sentence) -> score(sentence, index, titleWords) }
             .take(MAX_SUMMARY_SENTENCES)
@@ -48,7 +47,10 @@ object NewsSummary {
             if (result.isNotEmpty()) result.append(' ')
             result.append(sentence)
         }
-        return if (result.isNotEmpty()) result.toString() else truncateAtWord(sentences.first(), maxCharacters)
+        return if (result.isNotEmpty()) result.toString() else truncateAtWord(
+            sentences.maxByOrNull { score(it, 0, titleWords) } ?: sentences.first(),
+            maxCharacters,
+        )
     }
 
     /** Removes source sentences already shown in the short summary to avoid a repeated lead. */
@@ -83,9 +85,14 @@ object NewsSummary {
             in 45..300 -> 1
             else -> 0
         }
-        val hasConcreteDetail = DIGIT.containsMatchIn(sentence) || FACT_VERB.containsMatchIn(sentence)
-        return (if (index == 0) 3 else maxOf(0, 2 - index)) + titleMatches * 2 + lengthScore + if (hasConcreteDetail) 1 else 0
+        val hasConcreteDetail = DIGIT.containsMatchIn(sentence) || DATE_OR_TIME.containsMatchIn(sentence)
+        val hasNewsAction = FACT_VERB.containsMatchIn(sentence)
+        val positionScore = (index.coerceAtMost(4) - 2).coerceIn(-2, 2)
+        return titleMatches * 2 + lengthScore + (if (hasConcreteDetail) 5 else 0) +
+            (if (hasNewsAction) 4 else 0) + positionScore - (if (isBoilerplateLead(sentence)) 8 else 0)
     }
+
+    private fun isBoilerplateLead(sentence: String): Boolean = BOILERPLATE_LEAD.containsMatchIn(sentence)
 
     private fun cleanText(value: String): String = Html.fromHtml(
         value.replace("<script\\b[^>]*>.*?</script>".toRegex(RegexOption.IGNORE_CASE), " ")
@@ -110,9 +117,18 @@ object NewsSummary {
     }
 
     private const val MIN_SENTENCE_CHARS = 24
-    private const val MAX_SUMMARY_SENTENCES = 3
+    private const val MAX_SUMMARY_SENTENCES = 2
     private val TRUNCATED_END = Regex("(?:\\.\\.\\.|…)$")
     private val DIGIT = Regex("\\d")
+    private val DATE_OR_TIME = Regex(
+        "\\b(?:\\d{1,2}[./:-]){1,2}\\d{2,4}\\b|\\b\\d{1,2}\\s+(?:ocak|şubat|mart|nisan|mayıs|haziran|temmuz|ağustos|eylül|ekim|kasım|aralık)\\b",
+        RegexOption.IGNORE_CASE,
+    )
+    private val BOILERPLATE_LEAD = Regex(
+        "\\b(?:gündemindeki yerini aldı|gündeminde yer aldı|meraklılarının gündeminde|gündeme geldi|" +
+            "göz kamaştıran|büyüleyici manzara sunan|dikkatleri üzerine çeken|öne çıkan gelişme)\\b",
+        RegexOption.IGNORE_CASE,
+    )
     private val FACT_VERB = Regex(
         "\\b(açıkladı|duyurdu|belirtti|kabul edildi|reddedildi|başladı|tamamlandı|gerçekleşti|arttı|azaldı|yayımlandı|bulundu|açıldı|kapandı|seçildi|kazandı|kaybetti)\\b",
         RegexOption.IGNORE_CASE,
