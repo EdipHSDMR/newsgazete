@@ -110,7 +110,7 @@ fun HaberDetayScreen(
     }
     LaunchedEffect(story.id) { repository.refreshStoryDescription(story.id) }
     val detailSummary = remember(story.id, story.summary, story.fullText) {
-        NewsSummary.concise(story.summary.ifBlank { story.fullText }, story.title)
+        NewsSummary.concise(story.fullText.ifBlank { story.summary }, story.title)
     }
 
     val relatedStories = remember(stories, story) {
