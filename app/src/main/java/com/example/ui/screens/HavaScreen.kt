@@ -59,7 +59,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.CizgiRepository
-import com.example.data.CizgiSeedData
 import com.example.ui.theme.CizgiColor
 
 @Composable
@@ -411,7 +410,7 @@ fun HavaScreen(
 
                     Row(verticalAlignment = Alignment.Bottom) {
                         Text(
-                            text = if (weather.lastUpdated == "Veri bekleniyor") "--°" else "${weather.currentTempC}°",
+                            text = weather.currentTempC?.let { "$it°" } ?: "--°",
                             fontSize = 68.sp,
                             fontWeight = FontWeight.Black,
                             color = Color.White,
@@ -420,11 +419,11 @@ fun HavaScreen(
                         Spacer(Modifier.width(12.dp))
                         Column(modifier = Modifier.padding(bottom = 6.dp)) {
                             Text(
-                                text = "Hissedilen: ${weather.feelsLikeC}°C",
+                                text = "Hissedilen: ${weather.feelsLikeC?.let { "$it°C" } ?: "—"}",
                                 style = MaterialTheme.typography.bodySmall.copy(color = CizgiColor.Gold, fontWeight = FontWeight.Bold),
                             )
                             Text(
-                                text = "Yağış İhtimali: %${weather.rainChancePct}",
+                                text = "Yağış İhtimali: ${weather.rainChancePct?.let { "%$it" } ?: "—"}",
                                 style = MaterialTheme.typography.bodySmall.copy(color = Color(0xFFE2E8F0)),
                             )
                         }
@@ -448,10 +447,10 @@ fun HavaScreen(
                             .padding(vertical = 10.dp, horizontal = 12.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
                     ) {
-                        MetricItem("Nem", "%${weather.humidityPct}")
-                        MetricItem("Rüzgar", "${weather.windKmh} km/s")
-                        MetricItem("UV İndeks", "${weather.uvIndex}")
-                        MetricItem("Kaynak", "WeatherAPI")
+                        MetricItem("Nem", weather.humidityPct?.let { "%$it" } ?: "—")
+                        MetricItem("Rüzgar", weather.windKmh?.let { "$it km/s" } ?: "—")
+                        MetricItem("UV İndeks", weather.uvIndex?.toString() ?: "—")
+                        MetricItem("Kaynak", if (weather.currentTempC == null) "Bekleniyor" else "WeatherAPI")
                     }
                 }
             }
