@@ -377,7 +377,7 @@ fun AkisScreen(
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             // Loading Skeletons
-            if (isRefreshing) {
+            if (isRefreshing && filteredStories.isEmpty()) {
                 items(3) { SkeletonCard() }
             } else {
                 // Canlı BIST 100 ve Emtia Takip Listesi Widget'ı (Retrofit Servisli)
