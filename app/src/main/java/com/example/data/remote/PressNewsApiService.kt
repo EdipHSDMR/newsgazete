@@ -24,20 +24,15 @@ data class PressNewsPage(
     val stories: List<Story>,
 )
 
-/** Press.org.tr's authenticated API, with the key supplied from on-device preferences. */
-class PressNewsApiService(
-    private val httpClient: OkHttpClient,
-    private val apiKeyProvider: () -> String,
-) {
+/** Press.org.tr is accessed through the private service gateway; the provider key never reaches the APK. */
+class PressNewsApiService(private val httpClient: OkHttpClient) {
     suspend fun fetchPage(page: Int, pageSize: Int = MAX_PAGE_SIZE): PressNewsPage? = withContext(Dispatchers.IO) {
-        val apiKey = apiKeyProvider().trim()
-        if (apiKey.isBlank() || page < 1) return@withContext null
+        if (page < 1) return@withContext null
 
         try {
-            val url = "$API_BASE/haberler?sayfa=$page&adet=${pageSize.coerceIn(1, MAX_PAGE_SIZE)}"
+            val url = "${ApiGatewayConfig.BASE_URL}/v1/news?page=$page&limit=${pageSize.coerceIn(1, MAX_PAGE_SIZE)}"
             val request = Request.Builder()
                 .url(url)
-                .header("Authorization", "Bearer $apiKey")
                 .header("Accept", "application/json")
                 .header("User-Agent", "Newsgazete/1.0")
                 .build()
@@ -212,7 +207,6 @@ class PressNewsApiService(
     }
 
     private companion object {
-        const val API_BASE = "https://www.press.org.tr/api/v1"
         const val MAX_PAGE_SIZE = 100
         const val MAX_SOURCE_TEXT_CHARS = 6_000
         const val MAX_PARAGRAPHS = 24
