@@ -192,7 +192,7 @@ data class UserPreferences(
     val selectedDistrict: String? = null,
     val followedTopics: Set<String> = setOf("Türkiye", "Ekonomi", "Teknoloji", "Spor"),
     val followedTeams: Set<String> = setOf("Galatasaray", "Fenerbahçe"),
-    val breakingAlerts: Boolean = false,
+    val breakingAlerts: Boolean = true,
     val matchAlerts: Boolean = false,
     val dailyDigest: Boolean = true,
     val quietHoursEnabled: Boolean = true,
