@@ -143,11 +143,7 @@ fun PiyasaScreen(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text("PİYASA TAKİP MERKEZİ", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
-                    Text("Piyasalar", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
-                    Text("Kaynak saati veya günlük veri tarihi her kartta gösterilir.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
+                Text("Piyasalar", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                 IconButton(onClick = { repository.refreshMarkets(force = true) }, modifier = Modifier.size(42.dp)) {
                     Icon(Icons.Default.Refresh, contentDescription = "Piyasayı şimdi yenile", tint = MaterialTheme.colorScheme.primary)
                 }

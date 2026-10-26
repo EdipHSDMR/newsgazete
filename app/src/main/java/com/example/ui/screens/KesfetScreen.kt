@@ -112,34 +112,6 @@ fun KesfetScreen(
                 .padding(horizontal = 16.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            // Archive Banner
-            Surface(
-                shape = RoundedCornerShape(12.dp),
-                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f),
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    Text("📚", fontSize = 20.sp)
-                    Column {
-                        Text(
-                            text = "HABER ARŞİVİ VE GEÇMİŞ YILLAR",
-                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, letterSpacing = 0.6.sp),
-                            color = MaterialTheme.colorScheme.primary,
-                        )
-                        Text(
-                            text = "Geçmiş ve güncel haberleri arayın, tüm yayıncı ve kategorileri filtreleyin.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            fontSize = 11.5.sp,
-                        )
-                    }
-                }
-            }
-
             // Search Input Row
             Row(
                 modifier = Modifier.fillMaxWidth(),

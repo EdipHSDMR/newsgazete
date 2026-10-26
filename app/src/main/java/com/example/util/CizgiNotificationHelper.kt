@@ -164,7 +164,6 @@ object CizgiNotificationHelper {
         )
         val icon = when (sportType) {
             "BASKETBOL" -> "🏀"
-            "VOLEYBOL" -> "🏐"
             else -> "⚽"
         }
         val title = "$icon Maç başladı"

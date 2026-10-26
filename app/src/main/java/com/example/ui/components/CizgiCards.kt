@@ -1046,8 +1046,8 @@ fun PublisherAvatar(
 
 /**
  * Modern, görsel ağırlıklı kart tabanlı haber bileşeni.
- * Material 3 standartlarında görsel yerleşimi, okuma süresi tahmini,
- * haber kaynağı ikonu, paylaş ve kaydet butonlarını barındırır.
+ * Material 3 standartlarında görsel yerleşimi, haber kaynağı ikonu,
+ * paylaş ve kaydet butonlarını barındırır.
  */
 @Composable
 fun ModernNewsCard(
@@ -1165,25 +1165,6 @@ fun ModernNewsCard(
                         }
                     }
 
-                    // Okuma Süresi Tahmini Rozeti
-                    Surface(
-                        shape = RoundedCornerShape(6.dp),
-                        color = Color.Black.copy(alpha = 0.7f),
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp),
-                        ) {
-                            Text("⏱️", fontSize = 11.sp)
-                            Text(
-                                text = "${story.readTimeMin} dk okuma",
-                                color = Color.White,
-                                fontWeight = FontWeight.SemiBold,
-                                fontSize = 11.sp,
-                            )
-                        }
-                    }
                 }
             }
 

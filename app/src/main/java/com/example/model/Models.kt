@@ -58,7 +58,7 @@ data class SportsMatch(
     val kickoffTime: String,
     val kickoffAtEpochMs: Long = 0L,
     val events: List<MatchEvent> = emptyList(),
-    val sportType: String = "FUTBOL", // "FUTBOL", "BASKETBOL", "VOLEYBOL"
+    val sportType: String = "FUTBOL",
     val liveAction: String = "",       // e.g. "⚽ GOL! 78' Icardi"
     val oddsHome: String = "",
     val oddsDraw: String = "",
@@ -73,11 +73,13 @@ data class SportsMatch(
     val cornersAway: Int? = null,
     val referee: String = "",
     val stadium: String = "",
+    val dataProvider: String = "",
 )
 
 data class SportsSnapshot(
     val competition: String = "",
     val sportType: String = "",
+    val seasonYear: Int = 0,
     val matches: List<SportsMatch> = emptyList(),
     val standings: List<LeagueStanding> = emptyList(),
     val topScorers: List<TopScorer> = emptyList(),
@@ -85,6 +87,23 @@ data class SportsSnapshot(
     val updatedAtEpochMs: Long = 0L,
     val scorerMessage: String = "",
     val errorMessage: String = "",
+)
+
+data class LineupPlayer(
+    val name: String,
+    val jerseyNumber: String = "",
+    val position: String = "",
+    val starter: Boolean = false,
+)
+
+data class TeamLineup(
+    val team: String,
+    val players: List<LineupPlayer>,
+)
+
+data class MatchLineups(
+    val home: TeamLineup,
+    val away: TeamLineup,
 )
 
 data class TopScorer(

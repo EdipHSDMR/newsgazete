@@ -92,9 +92,15 @@ async function handleWeather(req, res) {
 
 async function handleFootball(req, res, path) {
   const key = requireSecret("FOOTBALL_API_KEY");
-  const endpoint = path.substring("/v1/football/".length).split("/")[0];
+  const segments = path.substring("/v1/football/".length).split("/").filter(Boolean);
+  const endpoint = segments[0];
   if (!FOOTBALL_ENDPOINTS.has(endpoint)) return sendJson(res, 404, { error: "football_endpoint_not_allowed" });
-  const url = new URL(`${FOOTBALL_API}/${endpoint}`);
+  const subresource = segments[1] || "";
+  if (segments.length > 2 || (subresource && !(endpoint === "fixtures" && subresource === "lineups"))) {
+    return sendJson(res, 404, { error: "football_subresource_not_allowed" });
+  }
+  const upstreamPath = subresource ? `${endpoint}/${subresource}` : endpoint;
+  const url = new URL(`${FOOTBALL_API}/${upstreamPath}`);
   for (const [name, value] of Object.entries(req.query)) {
     if (!/^[a-z][a-z0-9_]{0,31}$/i.test(name)) continue;
     url.searchParams.set(name, String(value).slice(0, 120));

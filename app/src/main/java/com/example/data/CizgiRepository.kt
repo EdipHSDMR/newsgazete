@@ -74,7 +74,6 @@ class CizgiRepository private constructor(private val context: Context) {
     private val pressNewsApiService = PressNewsApiService(httpClient)
     private val weatherApiService = WeatherApiService(httpClient)
     private val footballApiService = FootballApiService(httpClient)
-    private val volleyballApiService = com.example.data.remote.VolleyballApiService(httpClient)
     private val marketApiService = com.example.data.remote.MarketApiService(httpClient)
 
     // State flows
@@ -365,10 +364,11 @@ class CizgiRepository private constructor(private val context: Context) {
     }
 
     fun refreshAll() {
-        val activeSelection = activeSportsKey?.split("|", limit = 2)
+        val activeSelection = activeSportsKey?.split("|")
         fetchLiveSports(
             competition = activeSelection?.getOrNull(1) ?: "Trendyol Süper Lig",
             sportType = activeSelection?.getOrNull(0) ?: "FUTBOL",
+            seasonYear = activeSelection?.getOrNull(2)?.toIntOrNull() ?: 0,
         )
         scope.launch {
             if (!refreshMutex.tryLock()) return@launch
@@ -606,28 +606,30 @@ class CizgiRepository private constructor(private val context: Context) {
                     sourceDescriptionAttempts.remove(storyId)
                     return@launch
                 }
+                val latestStory = _stories.value.firstOrNull { it.id == storyId } ?: story
+                val sourceStory = if (latestStory.fullText.length >= story.fullText.length) latestStory else story
                 val description = metadata?.description?.takeIf { it.length >= MIN_SOURCE_DESCRIPTION_CHARS }
-                val imageUrl = story.imageUrl.ifBlank { metadata?.imageUrl.orEmpty() }
-                val sourceText = story.fullText.takeIf { it.length >= MIN_SOURCE_DESCRIPTION_CHARS }
-                    ?: description.orEmpty().ifBlank { story.summary }
-                val fullText = story.fullText.takeIf { it.length >= MIN_SOURCE_DESCRIPTION_CHARS }
-                    ?: description.orEmpty().ifBlank { story.fullText }
+                val imageUrl = sourceStory.imageUrl.ifBlank { metadata?.imageUrl.orEmpty() }
+                val sourceText = sourceStory.fullText.takeIf { it.length >= MIN_SOURCE_DESCRIPTION_CHARS }
+                    ?: description.orEmpty().ifBlank { sourceStory.summary }
+                val fullText = sourceStory.fullText.takeIf { it.length >= MIN_SOURCE_DESCRIPTION_CHARS }
+                    ?: description.orEmpty().ifBlank { sourceStory.fullText }
                 val summary = NewsSummary.bestAvailableSummary(
-                    summaryCandidate = story.summary,
+                    summaryCandidate = sourceStory.summary,
                     sourceText = sourceText,
-                    title = story.title,
+                    title = sourceStory.title,
                 ).ifBlank { NewsSummary.concise(sourceText, story.title) }
-                if (summary == story.summary && (description == null || description == story.fullText.trim()) && imageUrl == story.imageUrl) return@launch
+                if (summary == sourceStory.summary && (description == null || description == sourceStory.fullText.trim()) && imageUrl == sourceStory.imageUrl) return@launch
 
-                val updated = story.copy(
+                val updated = sourceStory.copy(
                     summary = summary,
                     fullText = fullText,
-                    paragraphs = description?.let(rssNewsService::sourceParagraphs) ?: story.paragraphs,
-                    readTimeMin = description?.let { maxOf(2, it.length / 220) } ?: story.readTimeMin,
+                    paragraphs = description?.let(rssNewsService::sourceParagraphs) ?: sourceStory.paragraphs,
+                    readTimeMin = description?.let { maxOf(2, it.length / 220) } ?: sourceStory.readTimeMin,
                     imageUrl = imageUrl,
-                    whatHappened = if (description != null) "" else story.whatHappened,
-                    whyItMatters = if (description != null) "" else story.whyItMatters,
-                    whatIsUnknown = if (description != null) "" else story.whatIsUnknown,
+                    whatHappened = if (description != null) "" else sourceStory.whatHappened,
+                    whyItMatters = if (description != null) "" else sourceStory.whyItMatters,
+                    whatIsUnknown = if (description != null) "" else sourceStory.whatIsUnknown,
                 )
                 _stories.update { current -> current.map { if (it.id == storyId) updated else it } }
                 newsArticleDao.upsertAll(listOf(NewsArticleEntity.fromStory(updated)))
@@ -722,27 +724,30 @@ class CizgiRepository private constructor(private val context: Context) {
         }
     }
 
-    fun fetchLiveSports(competition: String = "Trendyol Süper Lig", sportType: String = "FUTBOL") {
-        val requestKey = "$sportType|$competition"
+    fun fetchLiveSports(competition: String = "Trendyol Süper Lig", sportType: String = "FUTBOL", seasonYear: Int = 0) {
+        val resolvedSeason = seasonYear.takeIf { it > 0 } ?: currentSportsSeasonYear(competition, sportType)
+        val requestKey = "$sportType|$competition|$resolvedSeason"
         if (activeSportsKey != requestKey) {
             activeSportsKey = requestKey
             sportsRefreshJob?.cancel()
             _sportsSnapshot.value = SportsSnapshot(
                 competition = competition,
                 sportType = sportType,
+                seasonYear = resolvedSeason,
                 isLoading = true,
             )
         }
         if (sportsRefreshJob?.isActive == true) return
-        sportsRefreshJob = scope.launch { refreshSportsData(competition, sportType, requestKey) }
+        sportsRefreshJob = scope.launch { refreshSportsData(competition, sportType, resolvedSeason, requestKey) }
     }
 
-    private suspend fun refreshSportsData(competition: String, sportType: String, requestKey: String) {
-        if (sportType == "VOLEYBOL") volleyballApiService.clearLastError()
+    private suspend fun refreshSportsData(competition: String, sportType: String, seasonYear: Int, requestKey: String) {
         try {
-            val cachedScorers = cachedSportStatDao.getStatsDirect(competition, scorerCacheType(sportType))
-            if (cachedScorers.isNotEmpty() && activeSportsKey == requestKey) {
-                _sportsSnapshot.update { it.copy(topScorers = cachedScorers.map { row -> row.toTopScorer() }) }
+            if (seasonYear == currentSportsSeasonYear(competition, sportType)) {
+                val cachedScorers = cachedSportStatDao.getStatsDirect(competition, scorerCacheType(sportType))
+                if (cachedScorers.isNotEmpty() && activeSportsKey == requestKey) {
+                    _sportsSnapshot.update { it.copy(topScorers = cachedScorers.map { row -> row.toTopScorer() }) }
+                }
             }
         } catch (_: Exception) {}
 
@@ -751,16 +756,12 @@ class CizgiRepository private constructor(private val context: Context) {
             val previousLiveIds = _sportsSnapshot.value.matches
                 .filter { it.status == com.example.model.MatchStatus.LIVE }
                 .mapTo(mutableSetOf()) { it.id }
-            val fixtures = if (sportType == "VOLEYBOL") {
-                volleyballApiService.fetchFixtures(competition)
-            } else {
-                footballApiService.fetchFixtures(competition, sportType)
-            }
+            val fixtures = footballApiService.fetchFixtures(competition, sportType, seasonYear)
             if (activeSportsKey != requestKey) return
             _sportsSnapshot.update {
                 it.copy(
                     matches = fixtures,
-                    errorMessage = if (sportType == "VOLEYBOL") volleyballApiService.lastErrorMessage else "",
+                    errorMessage = "",
                 )
             }
             sportsFixtureSelectionsLoaded.add(requestKey)
@@ -822,16 +823,12 @@ class CizgiRepository private constructor(private val context: Context) {
         } catch (_: Exception) {}
 
         try {
-            val currentStandings = if (sportType == "VOLEYBOL") {
-                volleyballApiService.fetchStandings(competition)
-            } else {
-                footballApiService.fetchStandings(competition, sportType)
-            }
+            val currentStandings = footballApiService.fetchStandings(competition, sportType, seasonYear)
             if (activeSportsKey != requestKey) return
             _sportsSnapshot.update {
                 it.copy(
                     standings = currentStandings,
-                    errorMessage = if (sportType == "VOLEYBOL") volleyballApiService.lastErrorMessage else it.errorMessage,
+                    errorMessage = it.errorMessage,
                 )
             }
         } catch (cancelled: CancellationException) {
@@ -839,9 +836,9 @@ class CizgiRepository private constructor(private val context: Context) {
         } catch (_: Exception) {}
 
         try {
-            val scorers = if (sportType == "VOLEYBOL") emptyList() else footballApiService.fetchTopScorers(competition, sportType)
+            val scorers = footballApiService.fetchTopScorers(competition, sportType, seasonYear)
             if (activeSportsKey != requestKey) return
-            if (scorers.isNotEmpty()) {
+            if (scorers.isNotEmpty() && seasonYear == currentSportsSeasonYear(competition, sportType)) {
                 try {
                     cachedSportStatDao.deleteStats(competition, scorerCacheType(sportType))
                     cachedSportStatDao.insertStats(scorers.map { CachedSportStatEntity.fromTopScorer(competition, it) })
@@ -870,9 +867,17 @@ class CizgiRepository private constructor(private val context: Context) {
 
     private fun scorerCacheType(sportType: String): String = when (sportType) {
         "BASKETBOL" -> "SAYI"
-        "VOLEYBOL" -> "VOLEYBOL"
         else -> "GOL"
     }
+
+    private fun currentSportsSeasonYear(competition: String, sportType: String): Int {
+        val today = java.time.LocalDate.now()
+        if (sportType == "BASKETBOL" && competition == "WNBA") return today.year
+        return if (today.monthValue >= 7) today.year else today.year - 1
+    }
+
+    suspend fun fetchMatchLineups(match: SportsMatch): com.example.model.MatchLineups? =
+        footballApiService.fetchMatchLineups(match)
 
     fun refreshMarkets(force: Boolean = false) {
         scope.launch { refreshMarketData(force) }
