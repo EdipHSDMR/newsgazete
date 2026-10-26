@@ -1,7 +1,7 @@
 package com.example.ui.screens
 
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.foundation.background
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -19,21 +19,14 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowDownward
-import androidx.compose.material.icons.filled.ArrowUpward
-import androidx.compose.material.icons.filled.CurrencyExchange
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.ShowChart
-import androidx.compose.material.icons.filled.TrendingUp
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -49,19 +42,30 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.CizgiRepository
 import com.example.data.remote.BISTStock
 import com.example.model.FinancialAsset
-import com.example.ui.theme.CizgiColor
+import com.example.model.MarketCategory
+import java.util.Locale
+import java.time.DayOfWeek
+import java.time.Duration
+import java.time.Instant
+import java.time.LocalTime
+import java.time.ZoneId
+import java.time.ZonedDateTime
+import java.time.format.DateTimeFormatter
+import kotlinx.coroutines.delay
+
+private val marketTabs = listOf("Genel", "BIST", "Döviz", "Altın & Emtia", "Kripto", "Takip")
 
 @Composable
 fun PiyasaScreen(
@@ -70,235 +74,96 @@ fun PiyasaScreen(
 ) {
     val assets by repository.financialAssets.collectAsState()
     val bistStocks by repository.bistStocks.collectAsState()
-
-    var selectedCategory by remember { mutableStateOf("Tümü") }
-    val categories = listOf("Tümü", "Borsa (BIST)", "Döviz", "Altın & Emtia", "Kripto")
-
-    // Currency converter state
+    val marketStatusMessage by repository.marketStatusMessage.collectAsState()
+    val context = LocalContext.current
+    val watchlistPrefs = remember(context) { context.getSharedPreferences("market_watchlist", 0) }
+    var favorites by remember {
+        mutableStateOf(watchlistPrefs.getStringSet("codes", emptySet()).orEmpty().toSet())
+    }
+    var selectedTab by remember { mutableStateOf("Genel") }
+    var searchText by remember { mutableStateOf("") }
+    var showAllStocks by remember { mutableStateOf(false) }
+    var showConverter by remember { mutableStateOf(false) }
     var converterAmount by remember { mutableStateOf("100") }
-    var selectedConverterAsset by remember { mutableStateOf("USD/TRY") }
 
-    // Fetch live market data on launch
     LaunchedEffect(Unit) {
         repository.refreshMarkets()
-    }
-
-    val filteredAssets = remember(assets, selectedCategory) {
-        when (selectedCategory) {
-            "Döviz" -> assets.filter { it.code.contains("TRY") && !it.code.contains("BTC") && !it.code.contains("ETH") && !it.code.contains("GA") && !it.code.contains("CA") }
-            "Altın & Emtia" -> assets.filter { it.code in listOf("GA", "CA", "GUMUS") }
-            "Kripto" -> assets.filter { it.code.contains("BTC") || it.code.contains("ETH") }
-            "Borsa (BIST)" -> assets.filter { it.code == "BIST100" }
-            else -> assets
+        while (true) {
+            delay(MARKET_SCREEN_REFRESH_MS)
+            repository.refreshMarkets()
         }
     }
 
-    val activeConverterAsset = remember(assets, selectedConverterAsset) {
-        assets.firstOrNull { it.code == selectedConverterAsset }
-    }
-
-    val convertedValue = remember(converterAmount, activeConverterAsset) {
-        activeConverterAsset?.let { asset ->
-            val amount = converterAmount.toDoubleOrNull() ?: 0.0
-            String.format(java.util.Locale.US, "%,.2f", amount * asset.currentPrice)
+    val normalizedSearch = searchText.trim().lowercase(Locale.forLanguageTag("tr-TR"))
+    val selectedAssets = remember(assets, favorites, selectedTab, normalizedSearch) {
+        assets.filter { asset ->
+            val categoryMatches = when (selectedTab) {
+                "Döviz" -> asset.category == MarketCategory.CURRENCY
+                "Altın & Emtia" -> asset.category == MarketCategory.METAL || asset.category == MarketCategory.COMMODITY
+                "Kripto" -> asset.category == MarketCategory.CRYPTO
+                "Takip" -> asset.code in favorites
+                else -> selectedTab == "Genel"
+            }
+            val queryMatches = normalizedSearch.isBlank() ||
+                asset.code.lowercase(Locale.ROOT).contains(normalizedSearch) ||
+                asset.name.lowercase(Locale.forLanguageTag("tr-TR")).contains(normalizedSearch)
+            categoryMatches && queryMatches
         }
     }
-    val hasMarketData = assets.isNotEmpty() || bistStocks.isNotEmpty()
+    val selectedStocks = remember(bistStocks, favorites, selectedTab, normalizedSearch) {
+        bistStocks.filter { stock ->
+            val categoryMatches = selectedTab == "Genel" || selectedTab == "BIST" ||
+                (selectedTab == "Takip" && "BIST:${stock.symbol}" in favorites)
+            val queryMatches = normalizedSearch.isBlank() ||
+                stock.symbol.lowercase(Locale.ROOT).contains(normalizedSearch) ||
+                stock.companyName.lowercase(Locale.forLanguageTag("tr-TR")).contains(normalizedSearch)
+            categoryMatches && queryMatches
+        }
+    }
+    val showStocks = selectedTab == "Genel" || selectedTab == "BIST" || selectedTab == "Takip"
+    val stocksToShow = if (selectedTab == "Genel" && !showAllStocks) selectedStocks.take(4) else selectedStocks
+    val converterAsset = assets.firstOrNull { it.code == "USD/TRY" }
+    val convertedValue = converterAmount.replace(',', '.').toDoubleOrNull()?.let { amount ->
+        converterAsset?.let { amount * it.currentPrice }
+    }
+    val toggleFavorite: (String) -> Unit = { code ->
+        val next = favorites.toMutableSet().apply { if (!add(code)) remove(code) }.toSet()
+        favorites = next
+        watchlistPrefs.edit().putStringSet("codes", next).apply()
+    }
 
     LazyColumn(
-        modifier = modifier
-            .fillMaxSize()
-            .testTag("piyasa_screen"),
-        contentPadding = PaddingValues(16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
+        modifier = modifier.fillMaxSize().testTag("piyasa_screen"),
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 14.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        // 1. Header Bar: Title + Live Market Status + Refresh
         item {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
-                Column {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
-                        Text(
-                            text = "FİNANS VE BORSA MERKEZİ",
-                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                            color = MaterialTheme.colorScheme.primary,
-                        )
-                        Surface(
-                            shape = RoundedCornerShape(4.dp),
-                            color = (if (hasMarketData) Color(0xFF16A34A) else MaterialTheme.colorScheme.outline)
-                                .copy(alpha = 0.15f),
-                        ) {
-                            Text(
-                                text = if (hasMarketData) "GÜNCEL" else "BEKLENİYOR",
-                                color = if (hasMarketData) Color(0xFF16A34A) else MaterialTheme.colorScheme.onSurfaceVariant,
-                                fontSize = 10.sp,
-                                fontWeight = FontWeight.Bold,
-                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                            )
-                        }
-                    }
-                    Text(
-                        text = "Piyasalar",
-                        style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.Bold),
-                        color = MaterialTheme.colorScheme.onSurface,
-                    )
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("PİYASA TAKİP MERKEZİ", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                    Text("Piyasalar", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+                    Text("Kaynak saati veya günlük veri tarihi her kartta gösterilir.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    IconButton(
-                        onClick = {
-                            repository.refreshMarkets()
-                        },
-                        modifier = Modifier.size(38.dp),
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Refresh,
-                            contentDescription = "Piyasayı Yenile",
-                            tint = MaterialTheme.colorScheme.primary,
-                        )
-                    }
+                IconButton(onClick = { repository.refreshMarkets(force = true) }, modifier = Modifier.size(42.dp)) {
+                    Icon(Icons.Default.Refresh, contentDescription = "Piyasayı şimdi yenile", tint = MaterialTheme.colorScheme.primary)
                 }
             }
         }
 
-        // 2. Interactive Currency & Gold Converter Box
-        item {
-            Card(
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
-                border = CardDefaults.outlinedCardBorder().copy(brush = SolidColor(MaterialTheme.colorScheme.outlineVariant)),
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Column(
-                    modifier = Modifier.padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.CurrencyExchange,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(20.dp),
-                            )
-                            Text(
-                                text = "HIZLI DÖVİZ VE ALTIN ÇEVİRİCİ",
-                                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
-                                color = MaterialTheme.colorScheme.primary,
-                            )
-                        }
-
-                        Text(
-                            text = activeConverterAsset?.name ?: "Güncel fiyat bekleniyor",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-
-                    // Asset Choice Chips
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
-                        listOf("USD/TRY" to "Dolar", "EUR/TRY" to "Euro", "GA" to "Gram Altın", "CA" to "Çeyrek", "BTC/TRY" to "Bitcoin").forEach { (code, name) ->
-                            val isSel = selectedConverterAsset == code
-                            FilterChip(
-                                selected = isSel,
-                                onClick = { selectedConverterAsset = code },
-                                enabled = assets.any { it.code == code },
-                                label = { Text(name, fontSize = 12.sp) },
-                                colors = FilterChipDefaults.filterChipColors(
-                                    selectedContainerColor = MaterialTheme.colorScheme.primary,
-                                    selectedLabelColor = MaterialTheme.colorScheme.onPrimary,
-                                ),
-                            )
-                        }
-                    }
-
-                    // Input & Result Row
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    ) {
-                        OutlinedTextField(
-                            value = converterAmount,
-                            onValueChange = { if (it.all { ch -> ch.isDigit() || ch == '.' }) converterAmount = it },
-                            label = { Text("Miktar") },
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                            singleLine = true,
-                            modifier = Modifier.weight(1f),
-                            shape = RoundedCornerShape(12.dp),
-                        )
-
-                        Text("=", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
-
-                        Surface(
-                            shape = RoundedCornerShape(12.dp),
-                            color = MaterialTheme.colorScheme.primaryContainer,
-                            modifier = Modifier
-                                .weight(1.3f)
-                                .height(56.dp),
-                        ) {
-                            Box(
-                                modifier = Modifier.fillMaxSize(),
-                                contentAlignment = Alignment.Center,
-                            ) {
-                                Text(
-                                    text = convertedValue?.let { "$it ₺" } ?: "Fiyat bekleniyor",
-                                    style = MaterialTheme.typography.titleMedium.copy(
-                                        fontWeight = FontWeight.Black,
-                                        fontSize = 17.sp,
-                                    ),
-                                    color = MaterialTheme.colorScheme.primary,
-                                    maxLines = 1,
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // 3. Category Filter Chips
         item {
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState()),
+                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                categories.forEach { cat ->
-                    val isSel = selectedCategory == cat
+                marketTabs.forEach { tab ->
                     FilterChip(
-                        selected = isSel,
-                        onClick = { selectedCategory = cat },
-                        label = {
-                            Text(
-                                text = cat,
-                                fontWeight = if (isSel) FontWeight.Bold else FontWeight.Medium,
-                                fontSize = 13.sp,
-                            )
-                        },
+                        selected = selectedTab == tab,
+                        onClick = { selectedTab = tab; showAllStocks = false },
+                        label = { Text(if (tab == "Takip") "$tab (${favorites.size})" else tab, fontWeight = if (selectedTab == tab) FontWeight.Bold else FontWeight.Medium) },
                         colors = FilterChipDefaults.filterChipColors(
                             selectedContainerColor = MaterialTheme.colorScheme.primary,
                             selectedLabelColor = MaterialTheme.colorScheme.onPrimary,
@@ -309,70 +174,150 @@ fun PiyasaScreen(
             }
         }
 
-        // 4. Borsa İstanbul (BIST 100 & Hisseler) Bölümü
-        if (selectedCategory == "Tümü" || selectedCategory == "Borsa (BIST)") {
+        item {
+            OutlinedTextField(
+                value = searchText,
+                onValueChange = { searchText = it },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                label = { Text("Varlık veya hisse ara") },
+                shape = RoundedCornerShape(14.dp),
+            )
+        }
+
+        if (marketStatusMessage.isNotBlank()) {
             item {
-                Column(
+                Surface(
+                    color = MaterialTheme.colorScheme.errorContainer,
+                    shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.fillMaxWidth(),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                    ) {
+                    Text(
+                        text = marketStatusMessage,
+                        color = MaterialTheme.colorScheme.onErrorContainer,
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(12.dp),
+                    )
+                }
+            }
+        }
+
+        if (selectedTab == "Genel") {
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)),
+                    shape = RoundedCornerShape(14.dp),
+                ) {
+                    Column(Modifier.padding(14.dp)) {
+                        Text("VERİ KAYNAKLARI", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                        Spacer(Modifier.height(4.dp))
+                        Text("TCMB kurları günlük gösterge değeridir. BIST ve diğer piyasa verileri kaynağın gecikmesine tabidir; uygulama gerçek zamanlı işlem kotasyonu iddiasında bulunmaz.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            }
+            item {
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f),
+                    modifier = Modifier.fillMaxWidth().clickable { showConverter = !showConverter },
+                ) {
+                    Text(if (showConverter) "−  Hızlı USD/TRY dönüştürücü" else "+  Hızlı USD/TRY dönüştürücü", modifier = Modifier.padding(12.dp), fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.primary)
+                }
+            }
+            item {
+                AnimatedVisibility(visible = showConverter) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        OutlinedTextField(
+                            value = converterAmount,
+                            onValueChange = { value -> if (value.all { it.isDigit() || it == '.' || it == ',' }) converterAmount = value },
+                            label = { Text("USD miktarı") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                            singleLine = true,
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(12.dp),
+                        )
+                        Text("=", style = MaterialTheme.typography.titleLarge)
                         Text(
-                            text = "BORSA İSTANBUL (BIST)",
-                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                            convertedValue?.let { String.format(Locale.forLanguageTag("tr-TR"), "%.2f ₺", it) } ?: "Kur bekleniyor",
+                            modifier = Modifier.weight(1f),
+                            fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.primary,
                         )
-                        Text(
-                            text = "${bistStocks.size} Hisse Takipte",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-
-                    if (bistStocks.isEmpty()) {
-                        Surface(
-                            shape = RoundedCornerShape(12.dp),
-                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text(
-                                text = "BIST hisse verileri güncelleniyor...",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(14.dp),
-                                textAlign = TextAlign.Center
-                            )
-                        }
-                    } else {
-                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            bistStocks.forEach { stock ->
-                                BISTStockCard(stock = stock)
-                            }
-                        }
                     }
                 }
             }
         }
 
-        // 5. Döviz, Altın & Kripto Varlık Listesi
-        if (selectedCategory != "Borsa (BIST)") {
+        if (showStocks && stocksToShow.isNotEmpty()) {
             item {
-                Text(
-                    text = "DÖVİZ, ALTIN VE KRİPTO",
-                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
-                    color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.padding(top = 4.dp)
+                SectionHeading(
+                    title = "BIST",
+                    detail = if (selectedTab == "Genel") "Öne çıkan hisseler" else "Endeksler ve izlenen hisseler",
                 )
             }
-
-            items(filteredAssets, key = { it.code }) { asset ->
-                FinancialAssetCard(asset = asset)
+            items(stocksToShow, key = { "BIST:${it.symbol}" }) { stock ->
+                BISTStockCard(
+                    stock = stock,
+                    isFavorite = "BIST:${stock.symbol}" in favorites,
+                    onFavoriteClick = { toggleFavorite("BIST:${stock.symbol}") },
+                )
+            }
+            if (selectedTab == "Genel" && selectedStocks.size > stocksToShow.size) {
+                item {
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant,
+                        modifier = Modifier.fillMaxWidth().clickable { showAllStocks = true },
+                    ) {
+                        Text("BIST listesinin tamamını göster (${selectedStocks.size})", modifier = Modifier.padding(12.dp), color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold)
+                    }
+                }
             }
         }
+
+        if (selectedAssets.isNotEmpty()) {
+            item {
+                SectionHeading(
+                    title = when (selectedTab) {
+                        "Döviz" -> "Döviz kurları"
+                        "Altın & Emtia" -> "Altın ve emtia"
+                        "Kripto" -> "Kripto varlıklar"
+                        "Takip" -> "Takip listen"
+                        else -> "Döviz, altın, emtia ve kripto"
+                    },
+                    detail = "${selectedAssets.size} varlık",
+                )
+            }
+            items(selectedAssets, key = { it.code }) { asset ->
+                FinancialAssetCard(
+                    asset = asset,
+                    isFavorite = asset.code in favorites,
+                    onFavoriteClick = { toggleFavorite(asset.code) },
+                )
+            }
+        }
+
+        if (selectedAssets.isEmpty() && (!showStocks || selectedStocks.isEmpty())) {
+            item {
+                Card(shape = RoundedCornerShape(14.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))) {
+                    Text(
+                        text = if (selectedTab == "Takip") "Takip listende henüz varlık yok. Bir karttaki ☆ simgesine dokunarak ekleyebilirsin." else "Bu bölüm için şu anda kaynak verisi alınamıyor. Bağlantını kontrol edip yenilemeyi dene.",
+                        modifier = Modifier.fillMaxWidth().padding(18.dp),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SectionHeading(title: String, detail: String) {
+    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+        Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+        Text(detail, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
@@ -380,10 +325,9 @@ fun PiyasaScreen(
 fun BISTStockCard(
     stock: BISTStock,
     modifier: Modifier = Modifier,
+    isFavorite: Boolean = false,
+    onFavoriteClick: () -> Unit = {},
 ) {
-    val isPositive = stock.changePct >= 0
-    val trendColor = if (isPositive) Color(0xFF16A34A) else Color(0xFFDC2626)
-
     Card(
         shape = RoundedCornerShape(14.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -391,91 +335,37 @@ fun BISTStockCard(
         border = CardDefaults.outlinedCardBorder().copy(brush = SolidColor(MaterialTheme.colorScheme.outlineVariant)),
         modifier = modifier.fillMaxWidth(),
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(14.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween,
-        ) {
-            // Symbol & Name
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                modifier = Modifier.weight(1f),
-            ) {
-                Surface(
-                    shape = RoundedCornerShape(10.dp),
-                    color = MaterialTheme.colorScheme.primaryContainer,
-                    modifier = Modifier.size(42.dp),
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Text(
-                            text = stock.symbol.take(4),
-                            fontWeight = FontWeight.Black,
-                            fontSize = 11.sp,
-                            color = MaterialTheme.colorScheme.primary,
-                        )
-                    }
+        Row(modifier = Modifier.fillMaxWidth().padding(13.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(modifier = Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(stock.symbol, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.width(8.dp))
+                    Text(stock.companyName, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
-
-                Column {
-                    Text(
-                        text = stock.symbol,
-                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                        color = MaterialTheme.colorScheme.onSurface,
-                    )
-                    Text(
-                        text = stock.companyName,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                    )
+                Text("${stock.source} · ${formatBistQuoteTime(stock.updatedAtEpochMs)}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                val quoteDetails = buildList {
+                    if (stock.low != null && stock.high != null) add("Gün içi ${formatPrice(stock.low)} – ${formatPrice(stock.high)} ${stock.unit}")
+                    if (stock.volume.isNotBlank()) add("Hacim ${stock.volume}")
+                }.joinToString(" · ")
+                if (quoteDetails.isNotBlank()) {
+                    Text(quoteDetails, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
-
-            // Price & Percent Change
             Column(horizontalAlignment = Alignment.End) {
-                Text(
-                    text = "${stock.price} ₺",
-                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Black),
-                    color = MaterialTheme.colorScheme.onSurface,
-                )
-
-                Surface(
-                    shape = RoundedCornerShape(6.dp),
-                    color = trendColor.copy(alpha = 0.14f),
-                    modifier = Modifier.padding(top = 2.dp)
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(2.dp),
-                    ) {
-                        Icon(
-                            imageVector = if (isPositive) Icons.Default.ArrowUpward else Icons.Default.ArrowDownward,
-                            contentDescription = null,
-                            tint = trendColor,
-                            modifier = Modifier.size(12.dp),
-                        )
-                        Text(
-                            text = "${if (isPositive) "+" else ""}${stock.changePct}%",
-                            color = trendColor,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 11.sp,
-                        )
-                    }
+                Text("${formatPrice(stock.price)} ${stock.unit}", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                stock.changePct?.let { change ->
+                    val positive = change >= 0.0
+                    Text(
+                        text = "${if (positive) "+" else ""}${formatPrice(change)}%",
+                        color = if (positive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
+                    )
                 }
-
-                Text(
-                    text = "Hacim: ${stock.volume}",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    fontSize = 10.sp,
-                    modifier = Modifier.padding(top = 2.dp)
-                )
             }
+            Text(if (isFavorite) "★" else "☆", modifier = Modifier.padding(start = 10.dp).clickable(onClick = onFavoriteClick).padding(4.dp), fontSize = 22.sp, color = MaterialTheme.colorScheme.primary)
         }
+            stock.sparkline.takeIf { it.size > 1 }?.let { MiniSparkline(it, Modifier.fillMaxWidth().height(26.dp).padding(top = 5.dp)) }
     }
 }
 
@@ -483,15 +373,9 @@ fun BISTStockCard(
 fun FinancialAssetCard(
     asset: FinancialAsset,
     modifier: Modifier = Modifier,
+    isFavorite: Boolean = false,
+    onFavoriteClick: () -> Unit = {},
 ) {
-    val changePct = asset.changePct
-    val isPositive = (changePct ?: 0.0) >= 0.0
-    val trendColor = when {
-        changePct == null -> MaterialTheme.colorScheme.onSurfaceVariant
-        isPositive -> Color(0xFF16A34A)
-        else -> Color(0xFFDC2626)
-    }
-
     Card(
         shape = RoundedCornerShape(14.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -499,104 +383,109 @@ fun FinancialAssetCard(
         border = CardDefaults.outlinedCardBorder().copy(brush = SolidColor(MaterialTheme.colorScheme.outlineVariant)),
         modifier = modifier.fillMaxWidth(),
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(14.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween,
-        ) {
-            // Left: Icon + Code + Name
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                Surface(
-                    shape = RoundedCornerShape(10.dp),
-                    color = MaterialTheme.colorScheme.primaryContainer,
-                    modifier = Modifier.size(42.dp),
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
+        Column(modifier = Modifier.fillMaxWidth().padding(13.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(asset.code, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                    Text(asset.name, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Column(horizontalAlignment = Alignment.End) {
+                    Text("${formatPrice(asset.currentPrice)} ${asset.unit}", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                    asset.changePct?.let { change ->
+                        val positive = change >= 0.0
                         Text(
-                            text = asset.symbol,
-                            fontWeight = FontWeight.Black,
-                            fontSize = 14.sp,
-                            color = MaterialTheme.colorScheme.primary,
+                            "${asset.changePeriodLabel} ${if (positive) "+" else ""}${formatPrice(change)}%",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (positive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+                            fontWeight = FontWeight.SemiBold,
                         )
                     }
                 }
-
-                Column {
-                    Text(
-                        text = asset.code,
-                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                        color = MaterialTheme.colorScheme.onSurface,
-                    )
-                    Text(
-                        text = asset.name,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
+                Text(if (isFavorite) "★" else "☆", modifier = Modifier.padding(start = 10.dp).clickable(onClick = onFavoriteClick).padding(4.dp), fontSize = 22.sp, color = MaterialTheme.colorScheme.primary)
             }
-
-            // Right: Price & Percent Change
-            Column(horizontalAlignment = Alignment.End) {
-                val formattedPrice = when {
-                    asset.code.contains("BTC") || asset.currentPrice > 100000 -> String.format(java.util.Locale.US, "%,.0f", asset.currentPrice)
-                    asset.currentPrice > 1000 -> String.format(java.util.Locale.US, "%,.2f", asset.currentPrice)
-                    else -> String.format(java.util.Locale.US, "%.2f", asset.currentPrice)
-                }
-
-                Text(
-                    text = "$formattedPrice ${asset.unit}",
-                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Black),
-                    color = MaterialTheme.colorScheme.onSurface,
-                )
-
-                if (changePct != null) {
-                    Surface(
-                        shape = RoundedCornerShape(6.dp),
-                        color = trendColor.copy(alpha = 0.14f),
-                        modifier = Modifier.padding(top = 2.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(2.dp),
-                        ) {
-                            Icon(
-                                imageVector = if (isPositive) Icons.Default.ArrowUpward else Icons.Default.ArrowDownward,
-                                contentDescription = null,
-                                tint = trendColor,
-                                modifier = Modifier.size(12.dp),
-                            )
-                            Text(
-                                text = "${if (isPositive) "+" else ""}${changePct}%",
-                                color = trendColor,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 11.sp,
-                            )
-                        }
-                    }
-                } else {
-                    Text(
-                        text = "Değişim verisi yok",
-                        color = trendColor,
-                        fontWeight = FontWeight.Medium,
-                        fontSize = 11.sp,
-                    )
-                }
-
-                Text(
-                    text = if (asset.lowPrice != null && asset.highPrice != null) "G: ${asset.lowPrice} - ${asset.highPrice}" else "Gün içi aralık yok",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    fontSize = 10.sp,
-                    modifier = Modifier.padding(top = 2.dp)
-                )
+            Spacer(Modifier.height(5.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(asset.source.ifBlank { "Kaynak bilgisi yok" }, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold)
+                Text(" · ${formatAssetQuoteTime(asset)}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
+            if (asset.buyPrice != null && asset.sellPrice != null) {
+                Text("Alış ${formatPrice(asset.buyPrice)} ₺ · Satış ${formatPrice(asset.sellPrice)} ₺", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            asset.quoteNote.takeIf(String::isNotBlank)?.let {
+                Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            }
+            if (asset.lowPrice != null && asset.highPrice != null) {
+                Text("Gün içi ${formatPrice(asset.lowPrice)} – ${formatPrice(asset.highPrice)} ${asset.unit}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            asset.sparkline.takeIf { it.size > 1 }?.let { MiniSparkline(it, Modifier.fillMaxWidth().height(26.dp).padding(top = 5.dp)) }
         }
     }
 }
 
+@Composable
+private fun MiniSparkline(values: List<Float>, modifier: Modifier = Modifier) {
+    val points = values.filter(Float::isFinite)
+    if (points.size < 2) return
+    val color = if (points.last() >= points.first()) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
+    Canvas(modifier = modifier) {
+        val minimum = points.minOrNull() ?: return@Canvas
+        val maximum = points.maxOrNull() ?: return@Canvas
+        val range = (maximum - minimum).takeIf { it > 0f } ?: 1f
+        val verticalPadding = 3.dp.toPx()
+        val chartHeight = (size.height - verticalPadding * 2).coerceAtLeast(1f)
+        val coordinates = points.mapIndexed { index, value ->
+            Offset(
+                x = size.width * index / (points.lastIndex.coerceAtLeast(1)),
+                y = size.height - verticalPadding - ((value - minimum) / range) * chartHeight,
+            )
+        }
+        coordinates.zipWithNext().forEach { (start, end) ->
+            drawLine(color = color, start = start, end = end, strokeWidth = 2.dp.toPx())
+        }
+    }
+}
+
+private fun formatPrice(value: Double): String = when {
+    !value.isFinite() -> "—"
+    kotlin.math.abs(value) >= 100_000 -> String.format(MARKET_LOCALE, "%,.0f", value)
+    kotlin.math.abs(value) >= 1_000 -> String.format(MARKET_LOCALE, "%,.2f", value)
+    kotlin.math.abs(value) >= 1 -> String.format(MARKET_LOCALE, "%.2f", value)
+    else -> String.format(MARKET_LOCALE, "%.5f", value)
+}
+
+private val MARKET_LOCALE = Locale.forLanguageTag("tr-TR")
+
+private fun formatBistQuoteTime(epochMs: Long): String {
+    if (epochMs <= 0L) return "Kaynak saati yok"
+    val zone = ZoneId.of("Europe/Istanbul")
+    val updatedAt = ZonedDateTime.ofInstant(Instant.ofEpochMilli(epochMs), zone)
+    val now = ZonedDateTime.now(zone)
+    val date = updatedAt.format(DateTimeFormatter.ofPattern("dd MMM HH:mm", Locale.forLanguageTag("tr-TR")))
+    val tradingHours = now.dayOfWeek !in setOf(DayOfWeek.SATURDAY, DayOfWeek.SUNDAY) &&
+        now.toLocalTime() >= LocalTime.of(10, 0) && now.toLocalTime() < LocalTime.of(18, 10)
+    return when {
+        Duration.between(updatedAt, now).toDays() >= 7 -> "Eski kaynak verisi · $date"
+        tradingHours && Duration.between(updatedAt, now).toMinutes() > 30 -> "Gecikmiş kaynak verisi · $date"
+        !tradingHours -> "Piyasa kapalı · son kotasyon $date"
+        else -> "$date kaynak saati"
+    }
+}
+
+private fun formatAssetQuoteTime(asset: FinancialAsset): String {
+    val epochMs = asset.updatedAtEpochMs
+    if (epochMs <= 0L) return "Kaynak saati yok"
+    val now = System.currentTimeMillis()
+    val ageMs = (now - epochMs).coerceAtLeast(0L)
+    if (asset.source == "TCMB Gösterge Kur") {
+        val date = Instant.ofEpochMilli(epochMs).atZone(ZoneId.of("Europe/Istanbul"))
+            .format(DateTimeFormatter.ofPattern("dd MMM yyyy", Locale.forLanguageTag("tr-TR")))
+        val stale = ageMs > 5 * 24 * 60 * 60_000L
+        return "Veri tarihi $date · günlük gösterge${if (stale) " · eski" else ""}"
+    }
+    val date = Instant.ofEpochMilli(epochMs).atZone(ZoneId.of("Europe/Istanbul"))
+        .format(DateTimeFormatter.ofPattern("dd MMM HH:mm", Locale.forLanguageTag("tr-TR")))
+    val staleAfter = if (asset.category == MarketCategory.CRYPTO) 5 * 60_000L else 48 * 60 * 60_000L
+    return if (ageMs > staleAfter) "$date · gecikmiş/eski kaynak verisi" else "$date kaynak saati"
+}
+
+private const val MARKET_SCREEN_REFRESH_MS = 90_000L

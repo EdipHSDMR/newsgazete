@@ -84,6 +84,7 @@ data class SportsSnapshot(
     val isLoading: Boolean = false,
     val updatedAtEpochMs: Long = 0L,
     val scorerMessage: String = "",
+    val errorMessage: String = "",
 )
 
 data class TopScorer(
@@ -100,6 +101,13 @@ data class TopScorer(
     val valueLabel: String = "",
 )
 
+enum class MarketCategory(val label: String) {
+    CURRENCY("Döviz"),
+    METAL("Altın"),
+    COMMODITY("Emtia"),
+    CRYPTO("Kripto"),
+}
+
 data class FinancialAsset(
     val code: String,          // e.g. "USD/TRY", "EUR/TRY", "GA", "BIST100", "BTC"
     val name: String,          // e.g. "Dolar", "Euro", "Gram Altın", "BIST 100", "Bitcoin"
@@ -110,6 +118,14 @@ data class FinancialAsset(
     val lowPrice: Double? = null,
     val unit: String = "₺",
     val sparkline: List<Float> = emptyList(),
+    val category: MarketCategory = MarketCategory.CURRENCY,
+    val source: String = "",
+    val updatedAtEpochMs: Long = 0L,
+    val quoteNote: String = "",
+    val buyPrice: Double? = null,
+    val sellPrice: Double? = null,
+    val isEstimated: Boolean = false,
+    val changePeriodLabel: String = "Günlük",
 )
 
 data class LeagueStanding(

@@ -158,11 +158,11 @@ fun SporScreen(
     val matchAlertIds by repository.matchAlertIds.collectAsState()
     val matchAlerts = remember(matchAlertIds) { matchAlertIds.associateWith { true } }
 
-    // Live scores refresh once a minute; standings and scorer tables are cached by the service.
+    // Volleyball uses a slower cadence to stay inside the provider's free daily request budget.
     LaunchedEffect(selectedCompetition, selectedSport) {
         while (isActive) {
             repository.fetchLiveSports(selectedCompetition, selectedSport)
-            delay(60_000L)
+            delay(if (selectedSport == "VOLEYBOL") 20 * 60_000L else 60_000L)
         }
     }
 
@@ -177,6 +177,9 @@ fun SporScreen(
     } else emptyList()
     val sportsLoading = sportsSnapshot.competition == selectedCompetition &&
         sportsSnapshot.sportType == selectedSport && sportsSnapshot.isLoading
+    val sportsError = if (sportsSnapshot.competition == selectedCompetition && sportsSnapshot.sportType == selectedSport) {
+        sportsSnapshot.errorMessage
+    } else ""
     val leaderLoadingMessage = if (selectedSport == "BASKETBOL") "Sayı liderleri yükleniyor." else "Gol krallığı verisi yükleniyor."
     val scorerMessage = when {
         sportsSnapshot.competition != selectedCompetition || sportsSnapshot.sportType != selectedSport -> leaderLoadingMessage
@@ -377,6 +380,21 @@ fun SporScreen(
             }
         }
 
+        if (sportsError.isNotBlank()) {
+            Surface(
+                color = MaterialTheme.colorScheme.errorContainer,
+                shape = RoundedCornerShape(10.dp),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
+            ) {
+                Text(
+                    text = sportsError,
+                    color = MaterialTheme.colorScheme.onErrorContainer,
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(12.dp),
+                )
+            }
+        }
+
         // Tab Content
         when (selectedTab) {
             0 -> {
@@ -396,7 +414,7 @@ fun SporScreen(
                     competition = selectedCompetition,
                     sportType = selectedSport,
                     isLoading = sportsLoading,
-                    emptyMessage = "Bu lig için şu anda puan durumu alınamadı.",
+                    emptyMessage = sportsError.ifBlank { "Bu lig için şu anda puan durumu alınamadı." },
                 )
             }
             2 -> {

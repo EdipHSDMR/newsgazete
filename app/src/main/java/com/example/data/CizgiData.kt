@@ -1,7 +1,6 @@
 package com.example.data
 
 import com.example.model.DailyWeather
-import com.example.model.FinancialAsset
 import com.example.model.HourlyWeather
 import com.example.model.LeagueStanding
 import com.example.model.MatchEvent
@@ -503,94 +502,4 @@ object CizgiSeedData {
         "Uşak", "Kırklareli", "Niğde", "Amasya", "Rize",
     )
 
-    val financialAssets = listOf(
-        FinancialAsset(
-            code = "USD/TRY",
-            name = "Dolar",
-            symbol = "$",
-            currentPrice = 34.28,
-            changePct = 0.12,
-            highPrice = 34.34,
-            lowPrice = 34.18,
-            unit = "₺",
-            sparkline = listOf(34.18f, 34.20f, 34.24f, 34.22f, 34.28f),
-        ),
-        FinancialAsset(
-            code = "EUR/TRY",
-            name = "Euro",
-            symbol = "€",
-            currentPrice = 37.15,
-            changePct = -0.24,
-            highPrice = 37.30,
-            lowPrice = 37.08,
-            unit = "₺",
-            sparkline = listOf(37.30f, 37.25f, 37.20f, 37.18f, 37.15f),
-        ),
-        FinancialAsset(
-            code = "GA",
-            name = "Gram Altın",
-            symbol = "Altın",
-            currentPrice = 3025.40,
-            changePct = 0.85,
-            highPrice = 3038.00,
-            lowPrice = 2995.00,
-            unit = "₺",
-            sparkline = listOf(2995f, 3005f, 3012f, 3020f, 3025.4f),
-        ),
-        FinancialAsset(
-            code = "CA",
-            name = "Çeyrek Altın",
-            symbol = "Çeyrek",
-            currentPrice = 4945.00,
-            changePct = 0.78,
-            highPrice = 4965.00,
-            lowPrice = 4910.00,
-            unit = "₺",
-            sparkline = listOf(4910f, 4925f, 4930f, 4940f, 4945f),
-        ),
-        FinancialAsset(
-            code = "BIST100",
-            name = "BIST 100",
-            symbol = "BIST",
-            currentPrice = 8872.50,
-            changePct = 1.35,
-            highPrice = 8910.00,
-            lowPrice = 8780.00,
-            unit = "Puan",
-            sparkline = listOf(8780f, 8810f, 8845f, 8860f, 8872.5f),
-        ),
-        FinancialAsset(
-            code = "BTC/USD",
-            name = "Bitcoin",
-            symbol = "₿",
-            currentPrice = 67420.00,
-            changePct = 2.10,
-            highPrice = 68100.00,
-            lowPrice = 65900.00,
-            unit = "$",
-            sparkline = listOf(65900f, 66300f, 66800f, 67200f, 67420f),
-        ),
-        FinancialAsset(
-            code = "ETH/USD",
-            name = "Ethereum",
-            symbol = "Ξ",
-            currentPrice = 2520.00,
-            changePct = -1.15,
-            highPrice = 2575.00,
-            lowPrice = 2490.00,
-            unit = "$",
-            sparkline = listOf(2575f, 2550f, 2530f, 2510f, 2520f),
-        ),
-        FinancialAsset(
-            code = "XAG/TRY",
-            name = "Gümüş (Gram)",
-            symbol = "Ag",
-            currentPrice = 37.60,
-            changePct = 1.45,
-            highPrice = 37.85,
-            lowPrice = 36.90,
-            unit = "₺",
-            sparkline = listOf(36.90f, 37.10f, 37.30f, 37.45f, 37.60f),
-        ),
-    )
 }

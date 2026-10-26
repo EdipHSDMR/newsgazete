@@ -25,6 +25,12 @@ class VolleyballApiService(private val httpClient: OkHttpClient) {
     private val leagueCache = ConcurrentHashMap<String, LeagueRef>()
     private val gameCache = ConcurrentHashMap<String, Pair<Long, List<SportsMatch>>>()
     private val tableCache = ConcurrentHashMap<String, Pair<Long, List<LeagueStanding>>>()
+    @Volatile var lastErrorMessage: String = ""
+        private set
+
+    fun clearLastError() {
+        lastErrorMessage = ""
+    }
 
     suspend fun fetchFixtures(competition: String): List<SportsMatch> = withContext(Dispatchers.IO) {
         val league = resolveLeague(competition) ?: return@withContext emptyList()
@@ -51,52 +57,74 @@ class VolleyballApiService(private val httpClient: OkHttpClient) {
 
     private suspend fun resolveLeague(competition: String): LeagueRef? {
         leagueCache[competition]?.let { return it }
-        val tokens = leagueSearchTokens(competition)
+        val config = leagueConfig(competition)
+        if (config == null) {
+            lastErrorMessage = "Bu voleybol ligi uygulamada tanımlı değil."
+            return null
+        }
         val season = currentSeasonYear()
-        val country = if (competition.startsWith("Türkiye", ignoreCase = true)) "Turkey" else "Europe"
-        val root = request("leagues?country=${encode(country)}&season=$season")
-            ?: request("leagues?search=${encode(tokens.first())}")
-            ?: return null
-        val leagues = root.optJSONArray("response") ?: return null
-        val candidates = (0 until leagues.length()).mapNotNull(leagues::optJSONObject)
-        val match = candidates.firstOrNull { item ->
+        val country = config.country
+        val firstRoot = request("leagues?country=${encode(country)}&season=$season")
+        var candidates = firstRoot?.optJSONArray("response")?.let { rows ->
+            (0 until rows.length()).mapNotNull(rows::optJSONObject)
+        }.orEmpty()
+        fun findMatch(items: List<JSONObject>): JSONObject? = items.firstOrNull { item ->
             val name = normalized(item.optString("name"))
             val countryName = normalized(item.optJSONObject("country")?.optString("name").orEmpty())
-            val womenLeague = name.contains("women") || name.contains("ladies")
-            val genderMatches = when {
-                competition.contains("Kadınlar", ignoreCase = true) -> womenLeague
-                competition.startsWith("CEV", ignoreCase = true) -> !womenLeague
-                else -> true
-            }
-            genderMatches && tokens.any { token -> name.contains(normalized(token)) } &&
-                (country == "Europe" || countryName.contains("turkey") || countryName.contains("turkiye"))
-        } ?: return null
-        val availableSeasons = match.optJSONArray("seasons")
-        val bestSeason = (0 until (availableSeasons?.length() ?: 0))
-            .mapNotNull { index ->
-                val item = availableSeasons?.optJSONObject(index) ?: return@mapNotNull null
-                val value = item.opt("season")
-                when (value) {
-                    is Number -> value.toInt()
-                    else -> value?.toString()?.take(4)?.toIntOrNull()
-                }
-            }
-            .filter { it <= season }
-            .maxOrNull() ?: season
-        val resolved = LeagueRef(match.optInt("id", 0), bestSeason).takeIf { it.id > 0 } ?: return null
+            name in config.searchNames.map(::normalized) &&
+                (country == "Europe" && countryName == "europe" || country == "Turkey" && countryName in setOf("turkey", "turkiye"))
+        }
+        var match = findMatch(candidates)
+        if (match == null) {
+            val fallback = request("leagues?search=${encode(config.searchNames.first())}")
+            val rows = fallback?.optJSONArray("response")
+            candidates = if (rows == null) emptyList() else (0 until rows.length()).mapNotNull(rows::optJSONObject)
+            match = findMatch(candidates)
+        }
+        val exactMatch = match ?: run {
+            if (lastErrorMessage.isBlank()) lastErrorMessage = "$competition: sağlayıcıda bu sezon için lig bulunamadı."
+            return null
+        }
+        val availableSeasons = exactMatch.optJSONArray("seasons")
+        val bestSeason = selectSeason(availableSeasons, season)
+        val resolved = LeagueRef(exactMatch.optInt("id", 0), bestSeason).takeIf { it.id > 0 } ?: run {
+            lastErrorMessage = "${competition}: sağlayıcının lig kimliği geçersiz."
+            return null
+        }
         leagueCache[competition] = resolved
         return resolved
     }
 
-    private fun leagueSearchTokens(name: String): List<String> = when (name) {
-        "Türkiye Efeler Ligi" -> listOf("Efeler Ligi", "Efeler")
-        "Türkiye Sultanlar Ligi" -> listOf("Sultanlar Ligi", "Sultanlar")
-        "CEV Şampiyonlar Ligi Erkekler" -> listOf("Champions League")
-        "CEV Şampiyonlar Ligi Kadınlar" -> listOf("Champions League Women", "Champions League")
-        "CEV Cup Erkekler" -> listOf("CEV Cup")
-        "CEV Cup Kadınlar" -> listOf("CEV Cup Women", "CEV Cup")
-        else -> listOf(name)
+    private data class LeagueConfig(val country: String, val searchNames: List<String>)
+
+    private fun leagueConfig(name: String): LeagueConfig? = when (name) {
+        "Türkiye Efeler Ligi" -> LeagueConfig("Turkey", listOf("Efeler Ligi"))
+        "Türkiye Sultanlar Ligi" -> LeagueConfig("Turkey", listOf("Sultanlar Ligi Women"))
+        "CEV Şampiyonlar Ligi Erkekler" -> LeagueConfig("Europe", listOf("Champions League"))
+        "CEV Şampiyonlar Ligi Kadınlar" -> LeagueConfig("Europe", listOf("Champions League Women"))
+        "CEV Cup Erkekler" -> LeagueConfig("Europe", listOf("CEV Cup"))
+        "CEV Cup Kadınlar" -> LeagueConfig("Europe", listOf("CEV Cup Women"))
+        else -> null
     }
+
+    private fun selectSeason(seasons: JSONArray?, fallback: Int): Int {
+        val entries = (0 until (seasons?.length() ?: 0)).mapNotNull { index -> seasons?.optJSONObject(index) }
+        val today = LocalDate.now()
+        val active = entries.firstOrNull { entry ->
+            val start = parseSeasonDate(entry.optString("start"))
+            val end = parseSeasonDate(entry.optString("end"))
+            start != null && end != null && !today.isBefore(start) && !today.isAfter(end)
+        }?.let { seasonValue(it.opt("season")) }
+        if (active != null) return active
+        return entries.mapNotNull { seasonValue(it.opt("season")) }.filter { it <= fallback }.maxOrNull() ?: fallback
+    }
+
+    private fun seasonValue(raw: Any?): Int? = when (raw) {
+        is Number -> raw.toInt()
+        else -> raw?.toString()?.take(4)?.toIntOrNull()
+    }
+
+    private fun parseSeasonDate(value: String): LocalDate? = runCatching { LocalDate.parse(value.take(10)) }.getOrNull()
 
     private suspend fun request(pathAndQuery: String): JSONObject? {
         return try {
@@ -104,11 +132,36 @@ class VolleyballApiService(private val httpClient: OkHttpClient) {
             val request = Request.Builder().url(url).header("Accept", "application/json").build()
             httpClient.newCall(request).execute().use { response ->
                 val body = response.body?.string().orEmpty()
-                if (!response.isSuccessful || body.isBlank()) null else JSONObject(body)
+                if (!response.isSuccessful) {
+                    lastErrorMessage = when (response.code) {
+                        404 -> "Voleybol veri servisi bulunamadı (HTTP 404)."
+                        429 -> "Voleybol veri kotası doldu. Daha sonra yeniden dene."
+                        503 -> "Voleybol veri kaynağı sunucuda yapılandırılmamış."
+                        else -> "Voleybol verisi alınamadı (HTTP ${response.code})."
+                    }
+                    null
+                } else if (body.isBlank()) {
+                    lastErrorMessage = "Voleybol servisi boş yanıt verdi."
+                    null
+                } else {
+                    JSONObject(body).also { root ->
+                        val errors = root.opt("errors")
+                        val hasErrors = when (errors) {
+                            is JSONObject -> errors.length() > 0
+                            is JSONArray -> errors.length() > 0
+                            is String -> errors.isNotBlank() && errors != "{}"
+                            else -> false
+                        }
+                        if (hasErrors) {
+                            lastErrorMessage = "Voleybol sağlayıcısı isteği kabul etmedi."
+                        }
+                    }
+                }
             }
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (_: Exception) {
+            lastErrorMessage = "Voleybol servisine ulaşılamadı. İnternet bağlantısını ve sunucu dağıtımını kontrol et."
             null
         }
     }
@@ -130,16 +183,15 @@ class VolleyballApiService(private val httpClient: OkHttpClient) {
             val statusObject = item.optJSONObject("status") ?: JSONObject()
             val statusText = (statusObject.optString("long") + " " + statusObject.optString("short")).lowercase(Locale.ROOT)
             val finished = listOf("finished", "complete", "ended", "ft", "final").any(statusText::contains)
-            val live = !finished && (listOf("live", "progress", "set ", "in-play").any(statusText::contains) ||
-                (kickoff <= now && now - kickoff < 3 * 60 * 60 * 1000L))
+            if (listOf("cancelled", "canceled", "abandoned").any(statusText::contains)) return@mapNotNull null
+            val live = !finished && listOf("live", "progress", "set ", "set1", "set2", "set3", "set4", "set5", "in-play").any(statusText::contains)
             val status = when {
                 finished -> MatchStatus.FINISHED
                 live -> MatchStatus.LIVE
                 else -> MatchStatus.UPCOMING
             }
             val score = item.optJSONObject("scores") ?: JSONObject()
-            val homeSets = scoreTotal(score.opt("home"))
-            val awaySets = scoreTotal(score.opt("away"))
+            val (homeSets, awaySets) = parseSetTotals(score.opt("home"), score.opt("away"))
             val dateTime = Instant.ofEpochMilli(kickoff).atZone(ZoneId.systemDefault())
                 .format(DateTimeFormatter.ofPattern("dd MMM · HH:mm", Locale.forLanguageTag("tr-TR")))
             SportsMatch(
@@ -154,7 +206,11 @@ class VolleyballApiService(private val httpClient: OkHttpClient) {
                 statusLabel = when (status) {
                     MatchStatus.LIVE -> "CANLI · ${statusObject.optString("long", "Set oynanıyor")}".trim()
                     MatchStatus.FINISHED -> "MS"
-                    MatchStatus.UPCOMING -> dateTime
+                    MatchStatus.UPCOMING -> when {
+                        statusText.contains("postpon") -> "ERTELENDİ · $dateTime"
+                        statusText.contains("suspend") || statusText.contains("interrupt") -> "DURAKLATILDI · $dateTime"
+                        else -> dateTime
+                    }
                 },
                 kickoffTime = dateTime,
                 kickoffAtEpochMs = kickoff,
@@ -207,11 +263,40 @@ class VolleyballApiService(private val httpClient: OkHttpClient) {
         return output.sortedWith(compareBy<LeagueStanding> { it.groupName.orEmpty() }.thenBy { it.rank }.thenBy { it.team })
     }
 
-    private fun scoreTotal(raw: Any?): Int? = when (raw) {
-        is Number -> raw.toInt()
-        is JSONObject -> raw.optInt("total", raw.optInt("sets", raw.optInt("score", 0)))
-            .takeIf { it > 0 } ?: (1..5).sumOf { set -> raw.optInt("set$set", 0).let { if (it >= 25 || (set == 5 && it >= 15)) 1 else 0 } }
-        else -> raw?.toString()?.toIntOrNull()
+    private fun parseSetTotals(home: Any?, away: Any?): Pair<Int?, Int?> {
+        val homeTotal = totalSets(home)
+        val awayTotal = totalSets(away)
+        if (homeTotal != null && awayTotal != null) return homeTotal to awayTotal
+
+        val homeScores = home as? JSONObject ?: return homeTotal to awayTotal
+        val awayScores = away as? JSONObject ?: return homeTotal to awayTotal
+        var homeWins = 0
+        var awayWins = 0
+        for (set in 1..5) {
+            val homePoints = setPoints(homeScores, set)
+            val awayPoints = setPoints(awayScores, set)
+            if (homePoints == null || awayPoints == null || homePoints == 0 && awayPoints == 0) continue
+            val target = if (set == 5) 15 else 25
+            when {
+                homePoints >= target && homePoints - awayPoints >= 2 -> homeWins++
+                awayPoints >= target && awayPoints - homePoints >= 2 -> awayWins++
+            }
+        }
+        return homeWins.takeIf { it in 0..3 } to awayWins.takeIf { it in 0..3 }
+    }
+
+    private fun totalSets(raw: Any?): Int? = when (raw) {
+        is Number -> raw.toInt().takeIf { it in 0..3 }
+        is JSONObject -> listOf("total", "sets", "score")
+            .asSequence()
+            .mapNotNull { key -> raw.opt(key)?.toString()?.toIntOrNull() }
+            .firstOrNull { it in 0..3 }
+        else -> raw?.toString()?.toIntOrNull()?.takeIf { it in 0..3 }
+    }
+
+    private fun setPoints(scores: JSONObject, set: Int): Int? {
+        val value = scores.opt("set$set") ?: scores.opt(set.toString()) ?: return null
+        return value.toString().toIntOrNull()?.takeIf { it >= 0 }
     }
 
     private fun parseDate(value: String): Long = runCatching { OffsetDateTime.parse(value).toInstant().toEpochMilli() }
@@ -230,8 +315,8 @@ class VolleyballApiService(private val httpClient: OkHttpClient) {
     private fun currentSeasonYear(): Int = LocalDate.now().let { if (it.monthValue < 8) it.year - 1 else it.year }
 
     private companion object {
-        const val GAME_CACHE_MS = 90_000L
-        const val TABLE_CACHE_MS = 60 * 60_000L
+        const val GAME_CACHE_MS = 5 * 60_000L
+        const val TABLE_CACHE_MS = 6 * 60 * 60_000L
     }
 }
 

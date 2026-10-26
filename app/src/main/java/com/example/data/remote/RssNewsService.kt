@@ -4,6 +4,7 @@ import com.example.model.SourceComparison
 import com.example.model.Story
 import com.example.util.NewsSummary
 import com.example.util.NewsStoryDeduplicator
+import com.example.util.BreakingNewsClassifier
 import android.text.Html
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -340,7 +341,11 @@ class RssNewsService(private val httpClient: OkHttpClient) {
                         publishedAtEpochMs = publishedAtEpochMs,
                         readTimeMin = readMin,
                         imageUrl = imageUrl,
-                        isBreaking = cleanTitle.contains("son dakika", ignoreCase = true),
+                        isBreaking = BreakingNewsClassifier.isBreaking(
+                            title = cleanTitle,
+                            publishedAtEpochMs = publishedAtEpochMs,
+                            sourceMarkedBreaking = rawCategory.contains("son dakika", ignoreCase = true),
+                        ),
                         isManset = false,
                         whatHappened = "",
                         whyItMatters = "",

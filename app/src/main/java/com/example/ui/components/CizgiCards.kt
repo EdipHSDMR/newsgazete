@@ -1438,10 +1438,10 @@ fun BistWatchlistCard(
                     BistMiniItem(
                         symbol = stock.symbol,
                         sub = stock.companyName,
-                        priceStr = if (stock.symbol == "XU100") {
-                            String.format(java.util.Locale.US, "%,.2f", stock.price)
+                        priceStr = if (stock.unit == "puan") {
+                            String.format(java.util.Locale.forLanguageTag("tr-TR"), "%,.2f", stock.price)
                         } else {
-                            String.format(java.util.Locale.US, "%.2f ₺", stock.price)
+                            String.format(java.util.Locale.forLanguageTag("tr-TR"), "%.2f ₺", stock.price)
                         },
                         changePct = stock.changePct,
                         onClick = onViewMarketsClick,

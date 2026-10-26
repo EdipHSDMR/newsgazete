@@ -4,6 +4,7 @@ import android.text.Html
 import com.example.model.SourceComparison
 import com.example.model.Story
 import com.example.util.NewsSummary
+import com.example.util.BreakingNewsClassifier
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
@@ -93,7 +94,12 @@ class PressNewsApiService(private val httpClient: OkHttpClient) {
             publishedAtEpochMs = epoch,
             readTimeMin = maxOf(1, sourceText.split(WHITESPACE).count() / WORDS_PER_MINUTE),
             imageUrl = imageUrl(item),
-            isBreaking = title.contains("son dakika", ignoreCase = true),
+            isBreaking = BreakingNewsClassifier.isBreaking(
+                title = title,
+                publishedAtEpochMs = epoch,
+                sourceMarkedBreaking = item.optBoolean("is_breaking", false) ||
+                    item.optString("category").contains("son dakika", ignoreCase = true),
+            ),
             isManset = false,
             whatHappened = "",
             whyItMatters = "",

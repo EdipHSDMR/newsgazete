@@ -106,7 +106,7 @@ async function handleFootball(req, res, path) {
     headers: { "x-apisports-key": key, Accept: "application/json" },
     signal: AbortSignal.timeout(10_000),
   });
-  return forwardJson(response, res, cacheKey, 60_000);
+  return forwardJson(response, res, cacheKey, sportsCacheTtl(endpoint));
 }
 
 async function handleVolleyball(req, res, path) {
@@ -126,7 +126,13 @@ async function handleVolleyball(req, res, path) {
     headers: { "x-apisports-key": key, Accept: "application/json" },
     signal: AbortSignal.timeout(10_000),
   });
-  return forwardJson(response, res, cacheKey, 60_000);
+  return forwardJson(response, res, cacheKey, sportsCacheTtl(endpoint));
+}
+
+function sportsCacheTtl(endpoint) {
+  if (endpoint === "games" || endpoint === "fixtures") return 5 * 60_000;
+  if (endpoint === "standings" || endpoint === "leagues") return 6 * 60 * 60_000;
+  return 60_000;
 }
 
 async function fetchArticleText(rawUrl) {

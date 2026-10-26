@@ -42,6 +42,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -69,6 +70,8 @@ import com.example.ui.components.NewsFeedCard
 import com.example.ui.components.SkeletonCard
 import com.example.ui.theme.CizgiColor
 import com.example.util.NewsDiscoveryInsights
+import com.example.util.BreakingNewsClassifier
+import kotlinx.coroutines.delay
 
 @Composable
 fun AkisScreen(
@@ -89,6 +92,14 @@ fun AkisScreen(
     val dailyDigestPoints by repository.dailyDigest.collectAsState()
     val bistStocks by repository.bistStocks.collectAsState()
     val financialAssets by repository.financialAssets.collectAsState()
+    var tickerClock by remember { mutableStateOf(System.currentTimeMillis()) }
+
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(60_000L)
+            tickerClock = System.currentTimeMillis()
+        }
+    }
 
     // Filter by main topic: Siyaset, Ekonomi, Teknoloji, Gündem, etc.
     var selectedTopic by remember { mutableStateOf("Tümü") }
@@ -306,7 +317,7 @@ fun AkisScreen(
         }
 
         // Canlı Son Dakika Ticker Bandı
-        val breakingStory = remember(stories) { stories.firstOrNull { it.isBreaking } }
+        val breakingStory = remember(stories, tickerClock) { BreakingNewsClassifier.latest(stories, tickerClock) }
         if (breakingStory != null) {
             Surface(
                 color = Color(0xFFB71C1C),

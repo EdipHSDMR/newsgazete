@@ -21,6 +21,7 @@ import com.example.util.CizgiNotificationHelper
 import com.example.util.NewsDiscoveryInsights
 import com.example.util.NewsStoryDeduplicator
 import com.example.util.NewsSummary
+import com.example.util.BreakingNewsClassifier
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -132,6 +133,8 @@ class CizgiRepository private constructor(private val context: Context) {
 
     private val _bistStocks = MutableStateFlow<List<com.example.data.remote.BISTStock>>(emptyList())
     val bistStocks: StateFlow<List<com.example.data.remote.BISTStock>> = _bistStocks.asStateFlow()
+    private val _marketStatusMessage = MutableStateFlow("")
+    val marketStatusMessage: StateFlow<String> = _marketStatusMessage.asStateFlow()
 
     private val _preferences = MutableStateFlow(UserPreferences())
     val preferences: StateFlow<UserPreferences> = _preferences.asStateFlow()
@@ -155,6 +158,7 @@ class CizgiRepository private constructor(private val context: Context) {
     private var sportsRefreshJob: Job? = null
     private val newsPageMutex = Mutex()
     private val newsRefreshMutex = Mutex()
+    private val marketRefreshMutex = Mutex()
     private val sourceDescriptionAttempts = mutableMapOf<String, Long>()
 
     init {
@@ -453,10 +457,11 @@ class CizgiRepository private constructor(private val context: Context) {
 
         enrichMissingStoryImages(_stories.value.take(NEWS_PAGE_SIZE))
         val now = System.currentTimeMillis()
-        val criticalBreaking = liveFeed.firstOrNull { story ->
+        val criticalBreaking = liveFeed.asSequence().filter { story ->
             _preferences.value.breakingAlerts && story.isBreaking && story.id !in sentBreakingStoryIds &&
+                BreakingNewsClassifier.isBreaking(story.title, story.publishedAtEpochMs, now, story.isBreaking) &&
                 HIGH_IMPACT_BREAKING_TERMS.any { term -> story.title.contains(term, ignoreCase = true) }
-        }
+        }.maxByOrNull { it.publishedAtEpochMs }
         if (criticalBreaking != null && now - lastBreakingNotifTimeMs > 20 * 60 * 1000L) {
             sentBreakingStoryIds.add(criticalBreaking.id)
             lastBreakingNotifTimeMs = now
@@ -733,6 +738,7 @@ class CizgiRepository private constructor(private val context: Context) {
     }
 
     private suspend fun refreshSportsData(competition: String, sportType: String, requestKey: String) {
+        if (sportType == "VOLEYBOL") volleyballApiService.clearLastError()
         try {
             val cachedScorers = cachedSportStatDao.getStatsDirect(competition, scorerCacheType(sportType))
             if (cachedScorers.isNotEmpty() && activeSportsKey == requestKey) {
@@ -751,7 +757,12 @@ class CizgiRepository private constructor(private val context: Context) {
                 footballApiService.fetchFixtures(competition, sportType)
             }
             if (activeSportsKey != requestKey) return
-            _sportsSnapshot.update { it.copy(matches = fixtures) }
+            _sportsSnapshot.update {
+                it.copy(
+                    matches = fixtures,
+                    errorMessage = if (sportType == "VOLEYBOL") volleyballApiService.lastErrorMessage else "",
+                )
+            }
             sportsFixtureSelectionsLoaded.add(requestKey)
 
             fixtures.asSequence()
@@ -817,7 +828,12 @@ class CizgiRepository private constructor(private val context: Context) {
                 footballApiService.fetchStandings(competition, sportType)
             }
             if (activeSportsKey != requestKey) return
-            _sportsSnapshot.update { it.copy(standings = currentStandings) }
+            _sportsSnapshot.update {
+                it.copy(
+                    standings = currentStandings,
+                    errorMessage = if (sportType == "VOLEYBOL") volleyballApiService.lastErrorMessage else it.errorMessage,
+                )
+            }
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (_: Exception) {}
@@ -858,20 +874,44 @@ class CizgiRepository private constructor(private val context: Context) {
         else -> "GOL"
     }
 
-    fun refreshMarkets() {
-        scope.launch { refreshMarketData() }
+    fun refreshMarkets(force: Boolean = false) {
+        scope.launch { refreshMarketData(force) }
     }
 
-    private suspend fun refreshMarketData() {
+    private suspend fun refreshMarketData(force: Boolean = false) {
+        if (!marketRefreshMutex.tryLock()) return
         try {
-            val assets = marketApiService.fetchCompleteMarketOverview()
-            if (assets.isNotEmpty()) _financialAssets.value = assets
-        } catch (_: Exception) {}
-
-        try {
-            val stocks = bistRetrofitApi.fetchBistWatchlist()
-            if (stocks.isNotEmpty()) _bistStocks.value = stocks
-        } catch (_: Exception) {}
+            coroutineScope {
+                val assetsJob = async(Dispatchers.IO) { marketApiService.fetchCompleteMarketOverview(force) }
+                val stocksJob = async(Dispatchers.IO) { bistRetrofitApi.fetchBistWatchlist(force) }
+                val assets = try {
+                    assetsJob.await()
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Exception) {
+                    null
+                }
+                val stocks = try {
+                    stocksJob.await()
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Exception) {
+                    null
+                }
+                assets?.takeIf { it.isNotEmpty() }?.let { _financialAssets.value = it }
+                stocks?.takeIf { it.isNotEmpty() }?.let { _bistStocks.value = it }
+                _marketStatusMessage.value = (marketApiService.availabilityWarnings() + bistRetrofitApi.lastErrorMessage)
+                    .filter(String::isNotBlank)
+                    .distinct()
+                    .joinToString(" ")
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            // Keep the last successful quotes visible and let the UI display their source timestamps.
+        } finally {
+            marketRefreshMutex.unlock()
+        }
     }
 
     fun toggleFollowTopic(topic: String) {

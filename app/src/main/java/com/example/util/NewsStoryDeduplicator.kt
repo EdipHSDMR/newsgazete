@@ -137,7 +137,11 @@ object NewsStoryDeduplicator {
             imageUrl = existing.imageUrl.ifBlank { incoming.imageUrl },
             fullText = richer.fullText,
             summary = richer.summary.ifBlank { existing.summary.ifBlank { incoming.summary } },
-            isBreaking = existing.isBreaking || incoming.isBreaking,
+            isBreaking = BreakingNewsClassifier.isBreaking(
+                title = richer.title,
+                publishedAtEpochMs = maxOf(existing.publishedAtEpochMs, incoming.publishedAtEpochMs),
+                sourceMarkedBreaking = existing.isBreaking || incoming.isBreaking,
+            ),
             isManset = existing.isManset || incoming.isManset,
             isSaved = existing.isSaved || incoming.isSaved,
         )
