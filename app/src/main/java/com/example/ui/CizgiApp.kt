@@ -1,42 +1,24 @@
 package com.example.ui
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.*
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.isSystemInDarkTheme
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.*
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Density
 import com.example.NotificationNavigation
 import com.example.data.CizgiRepository
-import com.example.ui.components.CizgiBottomBar
-import com.example.ui.components.CizgiScreen
-import com.example.ui.components.CizgiTopBar
-import com.example.ui.screens.AkisScreen
-import com.example.ui.screens.BildirimlerScreen
-import com.example.ui.screens.HaberDetayScreen
-import com.example.ui.screens.HavaScreen
-import com.example.ui.screens.KaydedilenlerScreen
-import com.example.ui.screens.KaynakKarsilastirmaScreen
-import com.example.ui.screens.KesfetScreen
-import com.example.ui.screens.ProfilScreen
-import com.example.ui.screens.SporScreen
-import com.example.ui.screens.TopicsScreen
+import com.example.ui.components.*
+import com.example.ui.screens.*
 import com.example.ui.theme.CizgiTheme
-
-import com.example.ui.screens.PiyasaScreen
 
 private sealed interface SubScreen {
     data object None : SubScreen
@@ -49,185 +31,91 @@ private sealed interface SubScreen {
 }
 
 @Composable
-fun CizgiApp(
-    modifier: Modifier = Modifier,
-    notificationNavigation: NotificationNavigation? = null,
-    onNotificationNavigationHandled: (Long) -> Unit = {},
-) {
+fun CizgiApp(modifier: Modifier = Modifier, notificationNavigation: NotificationNavigation? = null, onNotificationNavigationHandled: (Long) -> Unit = {}) {
     val context = LocalContext.current
     val repository = remember { CizgiRepository.getInstance(context) }
     val preferences by repository.preferences.collectAsState()
     val weather by repository.weather.collectAsState()
     val notifications by repository.notifications.collectAsState()
+    val dark = when (preferences.themeMode) { "dark" -> true; "light" -> false; else -> isSystemInDarkTheme() }
+    val density = LocalDensity.current
+    val holder = rememberSaveableStateHolder()
+    var currentTab by rememberSaveable { mutableStateOf(CizgiScreen.AKIS) }
+    var subScreen by remember { mutableStateOf<SubScreen>(SubScreen.None) }
+    fun close() { subScreen = SubScreen.None }
 
-    val isDark = when (preferences.themeMode) {
-        "dark" -> true
-        "light" -> false
-        else -> isSystemInDarkTheme()
+    LaunchedEffect(notificationNavigation?.requestToken) {
+        val request = notificationNavigation ?: return@LaunchedEffect
+        when {
+            request.storyId != null -> subScreen = SubScreen.StoryDetail(request.storyId)
+            request.screen == "spor" -> { currentTab = CizgiScreen.SPOR; close() }
+            request.screen == "piyasa" -> { currentTab = CizgiScreen.PIYASA; close() }
+        }
+        onNotificationNavigationHandled(request.requestToken)
     }
-
-    val systemDensity = LocalDensity.current
-    val fontScale = systemDensity.fontScale * if (preferences.fontSize == "large") 1.125f else 1f
-    CompositionLocalProvider(LocalDensity provides Density(systemDensity.density, fontScale)) {
-    CizgiTheme(darkTheme = isDark) {
-        var currentTab by remember { mutableStateOf(CizgiScreen.AKIS) }
-        var subScreen by remember { mutableStateOf<SubScreen>(SubScreen.None) }
-
-        LaunchedEffect(notificationNavigation?.requestToken) {
-            val request = notificationNavigation ?: return@LaunchedEffect
-            when {
-                request.storyId != null -> subScreen = SubScreen.StoryDetail(request.storyId)
-                request.screen == "spor" -> {
-                    currentTab = CizgiScreen.SPOR
-                    subScreen = SubScreen.None
-                }
-                request.screen == "piyasa" -> {
-                    currentTab = CizgiScreen.PIYASA
-                    subScreen = SubScreen.None
-                }
-            }
-            onNotificationNavigationHandled(request.requestToken)
+    BackHandler(subScreen != SubScreen.None || currentTab != CizgiScreen.AKIS) {
+        when (val screen = subScreen) {
+            is SubScreen.CompareSources -> subScreen = SubScreen.StoryDetail(screen.storyId)
+            SubScreen.None -> currentTab = CizgiScreen.AKIS
+            else -> close()
         }
-
-        // BackHandler for smooth hierarchical backstack
-        BackHandler(enabled = subScreen != SubScreen.None || currentTab != CizgiScreen.AKIS) {
-            when {
-                subScreen is SubScreen.CompareSources -> {
-                    val currentStoryId = (subScreen as SubScreen.CompareSources).storyId
-                    subScreen = SubScreen.StoryDetail(currentStoryId)
-                }
-                subScreen != SubScreen.None -> {
-                    subScreen = SubScreen.None
-                }
-                currentTab != CizgiScreen.AKIS -> {
-                    currentTab = CizgiScreen.AKIS
-                }
-            }
-        }
-
-        val unreadCount = remember(notifications) {
-            notifications.count { !it.isRead }
-        }
-
-        when (val currentSub = subScreen) {
-            is SubScreen.StoryDetail -> {
-                HaberDetayScreen(
-                    storyId = currentSub.storyId,
-                    repository = repository,
-                    onBack = { subScreen = SubScreen.None },
-                    onCompareClick = { storyId -> subScreen = SubScreen.CompareSources(storyId) },
-                    onStoryClick = { newStoryId -> subScreen = SubScreen.StoryDetail(newStoryId) },
-                )
-            }
-            is SubScreen.CompareSources -> {
-                KaynakKarsilastirmaScreen(
-                    storyId = currentSub.storyId,
-                    repository = repository,
-                    onBack = { subScreen = SubScreen.StoryDetail(currentSub.storyId) },
-                )
-            }
-            else -> {
-                Scaffold(
-                    modifier = modifier.fillMaxSize(),
-                    topBar = {
-                        if (subScreen == SubScreen.None) {
-                            CizgiTopBar(
-                                weatherTemp = "${weather.currentTempC?.let { "$it°" } ?: "--°"}",
-                                weatherCity = weather.cityName,
-                                unreadNotificationCount = unreadCount,
-                                onWeatherClick = { subScreen = SubScreen.Weather },
-                                onSearchClick = { currentTab = CizgiScreen.KESFET },
-                                onNotificationsClick = { subScreen = SubScreen.Notifications },
-                                onProfileClick = { subScreen = SubScreen.Profile },
+    }
+    CompositionLocalProvider(LocalDensity provides Density(density.density, density.fontScale * if (preferences.fontSize == "large") 1.125f else 1f)) {
+        CizgiTheme(darkTheme = dark) {
+            AnimatedContent(
+                targetState = subScreen, modifier = modifier.fillMaxSize(), label = "page",
+                transitionSpec = {
+                    (fadeIn(tween(220)) + slideInHorizontally(tween(260)) { it / 14 }) togetherWith fadeOut(tween(120))
+                },
+            ) { screen ->
+                when (screen) {
+                    is SubScreen.StoryDetail -> HaberDetayScreen(
+                        storyId = screen.storyId, repository = repository, onBack = ::close,
+                        onCompareClick = { subScreen = SubScreen.CompareSources(it) },
+                        onStoryClick = { subScreen = SubScreen.StoryDetail(it) },
+                    )
+                    is SubScreen.CompareSources -> KaynakKarsilastirmaScreen(
+                        storyId = screen.storyId, repository = repository,
+                        onBack = { subScreen = SubScreen.StoryDetail(screen.storyId) },
+                    )
+                    else -> Scaffold(
+                        topBar = {
+                            if (screen == SubScreen.None) CizgiTopBar(
+                                weatherTemp = weather.currentTempC?.let { "$it°" } ?: "–",
+                                weatherCity = weather.cityName, unreadNotificationCount = notifications.count { !it.isRead },
+                                onWeatherClick = { subScreen = SubScreen.Weather }, onSearchClick = { currentTab = CizgiScreen.KESFET },
+                                onNotificationsClick = { subScreen = SubScreen.Notifications }, onProfileClick = { subScreen = SubScreen.Profile },
                             )
-                        }
-                    },
-                    bottomBar = {
-                        if (subScreen == SubScreen.None) {
-                            CizgiBottomBar(
-                                currentScreen = currentTab,
-                                onNavigate = { screen ->
-                                    currentTab = screen
-                                    subScreen = SubScreen.None
-                                },
-                            )
-                        }
-                    },
-                    containerColor = MaterialTheme.colorScheme.background,
-                ) { innerPadding ->
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(innerPadding),
-                    ) {
-                        when (currentSub) {
-                            is SubScreen.Weather -> {
-                                HavaScreen(
-                                    repository = repository,
-                                    onBack = { subScreen = SubScreen.None },
-                                )
-                            }
-                            is SubScreen.Notifications -> {
-                                BildirimlerScreen(
-                                    repository = repository,
-                                    onBack = { subScreen = SubScreen.None },
-                                    onStoryClick = { storyId -> subScreen = SubScreen.StoryDetail(storyId) },
-                                    onSportsClick = {
-                                        subScreen = SubScreen.None
-                                        currentTab = CizgiScreen.SPOR
-                                    },
-                                )
-                            }
-                            is SubScreen.Topics -> {
-                                TopicsScreen(
-                                    repository = repository,
-                                    onBack = { subScreen = SubScreen.None },
-                                )
-                            }
-                            is SubScreen.Profile -> {
-                                ProfilScreen(
-                                    repository = repository,
+                        },
+                        bottomBar = {
+                            if (screen == SubScreen.None) CizgiBottomBar(currentTab, { currentTab = it; close() })
+                        },
+                        containerColor = MaterialTheme.colorScheme.background,
+                    ) { padding ->
+                        Box(Modifier.fillMaxSize().padding(padding)) {
+                            when (screen) {
+                                SubScreen.Weather -> HavaScreen(repository, ::close)
+                                SubScreen.Notifications -> BildirimlerScreen(repository, ::close, { subScreen = SubScreen.StoryDetail(it) }, { close(); currentTab = CizgiScreen.SPOR })
+                                SubScreen.Topics -> TopicsScreen(repository, ::close)
+                                SubScreen.Profile -> ProfilScreen(
+                                    repository = repository, onBack = ::close,
                                     onNavigateTopics = { subScreen = SubScreen.Topics },
-                                    onNavigateSports = {
-                                        subScreen = SubScreen.None
-                                        currentTab = CizgiScreen.SPOR
-                                    },
-                                    onNavigateWeather = { subScreen = SubScreen.Weather },
-                                    onNavigateNotifications = { subScreen = SubScreen.Notifications },
+                                    onNavigateSports = { close(); currentTab = CizgiScreen.SPOR },
+                                    onNavigateWeather = { subScreen = SubScreen.Weather }, onNavigateNotifications = { subScreen = SubScreen.Notifications },
                                 )
-                            }
-                            else -> {
-                                when (currentTab) {
-                                    CizgiScreen.AKIS -> {
-                                        AkisScreen(
-                                            repository = repository,
-                                            onStoryClick = { storyId -> subScreen = SubScreen.StoryDetail(storyId) },
-                                            onSportsClick = { currentTab = CizgiScreen.SPOR },
-                                            onMarketClick = { currentTab = CizgiScreen.PIYASA },
-                                        )
-                                    }
-                                    CizgiScreen.KESFET -> {
-                                        KesfetScreen(
-                                            repository = repository,
-                                            onStoryClick = { storyId -> subScreen = SubScreen.StoryDetail(storyId) },
-                                        )
-                                    }
-                                    CizgiScreen.SPOR -> {
-                                        SporScreen(
-                                            repository = repository,
-                                        )
-                                    }
-                                    CizgiScreen.KAYDEDILENLER -> {
-                                        KaydedilenlerScreen(
-                                            repository = repository,
-                                            onStoryClick = { storyId -> subScreen = SubScreen.StoryDetail(storyId) },
-                                            onNavigateHome = { currentTab = CizgiScreen.AKIS },
-                                        )
-                                    }
-                                    CizgiScreen.PIYASA -> {
-                                        PiyasaScreen(
-                                            repository = repository,
-                                        )
+                                else -> AnimatedContent(
+                                    targetState = currentTab, label = "tab", transitionSpec = {
+                                        (fadeIn(tween(200)) + slideInVertically(tween(240)) { it / 24 }) togetherWith fadeOut(tween(100))
+                                    },
+                                ) { tab ->
+                                    holder.SaveableStateProvider(tab.route) {
+                                        when (tab) {
+                                            CizgiScreen.AKIS -> AkisScreen(repository, { subScreen = SubScreen.StoryDetail(it) }, { currentTab = CizgiScreen.SPOR }, { currentTab = CizgiScreen.PIYASA }, onTopicsClick = { subScreen = SubScreen.Topics })
+                                            CizgiScreen.KESFET -> KesfetScreen(repository, { subScreen = SubScreen.StoryDetail(it) })
+                                            CizgiScreen.SPOR -> SporScreen(repository)
+                                            CizgiScreen.KAYDEDILENLER -> KaydedilenlerScreen(repository, { subScreen = SubScreen.StoryDetail(it) }, { currentTab = CizgiScreen.AKIS })
+                                            CizgiScreen.PIYASA -> PiyasaScreen(repository)
+                                        }
                                     }
                                 }
                             }
@@ -237,7 +125,4 @@ fun CizgiApp(
             }
         }
     }
-    }
 }
-
-

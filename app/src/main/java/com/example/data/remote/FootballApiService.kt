@@ -8,6 +8,7 @@ import com.example.model.MatchStatus
 import com.example.model.SportsMatch
 import com.example.model.TeamLineup
 import com.example.model.TopScorer
+import com.example.util.MatchClock
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
@@ -154,7 +155,7 @@ class FootballApiService(
     }
 
     private fun currentSeasonYear(): Int {
-        val today = LocalDate.now()
+        val today = LocalDate.now(ZoneId.of("Europe/Istanbul"))
         return if (today.monthValue < 7) today.year - 1 else today.year
     }
 
@@ -163,6 +164,13 @@ class FootballApiService(
             "BASKETBOL" -> if (competition == "EuroLeague") fetchEuroLeagueFixtures(seasonYear) else if (basketballEspnSlug(competition) != null) fetchBasketballFixtures(competition, seasonYear) else emptyList()
             "FUTBOL" -> {
                 val id = leagueId(competition) ?: return@withContext emptyList()
+                if (seasonYear == currentSeasonYear()) {
+                    val liveSource = fetchEspnFootballFixtures(competition)
+                    if (liveSource.isNotEmpty()) return@withContext liveSource
+                    archiveFixtureCache["api-live-$id-$seasonYear"]?.let { (fetchedAt, cached) ->
+                        if (System.currentTimeMillis() - fetchedAt < 5 * 60_000L) return@withContext cached
+                    }
+                }
                 if (hasApiKey() && apiFootballUnavailableReason == null) {
                     val historicalKey = "$id-$seasonYear"
                     if (seasonYear != currentSeasonYear()) {
@@ -171,7 +179,7 @@ class FootballApiService(
                         }
                     }
                     try {
-                        val today = LocalDate.now()
+                        val today = LocalDate.now(ZoneId.of("Europe/Istanbul"))
                         var page = 1
                         var totalPages = 1
                         val matches = mutableListOf<SportsMatch>()
@@ -198,6 +206,7 @@ class FootballApiService(
                         val sorted = sortMatches(matches)
                         if (sorted.isNotEmpty()) {
                             if (seasonYear != currentSeasonYear()) archiveFixtureCache[historicalKey] = System.currentTimeMillis() to sorted
+                            else archiveFixtureCache["api-live-$id-$seasonYear"] = System.currentTimeMillis() to sorted
                             return@withContext sorted
                         }
                     } catch (cancelled: CancellationException) {
@@ -205,7 +214,8 @@ class FootballApiService(
                     } catch (_: Exception) {
                     }
                 }
-                if (seasonYear == currentSeasonYear()) fetchEspnFootballFixtures(competition) else emptyList()
+                if (seasonYear == currentSeasonYear()) archiveFixtureCache["api-live-$id-$seasonYear"] = System.currentTimeMillis() to emptyList()
+                emptyList()
             }
             else -> emptyList()
         }
@@ -341,7 +351,7 @@ class FootballApiService(
                         )
                     }
                 }
-                TeamLineup(team, players)
+                TeamLineup(team, players, entry.optString("formation").takeUnless { it == "null" }.orEmpty())
             }
             buildMatchLineups(match, teams)?.let { return@withContext it }
             eventId = findEspnFootballEventId(match) ?: return@withContext null
@@ -390,10 +400,10 @@ class FootballApiService(
                         position = entry.optJSONObject("position")?.optString("abbreviation").orEmpty(),
                         starter = entry.optBoolean("starter"),
                         imageUrl = lineupAthleteImage(athlete),
-                        formationRow = entry.optString("formationPlace").toIntOrNull(),
+                        formationSlot = entry.optString("formationPlace").toIntOrNull(),
                     )
                 }
-                if (team.isBlank()) null else TeamLineup(team, players)
+                if (team.isBlank()) null else TeamLineup(team, players, row.optString("formation").takeUnless { it == "null" }.orEmpty())
             }
         }
         buildMatchLineups(match, teams)
@@ -416,8 +426,8 @@ class FootballApiService(
     private fun findEspnFootballEventId(match: SportsMatch): String? {
         val league = footballEspnSlug(match.competition) ?: return null
         val date = if (match.kickoffAtEpochMs > 0L) {
-            Instant.ofEpochMilli(match.kickoffAtEpochMs).atZone(ZoneId.systemDefault()).toLocalDate()
-        } else LocalDate.now()
+            Instant.ofEpochMilli(match.kickoffAtEpochMs).atZone(ZoneId.of("Europe/Istanbul")).toLocalDate()
+        } else LocalDate.now(ZoneId.of("Europe/Istanbul"))
         val events = fetchEspnJson(
             "https://site.api.espn.com/apis/site/v2/sports/soccer/$league/scoreboard?limit=100&dates=${date.format(DateTimeFormatter.BASIC_ISO_DATE)}",
         )?.optJSONArray("events") ?: return null
@@ -501,10 +511,14 @@ class FootballApiService(
                 }
 
                 val statusLabel = when {
-                    shortStatus == "HT" -> "İY"
-                    isLive -> if (elapsed > 0) "$elapsed' CANLI" else "CANLI"
+                    shortStatus == "HT" -> "Devre"
+                    shortStatus == "P" -> "Penaltılar"
+                    shortStatus == "PST" -> "Ertelendi"
+                    shortStatus == "CANC" -> "İptal"
+                    shortStatus in setOf("ABD", "SUSP", "INT") -> "Durduruldu"
+                    isLive -> MatchClock.football(elapsed * 60.0, elapsed.toString() + statusObj.optInt("extra", 0).takeIf { it > 0 }?.let { "+$it" }.orEmpty()).label
                     isFinished -> "MS"
-                    else -> fixture.optString("date", "").substringAfter("T").take(5).ifBlank { "20:00" }
+                    else -> "Başlamadı"
                 }
                 val kickoffAt = fixture.optString("date", "")
                 val (kickoffAtEpochMs, kickoffTime) = formatKickoff(kickoffAt)
@@ -620,12 +634,12 @@ class FootballApiService(
         val leagueSlug = footballEspnSlug(competition) ?: return emptyList()
 
         val now = System.currentTimeMillis()
-        val today = LocalDate.now()
+        val today = LocalDate.now(ZoneId.of("Europe/Istanbul"))
         var cache = espnScheduleCache[competition]
         if (cache == null || now - cache.scheduleFetchedAtMs >= ESPN_SCHEDULE_REFRESH_MS) {
             val semaphore = Semaphore(4)
             val schedule = coroutineScope {
-                (0L..7L).map { offset ->
+                (-2L..7L).map { offset ->
                     async {
                         semaphore.withPermit {
                             fetchEspnScoreboard(competition, leagueSlug, today.plusDays(offset))
@@ -636,8 +650,11 @@ class FootballApiService(
             cache = EspnFixtureCache(now, now, sortMatches(schedule))
             espnScheduleCache[competition] = cache
         } else if (now - cache.liveFetchedAtMs >= ESPN_LIVE_REFRESH_MS) {
-            val currentDayMatches = fetchEspnScoreboard(competition, leagueSlug, today)
-            val refreshed = cache.matches.filterNot { sameLocalDay(it.kickoffAtEpochMs, today) } + currentDayMatches
+            val currentDayMatches = coroutineScope {
+                liveScoreboardDates(today).map { day -> async { fetchEspnScoreboard(competition, leagueSlug, day) } }.awaitAll().flatten()
+            }
+            val updatedIds = currentDayMatches.mapTo(mutableSetOf()) { it.id }
+            val refreshed = cache.matches.filterNot { it.id in updatedIds } + currentDayMatches
             cache = cache.copy(liveFetchedAtMs = now, matches = sortMatches(refreshed))
             espnScheduleCache[competition] = cache
         }
@@ -688,7 +705,11 @@ class FootballApiService(
                     val statusObject = competitionObject.optJSONObject("status") ?: JSONObject()
                     val statusType = statusObject.optJSONObject("type") ?: JSONObject()
                     val state = statusType.optString("state", "pre")
-                    val clock = statusObject.optDouble("clock", 0.0).toInt()
+                    val clock = MatchClock.football(
+                        statusObject.optDouble("clock", 0.0),
+                        statusObject.optString("displayClock"),
+                        statusType.optString("name"),
+                    )
                     val competitors = competitionObject.optJSONArray("competitors") ?: continue
                     var homeName = "Ev Sahibi"
                     var awayName = "Deplasman"
@@ -724,12 +745,17 @@ class FootballApiService(
                             awayTeam = awayName,
                             homeScore = homeScore,
                             awayScore = awayScore,
-                            minute = if (clock > 0) clock else null,
+                            minute = clock.minute,
                             status = status,
                             statusLabel = when (state) {
-                                "in" -> if (clock > 0) "$clock' CANLI" else "CANLI"
+                                "in" -> clock.label
                                 "post" -> "MS"
-                                else -> "Başlamadı"
+                                else -> when {
+                                    statusType.optString("name").contains("POSTPON") -> "Ertelendi"
+                                    statusType.optString("name").contains("CANCEL") -> "İptal"
+                                    statusType.optString("name").contains("SUSPEND") -> "Durduruldu"
+                                    else -> "Başlamadı"
+                                }
                             },
                             kickoffTime = kickoff.second,
                             kickoffAtEpochMs = kickoff.first,
@@ -788,7 +814,10 @@ class FootballApiService(
     }
 
     private fun sameLocalDay(timestamp: Long, date: LocalDate): Boolean = timestamp > 0L &&
-        Instant.ofEpochMilli(timestamp).atZone(ZoneId.systemDefault()).toLocalDate() == date
+        Instant.ofEpochMilli(timestamp).atZone(ZoneId.of("Europe/Istanbul")).toLocalDate() == date
+
+    private fun liveScoreboardDates(today: LocalDate): List<LocalDate> =
+        if (java.time.LocalTime.now(ZoneId.of("Europe/Istanbul")).hour < 12) listOf(today.minusDays(1), today) else listOf(today)
 
     private fun formatKickoff(value: String): Pair<Long, String> {
         val instant = try {
@@ -800,7 +829,7 @@ class FootballApiService(
                 return 0L to "Saat bekleniyor"
             }
         }
-        val zone = ZoneId.systemDefault()
+        val zone = ZoneId.of("Europe/Istanbul")
         val local = instant.atZone(zone)
         val format = if (local.toLocalDate() == LocalDate.now(zone)) {
             DateTimeFormatter.ofPattern("HH:mm", Locale.forLanguageTag("tr-TR"))
@@ -822,8 +851,8 @@ class FootballApiService(
             if (now - fetchedAt < ttl) return matches
         }
         val games = fetchEuroLeagueGames(season) ?: return emptyList()
-        val from = LocalDate.now().minusDays(7).atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
-        val to = LocalDate.now().plusDays(14).atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
+        val from = LocalDate.now(ZoneId.of("Europe/Istanbul")).minusDays(7).atStartOfDay(ZoneId.of("Europe/Istanbul")).toInstant().toEpochMilli()
+        val to = LocalDate.now(ZoneId.of("Europe/Istanbul")).plusDays(14).atStartOfDay(ZoneId.of("Europe/Istanbul")).toInstant().toEpochMilli()
         val matches = (0 until games.length()).mapNotNull { index ->
             val game = games.optJSONObject(index) ?: return@mapNotNull null
             val time = runCatching { Instant.parse(game.optString("utcDate")).toEpochMilli() }.getOrDefault(0L)
@@ -834,7 +863,8 @@ class FootballApiService(
             val awayClub = road.optJSONObject("club") ?: return@mapNotNull null
             val played = game.optBoolean("played", false)
             val statusText = game.optString("gameStatus").lowercase(Locale.ROOT)
-            val live = !played && ("live" in statusText || (time <= now && now - time < 3 * 60 * 60_000L))
+            val hasReportedScore = local.optInt("score", 0) > 0 || road.optInt("score", 0) > 0
+            val live = !played && ("live" in statusText || "progress" in statusText || hasReportedScore)
             val status = when {
                 played -> MatchStatus.FINISHED
                 live -> MatchStatus.LIVE
@@ -925,14 +955,14 @@ class FootballApiService(
         val currentSeason = basketballSeasonYear(slug)
         if (season != currentSeason) return fetchBasketballArchive(competition, slug, season)
         val cacheKey = "BASKETBOL|$competition|$season"
-        val today = LocalDate.now()
+        val today = LocalDate.now(ZoneId.of("Europe/Istanbul"))
         val now = System.currentTimeMillis()
         var cache = espnScheduleCache[cacheKey]
 
         if (cache == null || now - cache.scheduleFetchedAtMs >= ESPN_SCHEDULE_REFRESH_MS) {
             val semaphore = Semaphore(4)
             val schedule = coroutineScope {
-                (0L..7L).map { offset ->
+                (-2L..7L).map { offset ->
                     async {
                         semaphore.withPermit {
                             fetchBasketballScoreboard(competition, slug, today.plusDays(offset))
@@ -943,8 +973,11 @@ class FootballApiService(
             cache = EspnFixtureCache(now, now, sortMatches(schedule))
             espnScheduleCache[cacheKey] = cache
         } else if (now - cache.liveFetchedAtMs >= ESPN_LIVE_REFRESH_MS) {
-            val todayMatches = fetchBasketballScoreboard(competition, slug, today)
-            val refreshed = cache.matches.filterNot { sameLocalDay(it.kickoffAtEpochMs, today) } + todayMatches
+            val todayMatches = coroutineScope {
+                liveScoreboardDates(today).map { day -> async { fetchBasketballScoreboard(competition, slug, day) } }.awaitAll().flatten()
+            }
+            val updatedIds = todayMatches.mapTo(mutableSetOf()) { it.id }
+            val refreshed = cache.matches.filterNot { it.id in updatedIds } + todayMatches
             cache = cache.copy(liveFetchedAtMs = now, matches = sortMatches(refreshed))
             espnScheduleCache[cacheKey] = cache
         }
@@ -1245,7 +1278,7 @@ class FootballApiService(
     }
 
     private fun basketballSeasonYear(slug: String): Int {
-        val now = LocalDate.now()
+        val now = LocalDate.now(ZoneId.of("Europe/Istanbul"))
         return if (slug == "wnba") now.year else if (now.monthValue >= 7) now.year + 1 else now.year
     }
 
@@ -1373,9 +1406,8 @@ class FootballApiService(
     private companion object {
         const val STANDINGS_CACHE_MS = 60 * 60_000L
         const val ESPN_SCHEDULE_REFRESH_MS = 30 * 60_000L
-        const val ESPN_LIVE_REFRESH_MS = 60_000L
+        const val ESPN_LIVE_REFRESH_MS = 10_000L
         const val ARCHIVE_CACHE_MS = 14 * 24 * 60 * 60_000L
         const val MAX_ARCHIVE_PAGES = 25
     }
 }
-

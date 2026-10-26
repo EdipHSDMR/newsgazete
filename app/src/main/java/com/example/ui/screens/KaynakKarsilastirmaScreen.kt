@@ -97,12 +97,12 @@ fun KaynakKarsilastirmaScreen(
                 }
                 Column {
                     Text(
-                        text = "EDİTORYAL ANALİZ",
+                        text = "Farklı bakışlar",
                         style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
                         color = MaterialTheme.colorScheme.primary,
                     )
                     Text(
-                        text = "Kaynak Karşılaştırması",
+                        text = "Kaynaklar",
                         style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.Bold),
                     )
                 }
@@ -221,4 +221,3 @@ fun KaynakKarsilastirmaScreen(
         }
     }
 }
-

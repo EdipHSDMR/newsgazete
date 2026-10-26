@@ -97,8 +97,7 @@ class PressNewsApiService(private val httpClient: OkHttpClient) {
             isBreaking = BreakingNewsClassifier.isBreaking(
                 title = title,
                 publishedAtEpochMs = epoch,
-                sourceMarkedBreaking = item.optBoolean("is_breaking", false) ||
-                    item.optString("category").contains("son dakika", ignoreCase = true),
+                sourceMarkedBreaking = item.optBoolean("is_breaking", false),
             ),
             isManset = false,
             whatHappened = "",
@@ -220,4 +219,3 @@ class PressNewsApiService(private val httpClient: OkHttpClient) {
         val WHITESPACE = "\\s+".toRegex()
     }
 }
-

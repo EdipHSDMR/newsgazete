@@ -1,343 +1,147 @@
 package com.example.ui.screens
 
 import android.content.Intent
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.GridView
-import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.ViewAgenda
-import androidx.compose.material3.Badge
-import androidx.compose.material3.BadgedBox
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.compose.material.icons.automirrored.outlined.ViewList
+import androidx.compose.material.icons.outlined.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.example.data.CizgiRepository
+import com.example.model.MatchStatus
 import com.example.model.Story
-import com.example.ui.components.GununOzetiCard
-import com.example.ui.components.MansetCompactCard
-import com.example.ui.components.MiniMatchCard
-import com.example.ui.components.ModernNewsCard
-import com.example.ui.components.NewsFeedCard
-import com.example.ui.components.SkeletonCard
+import com.example.ui.components.*
 import com.example.ui.theme.CizgiColor
 import com.example.util.BreakingNewsClassifier
 import kotlinx.coroutines.delay
 
 @Composable
 fun AkisScreen(
-    repository: CizgiRepository,
-    onStoryClick: (String) -> Unit,
-    onSportsClick: () -> Unit,
-    onMarketClick: () -> Unit = {},
-    modifier: Modifier = Modifier,
+    repository: CizgiRepository, onStoryClick: (String) -> Unit, onSportsClick: () -> Unit,
+    onMarketClick: () -> Unit = {}, modifier: Modifier = Modifier,
+    onTopicsClick: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val stories by repository.stories.collectAsState()
-    val newsArchiveCount by repository.newsArchiveCount.collectAsState()
+    val preferences by repository.preferences.collectAsState()
+    val count by repository.newsArchiveCount.collectAsState()
     val matches by repository.matches.collectAsState()
-    val isRefreshing by repository.isRefreshing.collectAsState()
-    val dailyDigestPoints by repository.dailyDigest.collectAsState()
-    val bistStocks by repository.bistStocks.collectAsState()
-    val financialAssets by repository.financialAssets.collectAsState()
-    var tickerClock by remember { mutableStateOf(System.currentTimeMillis()) }
+    val refreshing by repository.isRefreshing.collectAsState()
+    val digest by repository.dailyDigest.collectAsState()
+    val stocks by repository.bistStocks.collectAsState()
+    val assets by repository.financialAssets.collectAsState()
+    val state = rememberLazyListState()
+    LaunchedEffect(state) {
+        snapshotFlow { state.layoutInfo.visibleItemsInfo.map { it.key.toString().removePrefix("hero_") } }
+            .collect { repository.prepareReadingContent(it) }
+    }
+    var visual by rememberSaveable { mutableStateOf(false) }
+    var personalized by rememberSaveable { mutableStateOf(false) }
+    var visibleLimit by rememberSaveable { mutableIntStateOf(50) }
+    var requestedSize by remember { mutableIntStateOf(-1) }
+    var clock by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(Unit) { while (true) { delay(30_000); clock = System.currentTimeMillis() } }
+    val breaking = remember(stories, clock) { BreakingNewsClassifier.latest(stories, clock) }
+    val selectedStories = remember(stories, personalized, preferences.followedTopics) {
+        if (personalized) stories.filter { it.topic in preferences.followedTopics } else stories
+    }
+    val hero = selectedStories.firstOrNull()
+    val feed = remember(selectedStories, visibleLimit) { selectedStories.drop(1).take(visibleLimit) }
+    val match = matches.firstOrNull { it.status == MatchStatus.LIVE }
+        ?: matches.firstOrNull { it.status == MatchStatus.UPCOMING }
 
-    LaunchedEffect(Unit) {
-        while (true) {
-            delay(60_000L)
-            tickerClock = System.currentTimeMillis()
+    LaunchedEffect(state, stories.size, selectedStories.size, personalized, visibleLimit, count) {
+        snapshotFlow { state.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0 }.collect { last ->
+            if (stories.isEmpty() || (personalized && selectedStories.isEmpty())) return@collect
+            if (last < state.layoutInfo.totalItemsCount - 5) return@collect
+            if (visibleLimit < selectedStories.size - 1) visibleLimit += 40
+            else if (requestedSize != stories.size && (stories.size < count || repository.hasMorePressArchivePages)) {
+                requestedSize = stories.size
+                repository.loadOlderNews()
+            }
         }
     }
-
-    // Visual card mode vs compact list
-    var isVisualCardMode by remember { mutableStateOf(false) }
-    val filteredStories = stories
-
-    val mansetStory = remember(filteredStories) {
-        filteredStories.firstOrNull { it.isManset } ?: filteredStories.firstOrNull()
+    fun share(story: Story) {
+        val text = listOf(story.title, story.canonicalUrl).filter(String::isNotBlank).joinToString("\n\n")
+        context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).putExtra(Intent.EXTRA_TEXT, text).setType("text/plain"), "Haberi paylaş"))
     }
-
-    val feedStories = remember(filteredStories, mansetStory) {
-        if (mansetStory != null) filteredStories.filter { it.id != mansetStory.id } else filteredStories
-    }
-
-    val nextMatch = remember(matches) {
-        matches.firstOrNull { it.status == com.example.model.MatchStatus.LIVE }
-            ?: matches.firstOrNull { it.status == com.example.model.MatchStatus.UPCOMING }
-            ?: matches.firstOrNull()
-    }
-
-    fun shareStory(story: Story) {
-        val sourceUrl = story.canonicalUrl.takeIf { it.startsWith("https://", ignoreCase = true) }
-        val sendIntent = Intent().apply {
-            action = Intent.ACTION_SEND
-            putExtra(Intent.EXTRA_TEXT, listOfNotNull(story.title, story.summary, sourceUrl).joinToString("\n\n"))
-            type = "text/plain"
-        }
-        context.startActivity(Intent.createChooser(sendIntent, "Haberi Paylaş"))
-    }
-
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .testTag("akis_screen"),
+    LazyColumn(
+        state = state, modifier = modifier.fillMaxSize().testTag("akis_screen"),
+        contentPadding = PaddingValues(start = 18.dp, end = 18.dp, top = 10.dp, bottom = 20.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        // Canlı Son Dakika Ticker Bandı
-        val breakingStory = remember(stories, tickerClock) { BreakingNewsClassifier.latest(stories, tickerClock) }
-        if (breakingStory != null) {
-            Surface(
-                color = Color(0xFFB71C1C),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { onStoryClick(breakingStory.id) }
-                    .testTag("breaking_news_ticker"),
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 14.dp, vertical = 7.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    Surface(
-                        shape = RoundedCornerShape(4.dp),
-                        color = CizgiColor.Gold,
-                    ) {
-                        Text(
-                            text = "⚡ SON DAKİKA",
-                            color = CizgiColor.Navy,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 11.sp,
-                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                        )
-                    }
-                    Text(
-                        text = breakingStory.title,
-                        color = Color.White,
-                        fontWeight = FontWeight.SemiBold,
-                        fontSize = 12.5.sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f),
-                    )
-                    Text(
-                        text = "Oku ›",
-                        color = CizgiColor.Gold,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 11.5.sp,
-                    )
+        item(key = "heading") {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text(if (personalized) "Senin için" else "Gündem", style = MaterialTheme.typography.headlineMedium, modifier = Modifier.weight(1f))
+                IconButton({ personalized = !personalized }, Modifier.size(34.dp)) {
+                    Icon(if (personalized) Icons.Outlined.Favorite else Icons.Outlined.FavoriteBorder, "Takip ettiğim konular", tint = if (personalized) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(18.dp))
+                }
+                IconButton({ visual = !visual }, Modifier.size(34.dp)) {
+                    Icon(if (visual) Icons.AutoMirrored.Outlined.ViewList else Icons.Outlined.Dashboard, "Haber görünümünü değiştir", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(19.dp))
+                }
+                IconButton({ repository.refreshAll() }, Modifier.size(34.dp)) {
+                    Icon(Icons.Outlined.Refresh, "Haberleri yenile", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(19.dp))
                 }
             }
         }
-
-        // 2. Haber Akışı İçerik Listesi
-        LazyColumn(
-            modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 28.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
-        ) {
-            // Loading Skeletons
-            if (isRefreshing && filteredStories.isEmpty()) {
-                items(3) { SkeletonCard() }
-            } else {
-                // Canlı BIST 100 ve Emtia Takip Listesi Widget'ı (Retrofit Servisli)
-                item(key = "bist_watchlist_strip") {
-                    com.example.ui.components.BistWatchlistCard(
-                        stocks = bistStocks,
-                        financialAssets = financialAssets,
-                        onViewMarketsClick = onMarketClick,
-                    )
-                }
-
-                if (dailyDigestPoints.isNotEmpty()) {
-                    item(key = "daily_digest") {
-                        GununOzetiCard(points = dailyDigestPoints)
+        if (refreshing && stories.isNotEmpty()) item { LinearProgressIndicator(Modifier.fillMaxWidth().height(2.dp), trackColor = MaterialTheme.colorScheme.surfaceVariant) }
+        if (breaking != null) item(key = "breaking") {
+            Surface(
+                color = MaterialTheme.colorScheme.errorContainer, shape = RoundedCornerShape(17.dp),
+                modifier = Modifier.fillMaxWidth().clickable { onStoryClick(breaking.id) }.testTag("breaking_news_ticker"),
+            ) {
+                Row(Modifier.padding(12.dp), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.size(6.dp).clip(CircleShape).background(CizgiColor.Red))
+                    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                        Text("Son dakika", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.error)
+                        Text(breaking.title, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onErrorContainer)
                     }
                 }
-
-                if (nextMatch != null) {
-                    item(key = "live_match_glance") {
-                        MiniMatchCard(
-                            match = nextMatch,
-                            onClick = onSportsClick,
-                        )
-                    }
-                }
-                // Section Başlığı ve Görünüm Değiştirici
-                item(key = "feed_section_header") {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(top = 4.dp, bottom = 2.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                    ) {
-                        Column {
-                            Text(
-                                text = "SON VE ÖNE ÇIKAN HABERLER",
-                                style = MaterialTheme.typography.labelMedium.copy(
-                                    fontWeight = FontWeight.Bold,
-                                    letterSpacing = 0.8.sp,
-                                ),
-                                color = MaterialTheme.colorScheme.primary,
-                            )
-                            Text(
-                                text = "${filteredStories.size} haber listeleniyor",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp),
-                        ) {
-                            IconButton(
-                                onClick = { isVisualCardMode = !isVisualCardMode },
-                                modifier = Modifier.size(36.dp),
-                            ) {
-                                Icon(
-                                    imageVector = if (isVisualCardMode) Icons.Default.ViewAgenda else Icons.Default.GridView,
-                                    contentDescription = if (isVisualCardMode) "Kompakt Liste Görünümü" else "Görsel Kart Görünümü",
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(20.dp),
-                                )
-                            }
-
-                            IconButton(
-                                onClick = { repository.refreshAll() },
-                                modifier = Modifier.size(36.dp),
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Refresh,
-                                    contentDescription = "Yenile",
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(20.dp),
-                                )
-                            }
-                        }
-                    }
-                }
-
-                // Empty state if no stories in selected filter
-                if (filteredStories.isEmpty()) {
-                    item(key = "empty_filter_state") {
-                        Card(
-                            shape = RoundedCornerShape(16.dp),
-                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 24.dp)
-                        ) {
-                            Column(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(24.dp),
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                verticalArrangement = Arrangement.spacedBy(10.dp)
-                            ) {
-                                Text("📰", fontSize = 36.sp)
-                                Text(
-                                    text = "Henüz haber bulunamadı",
-                                    style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
-                                    color = MaterialTheme.colorScheme.onSurface,
-                                )
-                                TextButton(
-                                    onClick = { repository.refreshAll() }
-                                ) {
-                                    Text("Yeniden Dene")
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // Manşet Kartı (ilk haber)
-                if (mansetStory != null) {
-                    item(key = "manset_${mansetStory.id}") {
-                        MansetCompactCard(
-                            story = mansetStory,
-                            onClick = { onStoryClick(mansetStory.id) },
-                            onSaveToggle = { repository.toggleSaveStory(mansetStory) },
-                        )
-                    }
-                }
-
-                // Diğer Haber Kartları
-                items(feedStories, key = { it.id }) { story ->
-                    if (isVisualCardMode) {
-                        ModernNewsCard(
-                            story = story,
-                            onClick = { onStoryClick(story.id) },
-                            onSaveToggle = { repository.toggleSaveStory(story) },
-                            onShareClick = { shareStory(story) },
-                        )
-                    } else {
-                        NewsFeedCard(
-                            story = story,
-                            onClick = { onStoryClick(story.id) },
-                            onSaveToggle = { repository.toggleSaveStory(story) },
-                        )
-                    }
-                }
-
-                if (stories.size < newsArchiveCount || repository.hasMorePressArchivePages) {
-                    item(key = "load_older_news") {
-                        TextButton(
-                            onClick = { repository.loadOlderNews() },
-                            modifier = Modifier.fillMaxWidth(),
-                        ) {
-                            Text(
-                                if (stories.size < newsArchiveCount) {
-                                    "Daha eski haberleri yükle · ${stories.size}/$newsArchiveCount"
-                                } else {
-                                    "Daha eski haberleri yükle"
-                                }
-                            )
-                        }
-                    }
-                }
-
+            }
+        }
+        if (hero != null) item(key = "hero_" + hero.id) {
+            MansetHeroCard(hero, { onStoryClick(hero.id) }, { repository.toggleSaveStory(hero) })
+        }
+        if (digest.isNotEmpty()) item(key = "digest") { GununOzetiCard(digest) }
+        if (stories.isEmpty() && refreshing) items(3) { SkeletonCard() }
+        items(feed.take(3), key = { it.id }) { story ->
+            if (visual) ModernNewsCard(story, { onStoryClick(story.id) }, { repository.toggleSaveStory(story) }, { share(story) })
+            else NewsFeedCard(story, { onStoryClick(story.id) }, { repository.toggleSaveStory(story) })
+        }
+        if (stocks.isNotEmpty() || assets.isNotEmpty()) item(key = "market") { BistWatchlistCard(stocks, assets, onMarketClick) }
+        if (match != null) item(key = "match") { MiniMatchCard(match, onSportsClick) }
+        itemsIndexed(feed.drop(3), key = { _, story -> story.id }) { index, story ->
+            if (visual || index % 6 == 2) ModernNewsCard(story, { onStoryClick(story.id) }, { repository.toggleSaveStory(story) }, { share(story) })
+            else NewsFeedCard(story, { onStoryClick(story.id) }, { repository.toggleSaveStory(story) })
+        }
+        if (selectedStories.isEmpty() && !refreshing) item {
+            Column(Modifier.fillMaxWidth().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Icon(Icons.Outlined.WifiOff, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(if (personalized && preferences.followedTopics.isEmpty()) "İlgi alanlarını seç" else if (personalized) "Takip ettiğin konularda haber bulunamadı" else "Haberler alınamadı", style = MaterialTheme.typography.titleMedium)
+                TextButton({ if (personalized && preferences.followedTopics.isEmpty()) onTopicsClick() else if (personalized) personalized = false else repository.refreshAll() }) { Text(if (personalized && preferences.followedTopics.isEmpty()) "Konuları keşfet" else if (personalized) "Tüm haberlere dön" else "Yeniden dene") }
+            }
+        }
+        if (selectedStories.isNotEmpty() && (feed.size < selectedStories.size - 1 || stories.size < count || repository.hasMorePressArchivePages)) item(key = "next_page") {
+            Box(Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
             }
         }
     }
 }
-

@@ -14,6 +14,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -59,9 +63,14 @@ fun KesfetScreen(
 ) {
     val stories by repository.stories.collectAsState()
 
-    var searchQuery by remember { mutableStateOf("") }
-    var selectedTopicFilter by remember { mutableStateOf<String?>(null) }
-    var selectedSourceFilter by remember { mutableStateOf<String?>(null) }
+    var searchQuery by rememberSaveable { mutableStateOf("") }
+    var selectedTopicFilter by rememberSaveable { mutableStateOf<String?>(null) }
+    var selectedSourceFilter by rememberSaveable { mutableStateOf<String?>(null) }
+    val listState = rememberLazyListState()
+    LaunchedEffect(listState) {
+        snapshotFlow { listState.layoutInfo.visibleItemsInfo.map { it.key.toString() } }
+            .collect { repository.prepareReadingContent(it) }
+    }
     var filterOptionQuery by remember { mutableStateOf("") }
     var showFilterSheet by remember { mutableStateOf(false) }
 
@@ -105,7 +114,7 @@ fun KesfetScreen(
             .fillMaxSize()
             .testTag("kesfet_screen"),
     ) {
-        // Search Header Section
+        Text("Keşfet", style = MaterialTheme.typography.headlineMedium, modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp))
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -147,10 +156,10 @@ fun KesfetScreen(
                         }
                     },
                     singleLine = true,
-                    shape = RoundedCornerShape(12.dp),
+                    shape = RoundedCornerShape(17.dp),
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedBorderColor = MaterialTheme.colorScheme.primary,
-                        unfocusedBorderColor = CizgiColor.BorderLight,
+                        unfocusedBorderColor = Color.Transparent,
                         focusedContainerColor = MaterialTheme.colorScheme.surface,
                         unfocusedContainerColor = MaterialTheme.colorScheme.surface,
                     ),
@@ -271,7 +280,7 @@ fun KesfetScreen(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                text = "SONUÇLAR (${filteredResults.size})",
+                text = if (searchQuery.isBlank()) "Senin keşfin · ${filteredResults.size} haber" else "${filteredResults.size} sonuç",
                 style = MaterialTheme.typography.labelSmall.copy(
                     fontWeight = FontWeight.Bold,
                     letterSpacing = 0.8.sp,
@@ -306,6 +315,7 @@ fun KesfetScreen(
             }
         } else {
             LazyColumn(
+                state = listState,
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -442,4 +452,3 @@ fun KesfetScreen(
         }
     }
 }
-

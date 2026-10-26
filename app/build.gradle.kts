@@ -71,6 +71,12 @@ android {
   }
 }
 
+// Native test dependencies must resolve platform names consistently on Turkish Windows hosts.
+tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
+  systemProperty("user.language", "en")
+  systemProperty("user.country", "US")
+}
+
 // Configure the Secrets Gradle Plugin to use .env and .env.example files
 // to match the convention used in Web projects.
 secrets {
@@ -108,6 +114,7 @@ dependencies {
   implementation(libs.androidx.room.runtime)
   implementation(libs.androidx.work.runtime.ktx)
   implementation(libs.coil.compose)
+  implementation("org.jsoup:jsoup:1.23.2")
   implementation(libs.converter.moshi)
   implementation(libs.kotlinx.serialization.json)
   implementation(libs.retrofit.serialization.converter)

@@ -19,6 +19,9 @@ import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Button
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.ui.graphics.Color
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
@@ -54,9 +57,9 @@ fun KaydedilenlerScreen(
     val savedStories by repository.savedArticles.collectAsState()
 
     var searchQuery by remember { mutableStateOf("") }
-    var selectedFilter by remember { mutableStateOf("Tümü") }
+    var showClear by remember { mutableStateOf(false) }
 
-    val filteredSaved = remember(savedStories, searchQuery, selectedFilter) {
+    val filteredSaved = remember(savedStories, searchQuery) {
         savedStories.filter { story ->
             val matchesQuery = searchQuery.isBlank() ||
                 story.title.contains(searchQuery, ignoreCase = true) ||
@@ -66,6 +69,12 @@ fun KaydedilenlerScreen(
         }
     }
 
+    if (showClear) AlertDialog(
+        onDismissRequest = { showClear = false }, title = { Text("Kitaplığı temizle") },
+        text = { Text("Kaydettiğin haberlerin tamamı kitaplığından kaldırılacak.") },
+        confirmButton = { TextButton({ repository.clearSavedStories(); showClear = false }) { Text("Temizle") } },
+        dismissButton = { TextButton({ showClear = false }) { Text("Vazgeç") } },
+    )
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -81,18 +90,18 @@ fun KaydedilenlerScreen(
         ) {
             Column {
                 Text(
-                    text = "KİTAPLIK",
+                    text = "${savedStories.size} kayıtlı haber",
                     style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
                     color = MaterialTheme.colorScheme.primary,
                 )
                 Text(
-                    text = "Kaydedilenler (${savedStories.size})",
+                    text = "Kitaplık",
                     style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.Bold),
                 )
             }
 
             if (savedStories.isNotEmpty()) {
-                IconButton(onClick = { repository.clearSavedStories() }) {
+                IconButton(onClick = { showClear = true }) {
                     Icon(
                         imageVector = Icons.Default.DeleteSweep,
                         contentDescription = "Tümünü Temizle",
@@ -110,7 +119,8 @@ fun KaydedilenlerScreen(
                 placeholder = { Text("Kayıtlı haberlerde ara...") },
                 leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
                 singleLine = true,
-                shape = RoundedCornerShape(12.dp),
+                shape = RoundedCornerShape(17.dp),
+                colors = OutlinedTextFieldDefaults.colors(unfocusedBorderColor = Color.Transparent, unfocusedContainerColor = MaterialTheme.colorScheme.surface, focusedContainerColor = MaterialTheme.colorScheme.surface),
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp, vertical = 4.dp),
@@ -132,18 +142,18 @@ fun KaydedilenlerScreen(
                     Icon(
                         imageVector = Icons.Default.BookmarkBorder,
                         contentDescription = null,
-                        modifier = Modifier.size(64.dp),
+                        modifier = Modifier.size(42.dp),
                         tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
                     )
 
                     Text(
-                        text = "Henüz Kaydedilen Haber Yok",
+                        text = "Kitaplığın seni bekliyor",
                         style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
                         color = MaterialTheme.colorScheme.onSurface,
                     )
 
                     Text(
-                        text = "Akışta veya Keşfet ekranında ilginizi çeken haberleri daha sonra okumak için yer imi simgesine dokunarak buraya ekleyebilirsiniz.",
+                        text = "Daha sonra okumak istediğin haberleri yer imi simgesiyle buraya ekle.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         textAlign = TextAlign.Center,
@@ -159,7 +169,7 @@ fun KaydedilenlerScreen(
                         ),
                         shape = RoundedCornerShape(10.dp),
                     ) {
-                        Text("Gündem Akışına Göz At")
+                        Text("Haberlere göz at")
                     }
                 }
             }
@@ -183,4 +193,3 @@ fun KaydedilenlerScreen(
         }
     }
 }
-

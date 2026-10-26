@@ -3,206 +3,149 @@ package com.example.util
 import android.text.Html
 import java.util.Locale
 
-/** Builds a short, source-grounded digest without adding facts that were not in the source text. */
+/** Selects complementary facts from the source; no remote model or invented information. */
 object NewsSummary {
-    private val sentenceBoundary = Regex("(?<=[.!?])\\s+")
+    private val locale = Locale.forLanguageTag("tr-TR")
     private val wordPattern = Regex("[\\p{L}\\p{N}]+")
-    private val stopWords = setOf(
-        "ama", "ancak", "artık", "bir", "bu", "çok", "daha", "da", "de", "diye", "en", "gibi",
-        "ile", "için", "kadar", "karşı", "ki", "olan", "olarak", "oldu", "sonra", "ve", "veya",
-        "yeni", "üzere",
-    )
+    private val boundary = Regex("(?<=[.!?])\\s+|\\n+")
+    private val stopWords = setOf("ama", "ancak", "bir", "bu", "çok", "daha", "da", "de", "diye", "en", "gibi",
+        "ile", "için", "kadar", "karşı", "ki", "olan", "olarak", "oldu", "sonra", "ve", "veya", "yeni", "üzere",
+        "haber", "son", "dakika", "nedir", "nasıl", "hangi", "zaman", "bugün")
+    private val abbreviations = Regex("(?i)(?:\\b(?:Dr|Prof|Doç|Sn|Av|No|Mah|Cad|Sok|Ltd|Tic|AŞ|St)|\\b[A-ZÇĞİÖŞÜ])\\.$")
+    private val boilerplate = Regex(
+        "gündemindeki yerini aldı|meraklılarının gündeminde|gündeme geldi|merak konusu oldu|" +
+            "detaylar haberimizde|ayrıntılar haberimizde|cevabı haberimizde|haber(?:in)? detay(?:ında|larında)|" +
+            "bizi takip edin|abone ol|tüm hakları saklıdır|çerez politikası|bildirimleri aç|" +
+            "göz kamaştıran|büyüleyici manzara|en çok merak edilen", RegexOption.IGNORE_CASE)
+    private val action = Regex(
+        "açıkla|duyur|belirt|başla|tamamlan|gerçekleş|arttı|azaldı|yayımlan|bulun|açıldı|kapandı|" +
+            "seçildi|kazandı|kaybetti|kayded|meydana gel|yaşan|ölçül|hissedil|tespit edil|düştü|yüksel|" +
+            "devam ediyor|karar ver|gözalt|hayatını kaybet|yaralan|tutuklan|yakalan|iptal|onaylan|" +
+            "reddet|söyle|konuş|tepki|yanıt|savun|ifade et|vurgula|paylaş|imzala|ziyaret|yüzde|kapsıyor",
+        RegexOption.IGNORE_CASE)
+    private val timeFact = Regex("\\b\\d{1,2}[.:/]\\d{2}(?:[./]\\d{2,4})?\\b|\\b\\d{1,2}\\s+(?:ocak|şubat|mart|nisan|mayıs|haziran|temmuz|ağustos|eylül|ekim|kasım|aralık)\\b|\\b(?:pazartesi|salı|çarşamba|perşembe|cuma|cumartesi|pazar)\\b", RegexOption.IGNORE_CASE)
+    private val causeFact = Regex("çünkü|nedeni|sebebi|bu nedenle|sonucunda|yüzünden|dolayı", RegexOption.IGNORE_CASE)
 
-    fun concise(sourceText: String, title: String = "", maxCharacters: Int = 280): String {
-        val text = cleanText(sourceText)
-        if (text.isBlank()) return ""
-        val hasTruncatedEnding = TRUNCATED_END.containsMatchIn(text)
-        val sourceWithoutTruncation = if (hasTruncatedEnding) text.replace(TRUNCATED_END, "").trimEnd() else text
-
+    fun concise(sourceText: String, title: String = "", maxCharacters: Int = 380): String {
         val titleKey = normalize(title)
-        if (normalize(text) == titleKey) return ""
-        val titleWords = wordPattern.findAll(titleKey)
-            .map { it.value }
-            .filter { it.length > 2 && it !in stopWords }
-            .toSet()
-        val candidateSentences = sentenceBoundary.split(sourceWithoutTruncation)
-            .map { it.trim().trimStart('•', '-', '–', '—').trim() }
-            .filter { it.length >= MIN_SENTENCE_CHARS }
+        val titleTokens = tokens(title)
+        val candidates = sentences(sourceText).map(::compress)
+            .filter { it.length >= 16 && normalize(it) != titleKey }
+            .filterNot { it.endsWith("?") || boilerplate.containsMatchIn(it) }
             .distinctBy(::normalize)
-            .filter { sentence -> normalize(sentence) != titleKey }
-            .filterNot(::isBoilerplateLead)
-            .filterNot { it.trimEnd().endsWith('?') }
-        val factualSentences = candidateSentences.filter(::containsSourceFact)
-        val selectedPool = factualSentences.ifEmpty { candidateSentences }
-        val sentences = if (hasTruncatedEnding && selectedPool.size > 1) selectedPool.dropLast(1) else selectedPool
-
-        if (sentences.isEmpty()) return ""
-        val chosen = sentences.withIndex()
-            .sortedByDescending { (index, sentence) -> score(sentence, index, titleWords, title) }
-            .take(MAX_SUMMARY_SENTENCES)
-            .sortedBy { it.index }
-            .map { it.value }
-
-        val result = StringBuilder()
-        for (sentence in chosen) {
-            val required = sentence.length + if (result.isEmpty()) 0 else 1
-            if (result.length + required > maxCharacters) continue
-            if (result.isNotEmpty()) result.append(' ')
-            result.append(sentence)
-        }
-        return if (result.isNotEmpty()) result.toString() else truncateAtWord(
-            sentences.maxByOrNull { score(it, 0, titleWords, title) } ?: sentences.first(),
-            maxCharacters,
-        )
+        if (candidates.isEmpty()) return ""
+        val ranked = candidates.mapIndexed { index, sentence ->
+            sentence to score(sentence, index, titleTokens, title)
+        }.sortedByDescending { it.second }
+        val first = ranked.first().first
+        val second = ranked.drop(1).firstOrNull { (sentence, _) ->
+            similarity(first, sentence) < 0.6 && first.length + sentence.length + 1 <= maxCharacters
+        }?.first
+        val digest = if (second == null) first else "$first $second"
+        return fit(digest, maxCharacters)
     }
 
-    /** Keep useful stored summaries, but reject summaries copied from the source opening. */
-    fun bestAvailableSummary(
-        summaryCandidate: String,
-        sourceText: String,
-        title: String,
-        maxCharacters: Int = 280,
-    ): String {
-        val candidate = cleanText(summaryCandidate).trim()
-        if (candidate.isBlank()) return concise(sourceText, title, maxCharacters)
-        val candidateSentences = sentenceBoundary.split(candidate).map(String::trim).filter(String::isNotBlank)
-        val lead = sentenceBoundary.split(cleanText(sourceText)).firstOrNull()?.trim().orEmpty()
-        val candidateKey = normalize(candidate)
-        val leadKey = normalize(lead)
-        val sourceSentences = sentenceBoundary.split(cleanText(sourceText))
-            .map(String::trim)
-            .filter(String::isNotBlank)
-        val candidateRepeatsSourceLead = candidateSentences.isNotEmpty() &&
-            candidateSentences.size <= 2 &&
-            sourceSentences.size > candidateSentences.size &&
-            candidateSentences.indices.all { index ->
-                normalize(candidateSentences[index]) == normalize(sourceSentences[index])
-            }
-        val isVerbatimLead = candidateRepeatsSourceLead ||
-            (candidateSentences.size == 1 && leadKey.isNotBlank() &&
-                (candidateKey == leadKey || candidateKey.startsWith(leadKey) || leadKey.startsWith(candidateKey)))
-        val titleKey = normalize(title)
-        val missesAskedTime = TIME_QUESTION.containsMatchIn(titleKey) &&
-            !DATE_OR_TIME.containsMatchIn(candidate)
-        val isGenericOrUnfounded = BOILERPLATE_LEAD.containsMatchIn(candidate) ||
-            (candidateSentences.size == 1 && !containsSourceFact(candidate))
-        if (!isVerbatimLead && !missesAskedTime && !isGenericOrUnfounded) {
-            return truncateAtWord(candidate, maxCharacters)
+    fun bestAvailableSummary(summaryCandidate: String, sourceText: String, title: String, maxCharacters: Int = 380): String {
+        val candidate = cleanText(summaryCandidate)
+        val source = cleanText(sourceText)
+        val generated = concise(source, title, maxCharacters)
+        // A source description may be the only available fact. Never blank it merely because it is also the lead.
+        if (generated.isNotBlank()) return generated
+        if (candidate.isNotBlank() && normalize(candidate) != normalize(title) &&
+            !boilerplate.containsMatchIn(candidate)) {
+            return concise(candidate, title, maxCharacters).ifBlank { fit(candidate, maxCharacters) }
         }
-        return concise(sourceText, title, maxCharacters).takeIf { normalize(it) != candidateKey }.orEmpty()
+        return ""
     }
-    /** Removes source sentences already shown in the short summary to avoid a repeated lead. */
+
     fun remainingSourceText(sourceText: String, summary: String): String {
-        val sourceSentences = sentenceBoundary.split(cleanText(sourceText)).map(String::trim).filter(String::isNotBlank)
-        val summarySentences = sentenceBoundary.split(cleanText(summary)).map(::normalize).filter(String::isNotBlank).toSet()
-        var firstRemaining = 0
-        while (firstRemaining < sourceSentences.size) {
-            val sourceKey = normalize(sourceSentences[firstRemaining])
-            val alreadySummarized = sourceKey in summarySentences || summarySentences.any { summaryKey ->
-                sourceKey.length >= MIN_SENTENCE_CHARS && summaryKey.startsWith(sourceKey) ||
-                    summaryKey.length >= MIN_SENTENCE_CHARS && sourceKey.startsWith(summaryKey)
+        val summaryKeys = sentences(summary).map(::normalize)
+        val blocks = paragraphs(sourceText).toMutableList()
+        if (blocks.isEmpty()) return ""
+        val firstSentences = sentences(blocks.first()).toMutableList()
+        while (firstSentences.isNotEmpty() && summaryKeys.any { key ->
+                val first = normalize(firstSentences.first())
+                first == key || (first.length > 40 && key.startsWith(first))
+            }) firstSentences.removeAt(0)
+        if (firstSentences.isEmpty()) blocks.removeAt(0) else blocks[0] = firstSentences.joinToString(" ")
+        return blocks.joinToString("\n\n")
+    }
+
+    /** Preserves the publisher's paragraph breaks and splits unusually long blocks for reading. */
+    fun paragraphs(sourceText: String): List<String> {
+        val blocks = cleanBlocks(sourceText).split(Regex("\\n\\s*\\n"))
+            .map(String::trim).filter { it.isNotBlank() }
+        return blocks.flatMap { block ->
+            if (block.length <= 480) listOf(block) else {
+                val result = mutableListOf<String>()
+                var paragraph = ""
+                sentences(block).forEach { sentence ->
+                    if (paragraph.isNotBlank() && paragraph.length + sentence.length > 430) {
+                        result += paragraph
+                        paragraph = ""
+                    }
+                    paragraph = if (paragraph.isBlank()) sentence else "$paragraph $sentence"
+                }
+                if (paragraph.isNotBlank()) result += paragraph
+                result
             }
-            if (!alreadySummarized) break
-            firstRemaining++
-        }
-        return sourceSentences.drop(firstRemaining).joinToString(" ").trim()
+        }.filterNot { boilerplate.containsMatchIn(it) && it.length < 180 }
     }
 
-    fun paragraphs(sourceText: String): List<String> =
-        sentenceBoundary.split(cleanText(sourceText))
-            .map(String::trim)
-            .filter(String::isNotBlank)
-            .chunked(3)
-            .map { it.joinToString(" ") }
-
-    private fun score(sentence: String, index: Int, titleWords: Set<String>, title: String): Int {
-        val words = wordPattern.findAll(normalize(sentence)).map { it.value }.toSet()
-        val titleMatches = words.count { it in titleWords }
-        val lengthScore = when (sentence.length) {
-            in 70..230 -> 2
-            in 45..300 -> 1
-            else -> 0
+    private fun sentences(value: String): List<String> {
+        val fragments = boundary.split(cleanBlocks(value).replace(Regex("\\.{3}|…"), "."))
+            .map { it.trim().trimStart('•', '-', '–', '—').trim() }.filter(String::isNotBlank)
+        val result = mutableListOf<String>()
+        fragments.forEach { fragment ->
+            if (result.isNotEmpty() && abbreviations.containsMatchIn(result.last())) {
+                result[result.lastIndex] = result.last() + " " + fragment
+            } else result += fragment
         }
-        val hasConcreteDetail = DIGIT.containsMatchIn(sentence) || DATE_OR_TIME.containsMatchIn(sentence)
-        val hasNewsAction = FACT_VERB.containsMatchIn(sentence)
-        val normalizedTitle = normalize(title)
-        val asksForTime = TIME_QUESTION.containsMatchIn(normalizedTitle)
-        val asksWhy = WHY_QUESTION.containsMatchIn(normalizedTitle)
-        val asksForCause = CAUSE_QUESTION.containsMatchIn(normalizedTitle)
-        val asksForResult = RESULT_QUESTION.containsMatchIn(normalizedTitle)
-        val asksYesNo = YES_NO_QUESTION.containsMatchIn(title.lowercase(Locale.forLanguageTag("tr-TR")))
-        val answersTime = asksForTime && DATE_OR_TIME.containsMatchIn(sentence)
-        val answersWhy = asksWhy && WHY_ANSWER.containsMatchIn(normalize(sentence))
-        val answersCause = asksForCause && CAUSE_ANSWER.containsMatchIn(normalize(sentence))
-        val answersResult = asksForResult && RESULT_ANSWER.containsMatchIn(normalize(sentence))
-        val answersYesNo = asksYesNo && titleMatches >= 2 && QUESTION_ANSWER_FACT.containsMatchIn(sentence)
-        val positionScore = (index.coerceAtMost(4) - 2).coerceIn(-2, 2)
-        return titleMatches * 2 + lengthScore + (if (hasConcreteDetail) 5 else 0) +
-            (if (hasNewsAction) 4 else 0) + (if (answersTime) 12 else 0) +
-            (if (answersWhy) 10 else 0) + (if (answersCause) 8 else 0) +
-            (if (answersResult) 8 else 0) + (if (answersYesNo) 12 else 0) + positionScore -
-            (if (isBoilerplateLead(sentence)) 8 else 0)
+        return result
     }
 
-    private fun isBoilerplateLead(sentence: String): Boolean = BOILERPLATE_LEAD.containsMatchIn(sentence)
+    private fun score(sentence: String, index: Int, titleTokens: Set<String>, title: String): Int {
+        val words = tokens(sentence)
+        val overlap = words.count { it in titleTokens }
+        val asked = title.lowercase(locale)
+        val numeric = Regex("\\d").containsMatchIn(sentence)
+        val answersTime = Regex("ne zaman|saat kaç|hangi gün|tarihi").containsMatchIn(asked) && timeFact.containsMatchIn(sentence)
+        val answersWhy = Regex("neden|niçin|sebebi").containsMatchIn(asked) && causeFact.containsMatchIn(sentence)
+        return overlap * 4 + (if (action.containsMatchIn(sentence)) 7 else 0) +
+            (if (numeric) 4 else 0) + (if (answersTime) 24 else 0) +
+            (if (answersWhy) 20 else 0) + (if (sentence.length in 45..260) 3 else 0) +
+            (if (index in 1..5) 2 else 0) - (if (sentence.length > 440) 5 else 0)
+    }
 
-    private fun containsSourceFact(sentence: String): Boolean =
-        DIGIT.containsMatchIn(sentence) || DATE_OR_TIME.containsMatchIn(sentence) ||
-            FACT_VERB.containsMatchIn(sentence) || RESULT_ANSWER.containsMatchIn(normalize(sentence))
+    private fun compress(sentence: String): String = sentence
+        .replace(Regex("^(?:Son dakika[:!]?|Öte yandan,?|Edinilen bilgiye göre,?|Alınan bilgiye göre,?)\\s*", RegexOption.IGNORE_CASE), "")
+        .trim()
 
-    private fun cleanText(value: String): String = Html.fromHtml(
-        value.replace("<script\\b[^>]*>.*?</script>".toRegex(RegexOption.IGNORE_CASE), " ")
-            .replace("<style\\b[^>]*>.*?</style>".toRegex(RegexOption.IGNORE_CASE), " "),
+    private fun similarity(a: String, b: String): Double {
+        val left = tokens(a)
+        val right = tokens(b)
+        return left.intersect(right).size.toDouble() / maxOf(1, minOf(left.size, right.size))
+    }
+
+    private fun tokens(value: String): Set<String> = wordPattern.findAll(normalize(value))
+        .map { it.value }.filter { it.length > 2 && it !in stopWords }.toSet()
+
+    private fun cleanBlocks(value: String): String = Html.fromHtml(
+        value.replace("\r\n", "\n").replace(Regex("\n\\s*\n"), "<br><br>")
+            .replace(Regex("<script\\b[^>]*>[\\s\\S]*?</script>|<style\\b[^>]*>[\\s\\S]*?</style>", RegexOption.IGNORE_CASE), " "),
         Html.FROM_HTML_MODE_LEGACY,
-    ).toString()
-        .replace('\u00a0', ' ')
-        .replace("[\\s\\u200B]+".toRegex(), " ")
-        .trim()
+    ).toString().replace('\u00a0', ' ').replace('\u200B', ' ')
+        .replace(Regex("[ \\t]+"), " ").replace(Regex("\\n[ \\t]*\\n+"), "\n\n").trim()
 
-    private fun normalize(value: String): String = value
-        .lowercase(Locale.forLanguageTag("tr-TR"))
-        .replace("[^\\p{L}\\p{N}]".toRegex(), " ")
-        .trim()
-        .replace("\\s+".toRegex(), " ")
+    private fun cleanText(value: String): String = cleanBlocks(value).replace(Regex("\\s+"), " ").trim()
+    private fun normalize(value: String): String = value.lowercase(locale).replace(Regex("[^\\p{L}\\p{N}]"), " ").replace(Regex("\\s+"), " ").trim()
 
-    private fun truncateAtWord(value: String, maxCharacters: Int): String {
-        if (value.length <= maxCharacters) return value
-        val limit = maxOf(1, maxCharacters - 1)
-        val boundary = value.lastIndexOf(' ', limit).takeIf { it > 0 } ?: limit
-        return value.take(boundary).trimEnd() + "…"
+    private fun fit(value: String, maximum: Int): String {
+        if (value.length <= maximum) return value
+        val limit = (maximum - 1).coerceAtLeast(1)
+        val sentenceEnd = value.take(limit).lastIndexOfAny(charArrayOf('.', '!', '?'))
+        if (sentenceEnd >= limit / 2) return value.take(sentenceEnd + 1).trim()
+        val wordEnd = value.lastIndexOf(' ', limit).takeIf { it > 0 } ?: limit
+        return value.take(wordEnd).trimEnd(',', ';', ':', ' ') + "…"
     }
-
-    private const val MIN_SENTENCE_CHARS = 24
-    private const val MAX_SUMMARY_SENTENCES = 2
-    private val TRUNCATED_END = Regex("(?:\\.\\.\\.|…)$")
-    private val DIGIT = Regex("\\d")
-    private val DATE_OR_TIME = Regex(
-        "\\b(?:\\d{1,2}[./:-]){1,2}\\d{2,4}\\b|\\b\\d{1,2}\\s+(?:ocak|şubat|mart|nisan|mayıs|haziran|temmuz|ağustos|eylül|ekim|kasım|aralık)\\b",
-        RegexOption.IGNORE_CASE,
-    )
-    private val TIME_QUESTION = Regex("\\b(?:ne zaman|saat kaç|hangi gün|tarihi ne|ne zaman gerçekleşecek)\\b")
-    private val WHY_QUESTION = Regex("\\b(?:neden|niçin|sebebi ne|nedir)\\b")
-    private val CAUSE_QUESTION = Regex("\\b(?:sebep|kaynak|neden)\\b")
-    private val RESULT_QUESTION = Regex("\\b(?:ne oldu|sonuç|nasıl sonuçlandı|kim kazandı|kaç gol|kaç sayı|mi oldu|mı oldu|mu oldu|mü oldu)\\b")
-    private val YES_NO_QUESTION = Regex("\\b(?:mi|mı|mu|mü)\\b.*\\?$")
-    private val WHY_ANSWER = Regex("\\b(?:çünkü|nedeni|sebebi|bu nedenle|sonucunda)\\b")
-    private val CAUSE_ANSWER = Regex("\\b(?:neden|sebep|sonucunda|yüzünden|dolayı|ile başladı)\\b")
-    private val RESULT_ANSWER = Regex("\\b(?:kazandı|kaybetti|sonuçlandı|berabere|arttı|azaldı|tamamlandı|iptal edildi|yaşandı|meydana geldi|kaydedildi|ölçüldü)\\b")
-    private val BOILERPLATE_LEAD = Regex(
-        "\\b(?:gündemindeki yerini aldı|gündeminde yer aldı|meraklılarının gündeminde|gündeme geldi|" +
-            "göz kamaştıran|büyüleyici manzara sunan|dikkatleri üzerine çeken|öne çıkan gelişme|" +
-            "haber(?:in)? detay(?:ında|larında)|detaylar haberimizde|merak konusu oldu|" +
-            "en çok merak edilenlerin cevabı|cevabı haberde|cevabı haberimizde|ayrıntılar haberde|" +
-            "son depremler|son dakika haberleri|afad son depremler)\\b",
-        RegexOption.IGNORE_CASE,
-    )
-    private val FACT_VERB = Regex(
-        "\\b(açıkladı|duyurdu|belirtti|kabul edildi|reddedildi|başladı|tamamlandı|gerçekleşti|arttı|azaldı|yayımlandı|bulundu|açıldı|kapandı|seçildi|kazandı|kaybetti|kaydedildi|meydana geldi|yaşandı|ölçüldü|hissedildi|gözlendi|tespit edildi|görüldü|düştü|yükseldi|devam ediyor|etkiliyor|karar verdi|gözaltına alındı|hayatını kaybetti|yaralandı|tutuklandı|yakalandı|iptal edildi|durduruldu|onaylandı|reddetti|dedi|söyledi|konuştu|hedef aldı|tepki gösterdi|yanıt verdi|yanıt geldi|karşılık verdi|eleştirdi|savundu|öne sürdü|iddia etti|ifade etti|vurguladı|hatırlattı|paylaştı|çağrıda bulundu|ziyaret etti|imzaladı|başvurdu|gündeme getirdi|sözlerine tepki gösterdi|açıklama yaptı|açıklamada bulundu)\\b",
-        RegexOption.IGNORE_CASE,
-    )
-    private val QUESTION_ANSWER_FACT = Regex(
-        "\\b(açıkladı|doğruladı|yalanladı|yaşandı|meydana geldi|kaydedildi|ölçüldü|hissedildi|gözlendi|tespit edildi|görüldü|bulunmadı)\\b",
-        RegexOption.IGNORE_CASE,
-    )
 }
-

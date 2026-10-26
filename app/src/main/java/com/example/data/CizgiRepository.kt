@@ -64,6 +64,12 @@ class CizgiRepository private constructor(private val context: Context) {
     private val imageEnrichmentAttempts = mutableMapOf<String, Long>()
     private val pendingImageEnrichment = mutableMapOf<String, Story>()
     private var imageEnrichmentJob: Job? = null
+    private var readingPrefetchJob: Job? = null
+    private val readingPrefetchAttempts = mutableMapOf<String, Long>()
+    private val pendingReadingIds = linkedSetOf<String>()
+    private val sportsStatsRefreshAt = mutableMapOf<String, Long>()
+    private val completeArticleUntil = java.util.concurrent.ConcurrentHashMap<String, Long>()
+    private val articleLoadLocks = java.util.concurrent.ConcurrentHashMap<String, Mutex>()
     private var pressArchiveNextPage = 2
     private var pressArchiveTotalPages = 0
     val hasMorePressArchivePages: Boolean
@@ -155,6 +161,7 @@ class CizgiRepository private constructor(private val context: Context) {
     private var weatherStreamJob: kotlinx.coroutines.Job? = null
     private var activeSportsKey: String? = null
     private var sportsRefreshJob: Job? = null
+    private var sportsStatsJob: Job? = null
     private val newsPageMutex = Mutex()
     private val newsRefreshMutex = Mutex()
     private val marketRefreshMutex = Mutex()
@@ -180,8 +187,8 @@ class CizgiRepository private constructor(private val context: Context) {
         val quietHoursStart = prefs.getString("quiet_hours_start", "23:00") ?: "23:00"
         val quietHoursEnd = prefs.getString("quiet_hours_end", "07:00") ?: "07:00"
         val matchAlertIds = prefs.getStringSet("match_alert_ids", emptySet())?.toSet() ?: emptySet()
-        val followedTopics = prefs.getStringSet("followed_topics", setOf("Türkiye", "Ekonomi", "Teknoloji", "Spor")) ?: emptySet()
-        val followedTeams = prefs.getStringSet("followed_teams", setOf("Galatasaray", "Fenerbahçe")) ?: emptySet()
+        val followedTopics = prefs.getStringSet("followed_topics", emptySet()) ?: emptySet()
+        val followedTeams = prefs.getStringSet("followed_teams", emptySet()) ?: emptySet()
         prefs.edit()
             .remove("football_api_key")
             .remove("weather_api_key")
@@ -267,8 +274,11 @@ class CizgiRepository private constructor(private val context: Context) {
                 }
                 if (duplicateIds.isNotEmpty()) newsArticleDao.deleteByIds(duplicateIds)
                 _stories.update { current ->
-                    val latestIds = latest.mapTo(mutableSetOf()) { it.id }
-                    NewsStoryDeduplicator.merge(latest + current.filterNot { it.id in latestIds })
+                    val latestById = latest.associateBy { it.id }
+                    val currentIds = current.mapTo(mutableSetOf()) { it.id }
+                    val duplicateSet = duplicateIds.toSet()
+                    val added = if (current.isEmpty() || (!newsRefreshMutex.isLocked && !newsPageMutex.isLocked)) latest.filterNot { it.id in currentIds } else emptyList()
+                    (added + current.filterNot { it.id in duplicateSet }.map { latestById[it.id] ?: it })
                         .sortedWith(compareByDescending<Story> { it.publishedAtEpochMs }.thenByDescending { it.id })
                         .take(MAX_IN_MEMORY_STORIES)
                 }
@@ -456,6 +466,7 @@ class CizgiRepository private constructor(private val context: Context) {
         }
 
         enrichMissingStoryImages(_stories.value.take(NEWS_PAGE_SIZE))
+        prefetchReadingContent()
         val now = System.currentTimeMillis()
         val criticalBreaking = liveFeed.asSequence().filter { story ->
             _preferences.value.breakingAlerts && story.isBreaking && story.id !in sentBreakingStoryIds &&
@@ -650,14 +661,15 @@ class CizgiRepository private constructor(private val context: Context) {
         return story
     }
 
-    suspend fun loadFullArticle(storyId: String): Story? {
-        val story = _stories.value.firstOrNull { it.id == storyId } ?: return null
+    suspend fun loadFullArticle(storyId: String): Story? = articleLoadLocks.getOrPut(storyId) { Mutex() }.withLock {
+        val story = _stories.value.firstOrNull { it.id == storyId } ?: return@withLock null
+        if ((completeArticleUntil[storyId] ?: 0L) > System.currentTimeMillis()) return@withLock story
         val hasLicensedArticleBody = story.fullText.length >= 400 &&
             (story.id.startsWith("pha-") || story.fullText.length >= 1_200)
         val content = if (hasLicensedArticleBody) {
             com.example.data.remote.SourceArticleContent(story.fullText, story.paragraphs, story.imageUrl)
         } else {
-            rssNewsService.fetchFullArticle(story.canonicalUrl) ?: return null
+            rssNewsService.fetchFullArticle(story.canonicalUrl) ?: return@withLock null
         }
         val updated = story.copy(
             summary = NewsSummary.bestAvailableSummary(
@@ -670,11 +682,47 @@ class CizgiRepository private constructor(private val context: Context) {
             imageUrl = story.imageUrl.ifBlank { content.imageUrl.orEmpty() },
             readTimeMin = maxOf(1, content.text.split(Regex("\\s+")).size / 220),
         )
+        completeArticleUntil[storyId] = System.currentTimeMillis() + 30 * 60_000L
         _stories.update { current -> current.map { if (it.id == storyId) updated else it } }
         withContext(Dispatchers.IO) {
             newsArticleDao.upsertAll(listOf(NewsArticleEntity.fromStory(updated)))
         }
-        return updated
+        updated
+    }
+
+    private fun prefetchReadingContent() {
+        prepareReadingContent(_stories.value.take(8).map { it.id })
+    }
+
+    fun prepareReadingContent(storyIds: List<String>) {
+        scope.launch { enqueueReadingContent(storyIds) }
+    }
+
+    private fun enqueueReadingContent(storyIds: List<String>) {
+        val now = System.currentTimeMillis()
+        val candidates = _stories.value.asSequence()
+            .filter { it.id in storyIds && it.canonicalUrl.startsWith("https://") && it.fullText.length < 1_200 }
+            .filter { now - (readingPrefetchAttempts[it.id] ?: 0L) > 15 * 60_000L }
+            .take(8).toList()
+        candidates.forEach { readingPrefetchAttempts[it.id] = now; pendingReadingIds.add(it.id) }
+        while (pendingReadingIds.size > 20) pendingReadingIds.remove(pendingReadingIds.first())
+        if (readingPrefetchJob?.isActive == true || pendingReadingIds.isEmpty()) return
+        readingPrefetchJob = scope.launch {
+            val semaphore = Semaphore(2)
+            while (pendingReadingIds.isNotEmpty()) {
+                val batch = pendingReadingIds.take(2)
+                pendingReadingIds.removeAll(batch.toSet())
+                coroutineScope {
+                    batch.map { id -> async {
+                        semaphore.withPermit {
+                            try { loadFullArticle(id) }
+                            catch (cancelled: CancellationException) { throw cancelled }
+                            catch (_: Exception) { null }
+                        }
+                    } }.awaitAll()
+                }
+            }
+        }
     }
 
     private fun enrichMissingStoryImages(stories: List<Story>) {
@@ -730,11 +778,13 @@ class CizgiRepository private constructor(private val context: Context) {
         if (activeSportsKey != requestKey) {
             activeSportsKey = requestKey
             sportsRefreshJob?.cancel()
+            sportsStatsJob?.cancel()
             _sportsSnapshot.value = SportsSnapshot(
                 competition = competition,
                 sportType = sportType,
                 seasonYear = resolvedSeason,
                 isLoading = true,
+                statsLoading = true,
             )
         }
         if (sportsRefreshJob?.isActive == true) return
@@ -742,14 +792,12 @@ class CizgiRepository private constructor(private val context: Context) {
     }
 
     private suspend fun refreshSportsData(competition: String, sportType: String, seasonYear: Int, requestKey: String) {
-        try {
-            if (seasonYear == currentSportsSeasonYear(competition, sportType)) {
-                val cachedScorers = cachedSportStatDao.getStatsDirect(competition, scorerCacheType(sportType))
-                if (cachedScorers.isNotEmpty() && activeSportsKey == requestKey) {
-                    _sportsSnapshot.update { it.copy(topScorers = cachedScorers.map { row -> row.toTopScorer() }) }
-                }
-            }
-        } catch (_: Exception) {}
+        val refreshStats = _sportsSnapshot.value.updatedAtEpochMs == 0L ||
+            System.currentTimeMillis() - (sportsStatsRefreshAt[requestKey] ?: 0L) > 15 * 60_000L
+        if (refreshStats && sportsStatsJob?.isActive != true) {
+            sportsStatsRefreshAt[requestKey] = System.currentTimeMillis()
+            sportsStatsJob = scope.launch { refreshSportsStats(competition, sportType, seasonYear, requestKey) }
+        }
 
         try {
             val hadPreviousFixtures = requestKey in sportsFixtureSelectionsLoaded
@@ -822,6 +870,20 @@ class CizgiRepository private constructor(private val context: Context) {
             throw cancelled
         } catch (_: Exception) {}
 
+        if (activeSportsKey == requestKey) _sportsSnapshot.update { it.copy(isLoading = false, updatedAtEpochMs = System.currentTimeMillis()) }
+    }
+
+    private suspend fun refreshSportsStats(competition: String, sportType: String, seasonYear: Int, requestKey: String) {
+        if (activeSportsKey == requestKey) _sportsSnapshot.update { it.copy(statsLoading = true) }
+        try {
+            if (seasonYear == currentSportsSeasonYear(competition, sportType)) {
+                val cachedScorers = cachedSportStatDao.getStatsDirect(competition, scorerCacheType(sportType))
+                if (cachedScorers.isNotEmpty() && activeSportsKey == requestKey) {
+                    _sportsSnapshot.update { it.copy(topScorers = cachedScorers.map { row -> row.toTopScorer() }) }
+                }
+            }
+        } catch (cancelled: CancellationException) { throw cancelled }
+        catch (_: Exception) { }
         try {
             val currentStandings = footballApiService.fetchStandings(competition, sportType, seasonYear)
             if (activeSportsKey != requestKey) return
@@ -838,6 +900,7 @@ class CizgiRepository private constructor(private val context: Context) {
         try {
             val scorers = footballApiService.fetchTopScorers(competition, sportType, seasonYear)
             if (activeSportsKey != requestKey) return
+            sportsStatsRefreshAt[requestKey] = System.currentTimeMillis()
             if (scorers.isNotEmpty() && seasonYear == currentSportsSeasonYear(competition, sportType)) {
                 try {
                     cachedSportStatDao.deleteStats(competition, scorerCacheType(sportType))
@@ -849,8 +912,7 @@ class CizgiRepository private constructor(private val context: Context) {
             _sportsSnapshot.update {
                 it.copy(
                     topScorers = scorers.ifEmpty { it.topScorers },
-                    isLoading = false,
-                    updatedAtEpochMs = System.currentTimeMillis(),
+                    statsLoading = false,
                     scorerMessage = if (scorers.isEmpty() && it.topScorers.isEmpty()) {
                         footballApiService.topScorersUnavailableMessage(sportType)
                     } else "",
@@ -860,7 +922,7 @@ class CizgiRepository private constructor(private val context: Context) {
             throw cancelled
         } catch (_: Exception) {
             if (activeSportsKey == requestKey) {
-                _sportsSnapshot.update { it.copy(isLoading = false) }
+                _sportsSnapshot.update { it.copy(statsLoading = false) }
             }
         }
     }
@@ -871,7 +933,7 @@ class CizgiRepository private constructor(private val context: Context) {
     }
 
     private fun currentSportsSeasonYear(competition: String, sportType: String): Int {
-        val today = java.time.LocalDate.now()
+        val today = java.time.LocalDate.now(java.time.ZoneId.of("Europe/Istanbul"))
         if (sportType == "BASKETBOL" && competition == "WNBA") return today.year
         return if (today.monthValue >= 7) today.year else today.year - 1
     }
@@ -1031,7 +1093,7 @@ class CizgiRepository private constructor(private val context: Context) {
 
     companion object {
         private const val NEWS_PAGE_SIZE = 120
-        private const val INITIAL_NEWS_LOAD_LIMIT = 3_000
+        private const val INITIAL_NEWS_LOAD_LIMIT = 120
         private const val MAX_STORIES_PER_REFRESH = 3_000
         private const val MAX_IN_MEMORY_STORIES = 10_000
         private const val MAX_ARCHIVE_ARTICLES = 100_000
@@ -1055,4 +1117,3 @@ class CizgiRepository private constructor(private val context: Context) {
         }
     }
 }
-

@@ -22,6 +22,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForwardIos
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material3.IconButton
 import androidx.compose.material.icons.filled.Brightness4
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Info
@@ -30,6 +32,7 @@ import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.SportsSoccer
 import androidx.compose.material.icons.filled.Topic
+import androidx.compose.material.icons.filled.TextFields
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -73,6 +76,7 @@ fun ProfilScreen(
     onNavigateWeather: () -> Unit,
     onNavigateNotifications: () -> Unit,
     modifier: Modifier = Modifier,
+    onBack: () -> Unit = {},
 ) {
     val prefs by repository.preferences.collectAsState()
     var showThemeDialog by remember { mutableStateOf(false) }
@@ -112,15 +116,19 @@ fun ProfilScreen(
         modifier = modifier
             .fillMaxSize()
             .testTag("profil_screen"),
-        contentPadding = PaddingValues(16.dp),
+        contentPadding = PaddingValues(20.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        // Header Profile Card
+        item {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = onBack, modifier = Modifier.size(36.dp)) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Geri") }
+                Text("Ayarlar", style = MaterialTheme.typography.headlineMedium, modifier = Modifier.padding(start = 8.dp))
+            }
+        }
         item {
             Card(
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                border = CardDefaults.outlinedCardBorder().copy(brush = androidx.compose.ui.graphics.SolidColor(CizgiColor.BorderLight)),
+                shape = RoundedCornerShape(24.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Row(
@@ -132,7 +140,7 @@ fun ProfilScreen(
                 ) {
                     Box(
                         modifier = Modifier
-                            .size(52.dp)
+                            .size(44.dp)
                             .clip(CircleShape)
                             .background(MaterialTheme.colorScheme.primary),
                         contentAlignment = Alignment.Center,
@@ -147,11 +155,11 @@ fun ProfilScreen(
 
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "Misafir Kullanıcı",
+                            text = "Senin Çizgin",
                             style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
                         )
                         Text(
-                            text = "Tercihleriniz bu cihazda güvenle saklanır",
+                            text = "${prefs.followedTopics.size} konu · ${prefs.followedTeams.size} takım takip ediliyor",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -169,21 +177,21 @@ fun ProfilScreen(
             SettingCard {
                 SettingNavigationRow(
                     icon = Icons.Default.Topic,
-                    title = "Takip Edilen Konular",
+                    title = "İlgi alanları",
                     subtitle = "${prefs.followedTopics.size} konu seçili",
                     onClick = onNavigateTopics,
                 )
-                HorizontalDivider(color = CizgiColor.BorderLight.copy(alpha = 0.5f))
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 SettingNavigationRow(
                     icon = Icons.Default.SportsSoccer,
-                    title = "Takım ve Lig Takibi",
+                    title = "Takım ve lig takibi",
                     subtitle = "${prefs.followedTeams.size} takım takip ediliyor",
                     onClick = onNavigateSports,
                 )
-                HorizontalDivider(color = CizgiColor.BorderLight.copy(alpha = 0.5f))
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 SettingNavigationRow(
                     icon = Icons.Default.LocationOn,
-                    title = "Hava Durumu Şehri",
+                    title = "Hava konumu",
                     subtitle = prefs.selectedCity,
                     onClick = onNavigateWeather,
                 )
@@ -192,14 +200,14 @@ fun ProfilScreen(
 
         // Section: Görünüm & Okuma
         item {
-            SettingSectionHeader("GÖRÜNÜM VE OKUMA DİLİ")
+            SettingSectionHeader("GÖRÜNÜM VE OKUMA")
         }
 
         item {
             SettingCard {
                 SettingNavigationRow(
                     icon = Icons.Default.Brightness4,
-                    title = "Tema Seçimi",
+                    title = "Görünüm",
                     subtitle = when (prefs.themeMode) {
                         "dark" -> "Koyu Tema"
                         "system" -> "Sistem Varsayılanı"
@@ -207,11 +215,11 @@ fun ProfilScreen(
                     },
                     onClick = { showThemeDialog = true },
                 )
-                HorizontalDivider(color = CizgiColor.BorderLight.copy(alpha = 0.5f))
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 SettingNavigationRow(
-                    icon = Icons.Default.Topic,
-                    title = "Okuma Yazı Boyutu",
-                    subtitle = if (prefs.fontSize == "large") "Büyük (18sp)" else "Normal (16sp)",
+                    icon = Icons.Default.TextFields,
+                    title = "Yazı boyutu",
+                    subtitle = if (prefs.fontSize == "large") "Büyük" else "Standart",
                     onClick = { showFontSizeDialog = true },
                 )
             }
@@ -230,21 +238,21 @@ fun ProfilScreen(
                     subtitle = "Geçmiş bildirimler ve arşiv",
                     onClick = onNavigateNotifications,
                 )
-                HorizontalDivider(color = CizgiColor.BorderLight.copy(alpha = 0.5f))
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 SettingSwitchRow(
-                    title = "Son Dakika Bildirimleri",
-                    subtitle = "Önemli editoryal gelişmeler anlık iletilir",
+                    title = "Son dakika bildirimleri",
+                    subtitle = "Önemli gelişmelerden haberdar ol",
                     checked = prefs.breakingAlerts,
                     onCheckedChange = { setNotificationToggle("breaking", it) },
                 )
-                HorizontalDivider(color = CizgiColor.BorderLight.copy(alpha = 0.5f))
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 SettingSwitchRow(
-                    title = "Maç Başlangıç ve Gol Alarmları",
+                    title = "Maç ve gol bildirimleri",
                     subtitle = "Takip ettiğin takımların maçlarında",
                     checked = prefs.matchAlerts,
                     onCheckedChange = { setNotificationToggle("matches", it) },
                 )
-                HorizontalDivider(color = CizgiColor.BorderLight.copy(alpha = 0.5f))
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 SettingSwitchRow(
                     title = "Sessiz Saatler (${prefs.quietHoursStart} - ${prefs.quietHoursEnd})",
                     subtitle = "Başlığa dokunup saatleri düzenle; bu aralıkta telefon bildirimleri susar",
@@ -268,11 +276,11 @@ fun ProfilScreen(
                     subtitle = "Kayıtlı haberleri ve cihazdaki haber önbelleğini temizle",
                     onClick = { showClearDataDialog = true },
                 )
-                HorizontalDivider(color = CizgiColor.BorderLight.copy(alpha = 0.5f))
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 SettingNavigationRow(
                     icon = Icons.Default.Info,
-                    title = "Çizgi Hakkında & Editoryal Standartlar",
-                    subtitle = "Sürüm 1.0.0 · Bağımsız habercilik",
+                    title = "Çizgi hakkında",
+                    subtitle = "Sürüm ${com.example.BuildConfig.VERSION_NAME}",
                     onClick = { showAboutDialog = true },
                 )
             }
@@ -322,7 +330,7 @@ fun ProfilScreen(
             title = { Text("Yazı Boyutu") },
             text = {
                 Column {
-                    listOf("normal" to "Normal (16sp)", "large" to "Büyük (18sp)").forEach { (key, label) ->
+                    listOf("normal" to "Standart", "large" to "Büyük").forEach { (key, label) ->
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier
@@ -442,9 +450,9 @@ fun ProfilScreen(
 @Composable
 private fun SettingSectionHeader(title: String) {
     Text(
-        text = title,
-        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, letterSpacing = 0.8.sp),
-        color = MaterialTheme.colorScheme.primary,
+        text = title.lowercase(Locale.forLanguageTag("tr-TR")).replaceFirstChar { it.uppercaseChar() },
+        style = MaterialTheme.typography.titleSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
         modifier = Modifier.padding(start = 4.dp, top = 4.dp),
     )
 }
@@ -452,9 +460,8 @@ private fun SettingSectionHeader(title: String) {
 @Composable
 private fun SettingCard(content: @Composable () -> Unit) {
     Card(
-        shape = RoundedCornerShape(14.dp),
+        shape = RoundedCornerShape(22.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        border = CardDefaults.outlinedCardBorder().copy(brush = androidx.compose.ui.graphics.SolidColor(CizgiColor.BorderLight)),
         modifier = Modifier.fillMaxWidth(),
     ) {
         Column(modifier = Modifier.fillMaxWidth()) {
@@ -478,12 +485,9 @@ private fun SettingNavigationRow(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.size(22.dp),
-        )
+        Box(Modifier.size(36.dp).clip(RoundedCornerShape(11.dp)).background(MaterialTheme.colorScheme.primaryContainer), contentAlignment = Alignment.Center) {
+            Icon(icon, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(19.dp))
+        }
 
         Column(modifier = Modifier.weight(1f)) {
             Text(
@@ -548,4 +552,3 @@ private fun SettingSwitchRow(
         )
     }
 }
-

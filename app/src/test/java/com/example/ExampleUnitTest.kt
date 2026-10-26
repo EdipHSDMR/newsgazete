@@ -57,11 +57,12 @@ class ExampleUnitTest {
     }
 
     @Test
-    fun userPreferences_defaultValues() {
+    fun newUsersChooseTheirOwnTopicsAndTeams() {
         val prefs = UserPreferences()
         assertEquals("light", prefs.themeMode)
         assertEquals("İstanbul", prefs.selectedCity)
         assertTrue(prefs.breakingAlerts)
-        assertTrue(prefs.followedTopics.contains("Türkiye"))
+        assertTrue(prefs.followedTopics.isEmpty())
+        assertTrue(prefs.followedTeams.isEmpty())
     }
 }

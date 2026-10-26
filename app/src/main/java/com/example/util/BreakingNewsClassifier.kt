@@ -22,7 +22,7 @@ object BreakingNewsClassifier {
 
     fun latest(stories: List<Story>, nowEpochMs: Long = System.currentTimeMillis()): Story? = stories
         .asSequence()
-        .filter { story -> isBreaking(story.title, story.publishedAtEpochMs, nowEpochMs, story.isBreaking) }
+        .filter { story -> isBreaking(story.title, story.publishedAtEpochMs, nowEpochMs, story.isBreaking && story.id.startsWith("pha-")) }
         .sortedByDescending { it.publishedAtEpochMs }
         .distinctBy { story -> story.canonicalUrl.ifBlank { story.id } }
         .firstOrNull()

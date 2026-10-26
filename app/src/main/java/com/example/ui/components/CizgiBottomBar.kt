@@ -1,96 +1,70 @@
 package com.example.ui.components
 
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.defaultMinSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.navigationBars
-import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Article
-import androidx.compose.material.icons.filled.Bookmark
-import androidx.compose.material.icons.filled.Explore
-import androidx.compose.material.icons.filled.SportsSoccer
-import androidx.compose.material.icons.filled.TrendingUp
-import androidx.compose.material.icons.outlined.Article
-import androidx.compose.material.icons.outlined.BookmarkBorder
-import androidx.compose.material.icons.outlined.Explore
-import androidx.compose.material.icons.outlined.SportsSoccer
-import androidx.compose.material.icons.outlined.TrendingUp
+import androidx.compose.material.icons.automirrored.filled.Article
+import androidx.compose.material.icons.automirrored.outlined.Article
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.ui.theme.CizgiColor
 
-enum class CizgiScreen(
-    val route: String,
-    val title: String,
-    val selectedIcon: ImageVector,
-    val unselectedIcon: ImageVector,
-) {
-    AKIS("akis", "Akış", Icons.Filled.Article, Icons.Outlined.Article),
+enum class CizgiScreen(val route: String, val title: String, val selectedIcon: ImageVector, val unselectedIcon: ImageVector) {
+    AKIS("akis", "Akış", Icons.AutoMirrored.Filled.Article, Icons.AutoMirrored.Outlined.Article),
     KESFET("kesfet", "Keşfet", Icons.Filled.Explore, Icons.Outlined.Explore),
     SPOR("spor", "Spor", Icons.Filled.SportsSoccer, Icons.Outlined.SportsSoccer),
-    KAYDEDILENLER("kaydedilenler", "Kayıtlar", Icons.Filled.Bookmark, Icons.Outlined.BookmarkBorder),
-    PIYASA("piyasa", "Piyasa", Icons.Filled.TrendingUp, Icons.Outlined.TrendingUp),
+    KAYDEDILENLER("kaydedilenler", "Kitaplık", Icons.Filled.Bookmark, Icons.Outlined.BookmarkBorder),
+    PIYASA("piyasa", "Piyasa", Icons.Filled.BarChart, Icons.Outlined.BarChart),
 }
 
 @Composable
-fun CizgiBottomBar(
-    currentScreen: CizgiScreen,
-    onNavigate: (CizgiScreen) -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    NavigationBar(
-        containerColor = MaterialTheme.colorScheme.surface,
-        contentColor = MaterialTheme.colorScheme.onSurface,
-        tonalElevation = 4.dp,
-        windowInsets = WindowInsets.navigationBars,
-        modifier = modifier
-            .fillMaxWidth()
-            .defaultMinSize(minHeight = 58.dp)
-            .testTag("cizgi_bottom_bar"),
-    ) {
-        CizgiScreen.entries.forEach { screen ->
-            val isSelected = currentScreen == screen
-            NavigationBarItem(
-                selected = isSelected,
-                onClick = { onNavigate(screen) },
-                icon = {
-                    Icon(
-                        imageVector = if (isSelected) screen.selectedIcon else screen.unselectedIcon,
-                        contentDescription = screen.title,
-                    )
-                },
-                label = {
-                    Text(
-                        text = screen.title,
-                        style = MaterialTheme.typography.labelSmall.copy(
-                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                            fontSize = 11.sp,
-                        ),
-                        maxLines = 1,
-                        softWrap = false,
-                    )
-                },
-                colors = NavigationBarItemDefaults.colors(
-                    selectedIconColor = MaterialTheme.colorScheme.onPrimary,
-                    selectedTextColor = MaterialTheme.colorScheme.primary,
-                    indicatorColor = MaterialTheme.colorScheme.primary,
-                    unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                    unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                ),
-                modifier = Modifier.testTag("nav_item_${screen.route}"),
-            )
+fun CizgiBottomBar(currentScreen: CizgiScreen, onNavigate: (CizgiScreen) -> Unit, modifier: Modifier = Modifier) {
+    Box(modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 16.dp, vertical = 8.dp)) {
+        BoxWithConstraints(
+            Modifier.fillMaxWidth().height(64.dp).shadow(18.dp, RoundedCornerShape(25.dp))
+                .clip(RoundedCornerShape(25.dp)).background(CizgiColor.NavyDark).testTag("cizgi_bottom_bar"),
+        ) {
+            val cell = maxWidth / CizgiScreen.entries.size
+            val offset by animateDpAsState(cell * currentScreen.ordinal + 5.dp, spring(dampingRatio = 0.8f, stiffness = 420f), label = "navigation")
+            Box(Modifier.offset(x = offset, y = 6.dp).width(cell - 10.dp).height(52.dp).clip(RoundedCornerShape(19.dp)).background(CizgiColor.Blue))
+            Row(Modifier.fillMaxSize()) {
+                CizgiScreen.entries.forEach { screen ->
+                    val active = screen == currentScreen
+                    val color by animateColorAsState(if (active) Color.White else Color(0xFF98A6BC), label = "tab_color")
+                    Column(
+                        modifier = Modifier.weight(1f).fillMaxHeight().clip(RoundedCornerShape(22.dp))
+                            .clickable(role = Role.Tab) { onNavigate(screen) }
+                            .semantics { selected = active }.testTag("nav_item_" + screen.route),
+                        horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center,
+                    ) {
+                        Icon(if (active) screen.selectedIcon else screen.unselectedIcon, contentDescription = screen.title, tint = color, modifier = Modifier.size(21.dp))
+                        Spacer(Modifier.height(4.dp))
+                        Text(screen.title, color = color, fontSize = 10.sp, lineHeight = 12.sp, fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal, maxLines = 1)
+                    }
+                }
+            }
         }
     }
 }
-

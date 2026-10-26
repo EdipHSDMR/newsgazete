@@ -1,511 +1,146 @@
 package com.example.ui.screens
 
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Clear
-import androidx.compose.material.icons.filled.LocationOn
-import androidx.compose.material.icons.filled.Place
-import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Search
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.outlined.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.CizgiRepository
+import com.example.ui.components.CityDistrictPickerDialog
 import com.example.ui.theme.CizgiColor
 
 @Composable
-fun HavaScreen(
-    repository: CizgiRepository,
-    onBack: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
+fun HavaScreen(repository: CizgiRepository, onBack: () -> Unit, modifier: Modifier = Modifier) {
     val weather by repository.weather.collectAsState()
-    val isRefreshing by repository.isRefreshing.collectAsState()
-
     val prefs by repository.preferences.collectAsState()
-    var showCityPicker by remember { mutableStateOf(false) }
-
-    // Fetch live data immediately on screen load
-    LaunchedEffect(prefs.selectedCity, prefs.selectedDistrict) {
-        val q = if (!prefs.selectedDistrict.isNullOrBlank()) "${prefs.selectedDistrict}, ${prefs.selectedCity}" else prefs.selectedCity
-        repository.fetchLiveWeather(q)
-    }
-
-    if (showCityPicker) {
-        com.example.ui.components.CityDistrictPickerDialog(
-            currentCity = prefs.selectedCity,
-            currentDistrict = prefs.selectedDistrict,
-            onDismiss = { showCityPicker = false },
-            onSelect = { city, district ->
-                repository.selectCityAndDistrict(city, district)
-                showCityPicker = false
-            }
-        )
-    }
-
-    val displayName = if (!prefs.selectedDistrict.isNullOrBlank()) {
-        "${prefs.selectedDistrict}, ${prefs.selectedCity}"
-    } else {
-        weather.cityName
-    }
-
-
-
-    fun getWeatherEmoji(condition: String): String {
-        val lower = condition.lowercase()
-        return when {
-            lower.contains("bekleniyor") || lower.contains("veri yok") || lower.contains("alınamadı") -> "⏳"
-            lower.contains("kar") || lower.contains("blizzard") || lower.contains("buz") -> "❄️"
-            lower.contains("fırtına") || lower.contains("şimşek") || lower.contains("gök gürültü") -> "⛈️"
-            lower.contains("sağanak") || lower.contains("yağmur") || lower.contains("çise") -> "🌧️"
-            lower.contains("sis") || lower.contains("pus") || lower.contains("duman") -> "🌫️"
-            lower.contains("parçalı") || lower.contains("az bulutlu") -> "⛅"
-            lower.contains("bulut") || lower.contains("kapalı") -> "☁️"
-            lower.contains("güneş") || lower.contains("açık") -> "☀️"
-            else -> "🌤️"
-        }
-    }
-
-    val heroEmoji = remember(weather.condition) { getWeatherEmoji(weather.condition) }
-
+    var picker by remember { mutableStateOf(false) }
+    val location = listOfNotNull(prefs.selectedDistrict, prefs.selectedCity).filter(String::isNotBlank).joinToString(", ")
+    LaunchedEffect(location) { repository.fetchLiveWeather(location) }
+    if (picker) CityDistrictPickerDialog(
+        currentCity = prefs.selectedCity, currentDistrict = prefs.selectedDistrict, onDismiss = { picker = false },
+        onSelect = { city, district -> repository.selectCityAndDistrict(city, district); picker = false },
+    )
     LazyColumn(
-        modifier = modifier
-            .fillMaxSize()
-            .testTag("hava_screen"),
-        contentPadding = PaddingValues(16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
+        modifier.fillMaxSize().testTag("hava_screen"), contentPadding = PaddingValues(20.dp),
+        verticalArrangement = Arrangement.spacedBy(18.dp),
     ) {
-        // Top Bar
         item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    IconButton(
-                        onClick = onBack,
-                        modifier = Modifier.size(40.dp),
-                    ) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Geri",
-                            tint = MaterialTheme.colorScheme.onSurface,
-                        )
-                    }
-
-                    Column {
-                        Text(
-                            text = "METEOROLOJİ",
-                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                            color = MaterialTheme.colorScheme.primary,
-                        )
-                        Text(
-                            text = "Hava Durumu",
-                            style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.Bold),
-                            color = MaterialTheme.colorScheme.onSurface,
-                        )
-                    }
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onBack, Modifier.size(36.dp)) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Geri") }
+                Text("Hava", style = MaterialTheme.typography.headlineMedium, modifier = Modifier.weight(1f).padding(start = 7.dp))
+                IconButton({ repository.fetchLiveWeather(location) }, Modifier.size(36.dp)) { Icon(Icons.Outlined.Refresh, "Hava durumunu yenile", modifier = Modifier.size(20.dp)) }
+            }
+        }
+        item {
+            Surface(onClick = { picker = true }, color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth().testTag("location_management_card")) {
+                Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+                    Icon(Icons.Outlined.LocationOn, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(19.dp))
+                    Text(location, style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+                    Icon(Icons.Outlined.ExpandMore, "Konum değiştir", modifier = Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    // Refresh Button
-                    IconButton(
-                        onClick = {
-                            val q = if (!prefs.selectedDistrict.isNullOrBlank()) "${prefs.selectedDistrict}, ${prefs.selectedCity}" else weather.cityName
-                            repository.fetchLiveWeather(q)
-                        },
-                        modifier = Modifier.size(36.dp),
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Refresh,
-                            contentDescription = "Yenile",
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(20.dp),
-                        )
+            }
+        }
+        item {
+            Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(28.dp)).background(Brush.linearGradient(listOf(CizgiColor.Blue, Color(0xFF8098F0))))) {
+                Column(Modifier.fillMaxWidth().padding(25.dp), verticalArrangement = Arrangement.spacedBy(15.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text(weather.currentTempC?.let { "$it°" } ?: "–", color = Color.White, fontSize = 62.sp, lineHeight = 68.sp, fontWeight = FontWeight.Light, letterSpacing = (-3).sp)
+                            Text(weather.condition, color = Color.White, style = MaterialTheme.typography.titleMedium)
+                        }
+                        Icon(weatherIcon(weather.condition), null, tint = Color.White.copy(alpha = 0.9f), modifier = Modifier.size(66.dp))
+                    }
+                    if (weather.daily.isNotEmpty()) {
+                        val day = weather.daily.first()
+                        Text("En yüksek " + day.maxTempC + "°  ·  En düşük " + day.minTempC + "°", color = Color.White.copy(alpha = 0.85f), style = MaterialTheme.typography.labelMedium)
                     }
                 }
             }
         }
-
-        // Seçili konum
         item {
-            Card(
-                shape = RoundedCornerShape(14.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                border = CardDefaults.outlinedCardBorder().copy(
-                    brush = SolidColor(MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
-                ),
-                modifier = Modifier.fillMaxWidth().testTag("location_management_card"),
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        modifier = Modifier.weight(1f),
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Place,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(20.dp),
-                        )
-                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                            Text(
-                                text = "KONUM",
-                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                                color = MaterialTheme.colorScheme.primary,
-                            )
-                            Text(
-                                text = displayName,
-                                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                                color = MaterialTheme.colorScheme.onSurface,
-                            )
-                        }
-                    }
-                    Button(
-                        onClick = { showCityPicker = true },
-                        shape = RoundedCornerShape(10.dp),
-                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                        modifier = Modifier.height(38.dp),
-                    ) {
-                        Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(Modifier.width(4.dp))
-                        Text("Konumu değiştir", fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                    }
-                }
-            }
-        }
-        // Hero Weather Card (Dynamic Gradient Background)
-        item {
-            Card(
-                shape = RoundedCornerShape(20.dp),
-                colors = CardDefaults.cardColors(containerColor = Color.Transparent),
-                elevation = CardDefaults.cardElevation(defaultElevation = 3.dp),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(20.dp))
-                    .background(
-                        Brush.linearGradient(
-                            listOf(
-                                Color(0xFF132B45),
-                                Color(0xFF0F1E30),
-                                Color(0xFF0A1624),
-                            )
-                        )
-                    ),
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(22.dp),
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Column {
-                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                Text(
-                                    text = displayName,
-                                    style = MaterialTheme.typography.titleLarge.copy(
-                                        fontWeight = FontWeight.Bold,
-                                        color = Color.White,
-                                    ),
-                                )
-                                val hasWeatherData = weather.currentTempC != null
-                                Surface(
-                                    shape = RoundedCornerShape(4.dp),
-                                    color = (if (hasWeatherData) Color(0xFF16A34A) else Color.White).copy(alpha = if (hasWeatherData) 0.25f else 0.12f),
-                                ) {
-                                    Text(
-                                        text = if (hasWeatherData) "CANLI" else "BEKLENİYOR",
-                                        color = if (hasWeatherData) Color(0xFF4ADE80) else Color(0xFFCBD5E1),
-                                        fontSize = 10.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                                    )
-                                }
-                            }
-                            Text(
-                                text = weather.condition,
-                                style = MaterialTheme.typography.bodyMedium.copy(color = Color(0xFF93C5FD)),
-                            )
-                        }
-                        Text(heroEmoji, fontSize = 48.sp)
-                    }
-
-                    Spacer(Modifier.height(16.dp))
-
-                    Row(verticalAlignment = Alignment.Bottom) {
-                        Text(
-                            text = weather.currentTempC?.let { "$it°" } ?: "--°",
-                            fontSize = 68.sp,
-                            fontWeight = FontWeight.Black,
-                            color = Color.White,
-                            lineHeight = 68.sp,
-                        )
-                        Spacer(Modifier.width(12.dp))
-                        Column(modifier = Modifier.padding(bottom = 6.dp)) {
-                            Text(
-                                text = "Hissedilen: ${weather.feelsLikeC?.let { "$it°C" } ?: "—"}",
-                                style = MaterialTheme.typography.bodySmall.copy(color = CizgiColor.Gold, fontWeight = FontWeight.Bold),
-                            )
-                            Text(
-                                text = "Yağış İhtimali: ${weather.rainChancePct?.let { "%$it" } ?: "—"}",
-                                style = MaterialTheme.typography.bodySmall.copy(color = Color(0xFFE2E8F0)),
-                            )
-                        }
-                    }
-
-                    Spacer(Modifier.height(14.dp))
-
-                    Text(
-                        text = weather.summary,
-                        style = MaterialTheme.typography.bodySmall.copy(color = Color(0xFFE2E8F0)),
-                    )
-
-                    Spacer(Modifier.height(16.dp))
-
-                    // 4 Environmental Metric Badges
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(Color.White.copy(alpha = 0.09f))
-                            .padding(vertical = 10.dp, horizontal = 12.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                    ) {
-                        MetricItem("Nem", weather.humidityPct?.let { "%$it" } ?: "—")
-                        MetricItem("Rüzgar", weather.windKmh?.let { "$it km/s" } ?: "—")
-                        MetricItem("UV İndeks", weather.uvIndex?.toString() ?: "—")
-                        MetricItem(
-                            "Kaynak",
-                            when {
-                                weather.currentTempC == null -> "Bekleniyor"
-                                weather.lastUpdated == "Open-Meteo" -> "Open-Meteo"
-                                else -> "WeatherAPI"
-                            },
-                        )
-                    }
-                }
-            }
-        }
-
-        // Hourly Forecast Section (Dynamic Condition Emojis)
-        item {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(
-                    text = "SAATLİK HAVA TAHMİNİ",
-                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, letterSpacing = 0.8.sp),
-                    color = MaterialTheme.colorScheme.primary,
-                )
-
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    weather.hourly.forEach { hourItem ->
-                        val itemEmoji = getWeatherEmoji(hourItem.condition)
-                        Surface(
-                            shape = RoundedCornerShape(14.dp),
-                            color = MaterialTheme.colorScheme.surface,
-                            border = CardDefaults.outlinedCardBorder().copy(brush = SolidColor(MaterialTheme.colorScheme.outlineVariant)),
-                            modifier = Modifier.width(80.dp),
-                        ) {
-                            Column(
-                                modifier = Modifier.padding(vertical = 12.dp, horizontal = 8.dp),
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                verticalArrangement = Arrangement.spacedBy(6.dp),
-                            ) {
-                                Text(
-                                    text = hourItem.hour,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                                Text(itemEmoji, fontSize = 22.sp)
-                                Text(
-                                    text = "${hourItem.tempC}°",
-                                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                                    color = MaterialTheme.colorScheme.onSurface,
-                                )
-                                Text(
-                                    text = "%${hourItem.rainProbPct}",
-                                    fontSize = 11.sp,
-                                    color = MaterialTheme.colorScheme.primary,
-                                    fontWeight = FontWeight.SemiBold,
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // Forecast length follows the active provider's real free-plan coverage.
-        item {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(
-                    text = if (weather.daily.isEmpty()) "HAVA TAHMİNİ" else "${weather.daily.size} GÜNLÜK HAVA TAHMİNİ",
-                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, letterSpacing = 0.8.sp),
-                    color = MaterialTheme.colorScheme.primary,
-                )
-
-                Card(
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                    border = CardDefaults.outlinedCardBorder().copy(brush = SolidColor(MaterialTheme.colorScheme.outlineVariant)),
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Column(
-                        modifier = Modifier.padding(14.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp),
-                    ) {
-                        weather.daily.forEach { dayItem ->
-                            val dayEmoji = getWeatherEmoji(dayItem.condition)
-                            val progressRatio = ((dayItem.maxTempC - dayItem.minTempC).toFloat() / 15f).coerceIn(0.2f, 1f)
-
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                            ) {
-                                Text(
-                                    text = dayItem.dayName,
-                                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
-                                    color = MaterialTheme.colorScheme.onSurface,
-                                    modifier = Modifier.width(90.dp),
-                                )
-
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                    modifier = Modifier.width(100.dp),
-                                ) {
-                                    Text(dayEmoji, fontSize = 18.sp)
-                                    Text(
-                                        text = "%${dayItem.rainProbPct}",
-                                        fontSize = 11.sp,
-                                        color = MaterialTheme.colorScheme.primary,
-                                        fontWeight = FontWeight.Medium,
-                                    )
-                                }
-
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                ) {
-                                    Text(
-                                        text = "${dayItem.minTempC}°",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
-
-                                    LinearProgressIndicator(
-                                        progress = { progressRatio },
-                                        modifier = Modifier
-                                            .width(55.dp)
-                                            .height(5.dp)
-                                            .clip(RoundedCornerShape(3.dp)),
-                                        color = CizgiColor.Gold,
-                                        trackColor = MaterialTheme.colorScheme.surfaceVariant,
-                                    )
-
-                                    Text(
-                                        text = "${dayItem.maxTempC}°",
-                                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
-                                        color = MaterialTheme.colorScheme.onSurface,
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // Attribution Note
-        item {
-            Text(
-                text = when {
-                    weather.lastUpdated == "Veri bekleniyor" -> "Güncel hava verisi bekleniyor."
-                    weather.lastUpdated == "Open-Meteo" -> "Kaynak: Open-Meteo · CC BY 4.0"
-                    else -> "Kaynak: WeatherAPI · Son güncelleme: ${weather.lastUpdated}"
-                },
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = TextAlign.Center,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 10.dp),
+            val metrics = listOf(
+                Triple(Icons.Outlined.Thermostat, "Hissedilen", weather.feelsLikeC?.let { "$it°" } ?: "–"),
+                Triple(Icons.Outlined.Air, "Rüzgâr", weather.windKmh?.let { "$it km/sa" } ?: "–"),
+                Triple(Icons.Outlined.WaterDrop, "Nem", weather.humidityPct?.let { "%$it" } ?: "–"),
+                Triple(Icons.Outlined.WbSunny, "UV indeksi", weather.uvIndex?.toString() ?: "–"),
             )
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                metrics.chunked(2).forEach { row ->
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        row.forEach { (icon, title, value) ->
+                            Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(18.dp), modifier = Modifier.weight(1f)) {
+                                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                                        Icon(icon, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(15.dp))
+                                        Text(title, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    Text(value, style = MaterialTheme.typography.titleMedium)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
+        if (weather.hourly.isNotEmpty()) {
+            item { Text("Saat saat", style = MaterialTheme.typography.titleLarge) }
+            item {
+                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+                    weather.hourly.forEach { hour ->
+                        Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(18.dp)) {
+                            Column(Modifier.padding(horizontal = 15.dp, vertical = 14.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                Text(hour.hour, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Icon(weatherIcon(hour.condition), null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(22.dp))
+                                Text(hour.tempC.toString() + "°", style = MaterialTheme.typography.titleSmall)
+                                Text("%" + hour.rainProbPct, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if (weather.daily.isNotEmpty()) item { Text("Önümüzdeki günler", style = MaterialTheme.typography.titleLarge) }
+        items(weather.daily) { day ->
+            Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(16.dp)) {
+                Row(Modifier.fillMaxWidth().padding(15.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(day.dayName, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
+                    Icon(weatherIcon(day.condition), null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
+                    Text("%" + day.rainProbPct, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(day.minTempC.toString() + "°", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(day.maxTempC.toString() + "°", style = MaterialTheme.typography.titleSmall)
+                }
+            }
+        }
+        item { Text("WeatherAPI · " + weather.lastUpdated, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
     }
 }
 
-@Composable
-private fun MetricItem(label: String, value: String) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(text = label, fontSize = 11.sp, color = Color(0xFF94A3B8))
-        Text(text = value, fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color.White)
+private fun weatherIcon(condition: String): ImageVector {
+    val text = condition.lowercase()
+    return when {
+        "kar" in text || "snow" in text -> Icons.Outlined.AcUnit
+        "fırtına" in text || "gök gür" in text || "thunder" in text -> Icons.Outlined.Thunderstorm
+        "yağmur" in text || "sağanak" in text || "rain" in text -> Icons.Outlined.Grain
+        "bulut" in text || "kapalı" in text || "cloud" in text -> Icons.Outlined.Cloud
+        "sis" in text || "pus" in text -> Icons.Outlined.BlurOn
+        "açık" in text || "güneş" in text || "sun" in text || "clear" in text -> Icons.Outlined.WbSunny
+        else -> Icons.Outlined.HourglassEmpty
     }
 }
-

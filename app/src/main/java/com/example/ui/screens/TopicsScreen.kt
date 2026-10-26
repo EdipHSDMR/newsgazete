@@ -64,12 +64,12 @@ fun TopicsScreen(
                 }
                 Column {
                     Text(
-                        text = "KİŞİSELLEŞTİRME",
+                        text = "Senin için",
                         style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
                         color = MaterialTheme.colorScheme.primary,
                     )
                     Text(
-                        text = "Takip Edilen Konular",
+                        text = "İlgi alanların",
                         style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.Bold),
                     )
                 }
@@ -78,7 +78,7 @@ fun TopicsScreen(
 
         item {
             Text(
-                text = "İlgi duyduğunuz konuları seçerek ana akışınızı ve bildirim tercihlerinizi özelleştirebilirsiniz. Tercihler yalnızca cihazınızda saklanır.",
+                text = "Seçtiğin konular akıştaki Senin için görünümünü belirler.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -88,9 +88,8 @@ fun TopicsScreen(
         items(availableTopics) { topic ->
             val isFollowed = topic in prefs.followedTopics
             Card(
-                shape = RoundedCornerShape(12.dp),
+                shape = RoundedCornerShape(20.dp),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                border = CardDefaults.outlinedCardBorder().copy(brush = androidx.compose.ui.graphics.SolidColor(CizgiColor.BorderLight)),
                 modifier = Modifier
                     .fillMaxWidth()
                     .clickable { repository.toggleFollowTopic(topic) },
@@ -140,4 +139,3 @@ fun TopicsScreen(
         }
     }
 }
-

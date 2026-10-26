@@ -3,6 +3,7 @@ package com.example.data.remote
 import com.example.model.SourceComparison
 import com.example.model.Story
 import com.example.util.NewsSummary
+import com.example.util.ArticleTextExtractor
 import com.example.util.NewsStoryDeduplicator
 import com.example.util.BreakingNewsClassifier
 import android.text.Html
@@ -164,7 +165,7 @@ class RssNewsService(private val httpClient: OkHttpClient) {
         }
     }
 
-    /** Loads a publisher's article body only after the reader asks for it. */
+    /** Loads the publisher's article body for the reader and bounded background prefetch. */
     suspend fun fetchFullArticle(url: String): SourceArticleContent? = withContext(Dispatchers.IO) {
         val uri = runCatching { URI(url) }.getOrNull() ?: return@withContext null
         if (uri.scheme != "https" || uri.host.isNullOrBlank() || !isReaderPublisher(uri.host)) return@withContext null
@@ -179,18 +180,11 @@ class RssNewsService(private val httpClient: OkHttpClient) {
                 if (!response.isSuccessful || !isReaderPublisher(response.request.url.host)) return@withContext null
                 val html = response.peekBody(MAX_ARTICLE_PAGE_BYTES).string()
                 val structuredBody = extractStructuredArticleBody(html)
-                val articleMarkup = ARTICLE_ELEMENT.find(html)?.groupValues?.getOrNull(1).orEmpty()
-                val extractedParagraphs = ARTICLE_PARAGRAPH.findAll(articleMarkup)
-                    .map { cleanHtml(it.groupValues[1]) }
-                    .filter { it.length >= MIN_ARTICLE_PARAGRAPH_CHARS && !isReaderBoilerplate(it) }
-                    .distinctBy { it.lowercase(Locale.forLanguageTag("tr-TR")) }
-                    .take(MAX_ARTICLE_PARAGRAPHS)
-                    .toList()
+                val extractedParagraphs = ArticleTextExtractor.paragraphs(html)
 
                 val paragraphs = when {
-                    !structuredBody.isNullOrBlank() -> sourceParagraphs(cleanHtml(structuredBody))
-                    extractedParagraphs.size >= 2 -> extractedParagraphs
-                    articleMarkup.isNotBlank() -> sourceParagraphs(cleanHtml(articleMarkup))
+                    !structuredBody.isNullOrBlank() -> sourceParagraphs(structuredBody)
+                    extractedParagraphs.isNotEmpty() -> extractedParagraphs
                     else -> emptyList()
                 }.filter { it.length >= MIN_ARTICLE_PARAGRAPH_CHARS && !isReaderBoilerplate(it) }
 
@@ -211,12 +205,7 @@ class RssNewsService(private val httpClient: OkHttpClient) {
     fun sourceSummary(description: String, maxCharacters: Int = 380, title: String = ""): String =
         NewsSummary.concise(description, title, maxCharacters)
 
-    fun sourceParagraphs(description: String): List<String> =
-        SENTENCE_BOUNDARY.split(description.trim())
-            .map(String::trim)
-            .filter(String::isNotBlank)
-            .chunked(3)
-            .map { it.joinToString(" ") }
+    fun sourceParagraphs(description: String): List<String> = NewsSummary.paragraphs(description)
 
     private fun extractMetaDescription(html: String): String? {
         val acceptedNames = setOf("og:description", "twitter:description", "description")
@@ -344,7 +333,7 @@ class RssNewsService(private val httpClient: OkHttpClient) {
                         isBreaking = BreakingNewsClassifier.isBreaking(
                             title = cleanTitle,
                             publishedAtEpochMs = publishedAtEpochMs,
-                            sourceMarkedBreaking = rawCategory.contains("son dakika", ignoreCase = true),
+                            sourceMarkedBreaking = false,
                         ),
                         isManset = false,
                         whatHappened = "",
@@ -562,7 +551,7 @@ class RssNewsService(private val httpClient: OkHttpClient) {
         const val MAX_ARTICLE_PAGE_BYTES = 1_048_576L
         const val MAX_ARTICLE_TEXT_CHARS = 24_000
         const val MAX_ARTICLE_PARAGRAPHS = 80
-        const val MIN_ARTICLE_TEXT_CHARS = 400
+        const val MIN_ARTICLE_TEXT_CHARS = 180
         const val MIN_ARTICLE_PARAGRAPH_CHARS = 36
         val SENTENCE_BOUNDARY = Regex("(?<=[.!?])\\s+")
         val META_TAG = Regex("<meta\\b[^>]*>", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
@@ -588,4 +577,3 @@ class RssNewsService(private val httpClient: OkHttpClient) {
 
 
 }
-

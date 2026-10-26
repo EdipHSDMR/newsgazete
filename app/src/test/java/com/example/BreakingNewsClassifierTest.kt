@@ -21,6 +21,14 @@ class BreakingNewsClassifierTest {
     }
 
     @Test
+    fun genericRssCategoryDoesNotCreateBreakingNews() {
+        val bulletin = story("rss-legacy", "Günün önemli gelişmeleri ve haber bülteni", now - 1_000L, "https://news.test/bulletin").copy(isBreaking = true)
+        assertEquals(null, BreakingNewsClassifier.latest(listOf(bulletin), now))
+        val explicit = bulletin.copy(id = "pha-urgent", title = "Kaynağın acil olarak işaretlediği gelişme")
+        assertEquals("pha-urgent", BreakingNewsClassifier.latest(listOf(explicit), now)?.id)
+    }
+
+    @Test
     fun latestBreakingStoryWinsAndDuplicateUrlIsCollapsed() {
         val olderDuplicate = story("old", "Son Dakika: Haber", now - 60_000L, "https://news.test/story")
         val newestDuplicate = story("new", "Son Dakika: Haber", now - 10_000L, "https://news.test/story")

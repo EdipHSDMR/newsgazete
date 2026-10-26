@@ -94,12 +94,12 @@ fun BildirimlerScreen(
                 }
                 Column {
                     Text(
-                        text = "BİLDİRİM MERKEZİ",
+                        text = "Çizgi",
                         style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
                         color = MaterialTheme.colorScheme.primary,
                     )
                     Text(
-                        text = "Gelen Kutusu",
+                        text = "Bildirimler",
                         style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.Bold),
                         color = MaterialTheme.colorScheme.onSurface,
                     )
@@ -256,4 +256,3 @@ fun BildirimlerScreen(
         }
     }
 }
-

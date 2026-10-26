@@ -84,6 +84,7 @@ data class SportsSnapshot(
     val standings: List<LeagueStanding> = emptyList(),
     val topScorers: List<TopScorer> = emptyList(),
     val isLoading: Boolean = false,
+    val statsLoading: Boolean = false,
     val updatedAtEpochMs: Long = 0L,
     val scorerMessage: String = "",
     val errorMessage: String = "",
@@ -97,11 +98,13 @@ data class LineupPlayer(
     val imageUrl: String = "",
     val formationRow: Int? = null,
     val formationColumn: Int? = null,
+    val formationSlot: Int? = null,
 )
 
 data class TeamLineup(
     val team: String,
     val players: List<LineupPlayer>,
+    val formation: String = "",
 )
 
 data class MatchLineups(
@@ -212,8 +215,8 @@ data class UserPreferences(
     val fontSize: String = "normal",  // "normal", "large"
     val selectedCity: String = "İstanbul",
     val selectedDistrict: String? = null,
-    val followedTopics: Set<String> = setOf("Türkiye", "Ekonomi", "Teknoloji", "Spor"),
-    val followedTeams: Set<String> = setOf("Galatasaray", "Fenerbahçe"),
+    val followedTopics: Set<String> = emptySet(),
+    val followedTeams: Set<String> = emptySet(),
     val breakingAlerts: Boolean = true,
     val matchAlerts: Boolean = false,
     val dailyDigest: Boolean = true,
@@ -221,4 +224,3 @@ data class UserPreferences(
     val quietHoursStart: String = "23:00",
     val quietHoursEnd: String = "07:00",
 )
-
