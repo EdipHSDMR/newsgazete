@@ -13,8 +13,10 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         CachedStoryEntity::class,
         CachedSportStatEntity::class,
         NewsArticleEntity::class,
+        ReadingHistoryEntity::class,
+        NotificationEntity::class,
     ],
-    version = 3,
+    version = 4,
     exportSchema = false,
 )
 abstract class CizgiDatabase : RoomDatabase() {
@@ -22,6 +24,8 @@ abstract class CizgiDatabase : RoomDatabase() {
     abstract fun cachedStoryDao(): CachedStoryDao
     abstract fun cachedSportStatDao(): CachedSportStatDao
     abstract fun newsArticleDao(): NewsArticleDao
+    abstract fun readerDao(): ReaderDao
+    abstract fun notificationDao(): NotificationDao
 
     companion object {
         @Volatile
@@ -34,7 +38,7 @@ abstract class CizgiDatabase : RoomDatabase() {
                     CizgiDatabase::class.java,
                     "cizgi_news_database",
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
                     .build()
                 INSTANCE = instance
                 instance
@@ -91,6 +95,23 @@ abstract class CizgiDatabase : RoomDatabase() {
                         fetchedTimestamp INTEGER NOT NULL
                     )""".trimIndent(),
                 )
+            }
+        }
+
+        internal val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE news_articles ADD COLUMN searchText TEXT NOT NULL DEFAULT ''")
+                // Match ArchiveSearch's Turkish/diacritic normalization for existing archive rows.
+                var expression = "title || ' ' || summary || ' ' || topic || ' ' || publisher"
+                listOf("İ" to "i", "ı" to "i", "Ç" to "c", "ç" to "c", "Ğ" to "g", "ğ" to "g", "Ö" to "o", "ö" to "o", "Ş" to "s", "ş" to "s", "Ü" to "u", "ü" to "u").forEach { (from, to) ->
+                    expression = "REPLACE($expression, '$from', '$to')"
+                }
+                db.execSQL("UPDATE news_articles SET searchText = LOWER($expression)")
+                db.execSQL("ALTER TABLE saved_articles ADD COLUMN storyJson TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE saved_articles ADD COLUMN offlineReady INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("UPDATE saved_articles SET offlineReady = 1 WHERE LENGTH(fullText) >= 1200")
+                db.execSQL("CREATE TABLE IF NOT EXISTS reading_history (storyId TEXT NOT NULL PRIMARY KEY, storyJson TEXT NOT NULL, lastReadAt INTEGER NOT NULL, anchorKey TEXT NOT NULL, itemOffset INTEGER NOT NULL, progressPercent INTEGER NOT NULL)")
+                db.execSQL("CREATE TABLE IF NOT EXISTS notification_inbox (id TEXT NOT NULL PRIMARY KEY, category TEXT NOT NULL, title TEXT NOT NULL, body TEXT NOT NULL, storyId TEXT, createdAt INTEGER NOT NULL, isRead INTEGER NOT NULL)")
             }
         }
 

@@ -1,6 +1,17 @@
 package com.example.data
 
 import android.content.Context
+import com.example.data.local.ReadingHistoryEntity
+import com.example.data.local.NotificationEntity
+import com.example.data.local.StorySnapshot
+import com.example.util.ArchiveSearch
+import com.example.util.PersonalizedNews
+import com.example.util.NotificationPolicy
+import org.json.JSONObject
+import org.json.JSONArray
+import java.time.LocalTime
+import java.time.ZoneId
+import java.time.LocalDate
 import com.example.data.local.CizgiDatabase
 import com.example.data.local.CachedSportStatEntity
 import com.example.data.local.NewsArticleEntity
@@ -50,7 +61,7 @@ import java.util.concurrent.TimeUnit
 
 class CizgiRepository private constructor(private val context: Context) {
 
-    private val scope = CoroutineScope(Dispatchers.Main)
+    private val scope = CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.Main)
     private val httpClient = OkHttpClient.Builder()
         .connectTimeout(8, TimeUnit.SECONDS)
         .readTimeout(10, TimeUnit.SECONDS)
@@ -59,6 +70,22 @@ class CizgiRepository private constructor(private val context: Context) {
     // Room Database
     private val database = CizgiDatabase.getDatabase(context)
     private val savedArticleDao = database.savedArticleDao()
+    private val readerDao = database.readerDao()
+    private val notificationDao = database.notificationDao()
+    private val userPrefs = context.getSharedPreferences("cizgi_user_prefs", Context.MODE_PRIVATE)
+    private val saveMutex = Mutex()
+    private val sportsNotificationMutex = Mutex()
+    private val inboxMutex = Mutex()
+    private val offlineJobs = mutableMapOf<String, Job>()
+    private val _offlineDownloads = MutableStateFlow<Set<String>>(emptySet())
+    val offlineDownloads = _offlineDownloads.asStateFlow()
+    private val _offlineErrors = MutableStateFlow<Map<String, String>>(emptyMap())
+    val offlineErrors = _offlineErrors.asStateFlow()
+    val readingHistory = readerDao.observeHistory().stateIn(scope, SharingStarted.Eagerly, emptyList())
+    val archiveTopics = database.newsArticleDao().observeTopics().stateIn(scope, SharingStarted.Eagerly, emptyList())
+    val archivePublishers = database.newsArticleDao().observePublishers().stateIn(scope, SharingStarted.Eagerly, emptyList())
+    private val _recentSearches = MutableStateFlow<List<String>>(emptyList())
+    val recentSearches = _recentSearches.asStateFlow()
     private val cachedSportStatDao = database.cachedSportStatDao()
     private val newsArticleDao = database.newsArticleDao()
     private val imageEnrichmentAttempts = mutableMapOf<String, Long>()
@@ -93,7 +120,8 @@ class CizgiRepository private constructor(private val context: Context) {
         .stateIn(scope, SharingStarted.Eagerly, 0)
 
     // Room-persisted saved articles
-    val savedArticles: StateFlow<List<Story>> = savedArticleDao.getAllSavedArticles()
+    val savedEntries = savedArticleDao.getAllSavedArticles().stateIn(scope, SharingStarted.Eagerly, emptyList())
+    val savedArticles: StateFlow<List<Story>> = savedEntries
         .map { list -> NewsStoryDeduplicator.merge(list.map { it.toStory() }) }
         .flowOn(Dispatchers.Default)
         .stateIn(scope, SharingStarted.Eagerly, emptyList())
@@ -130,8 +158,8 @@ class CizgiRepository private constructor(private val context: Context) {
     )
     val weather: StateFlow<WeatherInfo> = _weather.asStateFlow()
 
-    private val _notifications = MutableStateFlow<List<NotificationItem>>(emptyList())
-    val notifications: StateFlow<List<NotificationItem>> = _notifications.asStateFlow()
+    val notifications: StateFlow<List<NotificationItem>> = notificationDao.observeInbox()
+        .map { list -> list.map { it.item() } }.stateIn(scope, SharingStarted.Eagerly, emptyList())
 
     private val _financialAssets = MutableStateFlow<List<FinancialAsset>>(emptyList())
     val financialAssets: StateFlow<List<com.example.model.FinancialAsset>> = _financialAssets.asStateFlow()
@@ -150,11 +178,7 @@ class CizgiRepository private constructor(private val context: Context) {
     private val bistRetrofitApi = com.example.data.remote.BistRetrofitApi(httpClient)
 
     private val refreshMutex = Mutex()
-    private val sentBreakingStoryIds = mutableSetOf<String>()
-    private val sentGoalAlertIds = mutableSetOf<String>()
-    private val sentMatchStartAlertIds = mutableSetOf<String>()
     private val sportsFixtureSelectionsLoaded = mutableSetOf<String>()
-    private var lastBreakingNotifTimeMs = 0L
 
     private var newsStreamJob: kotlinx.coroutines.Job? = null
     private var marketStreamJob: kotlinx.coroutines.Job? = null
@@ -169,6 +193,7 @@ class CizgiRepository private constructor(private val context: Context) {
 
     init {
         loadSavedPreferences()
+        repairArchiveTopics()
         observeSavedArticles()
         observeNewsArchive()
         refreshAll()
@@ -176,7 +201,8 @@ class CizgiRepository private constructor(private val context: Context) {
     }
 
     private fun loadSavedPreferences() {
-        val prefs = context.getSharedPreferences("cizgi_user_prefs", Context.MODE_PRIVATE)
+        val prefs = userPrefs
+        if (prefs.getBoolean("breaking_alerts", false) && !prefs.contains("breaking_enabled_since")) prefs.edit().putLong("breaking_enabled_since", System.currentTimeMillis()).apply()
         val theme = prefs.getString("theme", "light") ?: "light"
         val city = prefs.getString("city", "İstanbul") ?: "İstanbul"
         val district = prefs.getString("district", null)
@@ -207,12 +233,40 @@ class CizgiRepository private constructor(private val context: Context) {
                 followedTeams = followedTeams,
                 breakingAlerts = breakingAlerts,
                 matchAlerts = matchAlerts,
+                onboardingCompleted = prefs.getBoolean("onboarding_completed", false),
+                topicAlerts = prefs.getBoolean("topic_alerts", false),
+                dailyDigest = prefs.getBoolean("daily_digest", false),
+                matchStartAlerts = prefs.getBoolean("match_start_alerts", true),
+                matchScoreAlerts = prefs.getBoolean("match_score_alerts", true),
+                reduceMotion = prefs.getBoolean("reduce_motion", false),
+                highContrast = prefs.getBoolean("high_contrast", false),
                 quietHoursEnabled = quietHoursEnabled,
                 quietHoursStart = quietHoursStart,
                 quietHoursEnd = quietHoursEnd,
             )
         }
         _matchAlertIds.value = matchAlertIds
+        _recentSearches.value = runCatching {
+            val array = JSONArray(prefs.getString("recent_searches", "[]"))
+            (0 until array.length()).map { array.getString(it) }
+        }.getOrDefault(emptyList())
+    }
+
+    private fun repairArchiveTopics() {
+        if (userPrefs.getInt("news_topic_rules_version", 0) >= 1) return
+        scope.launch(Dispatchers.IO) {
+            var after = ""
+            while (true) {
+                val batch = newsArticleDao.topicCandidates(after)
+                if (batch.isEmpty()) break
+                for (row in batch) {
+                    val topic = com.example.util.NewsTopics.classify(row.title, row.summary, "", row.topic, row.canonicalUrl)
+                    if (topic != row.topic) newsArticleDao.updateTopic(row.id, topic, ArchiveSearch.normalize("${row.title} ${row.summary} $topic ${row.publisher}"))
+                }
+                after = batch.last().id
+            }
+            userPrefs.edit().putInt("news_topic_rules_version", 1).apply()
+        }
     }
 
     private fun observeSavedArticles() {
@@ -330,13 +384,45 @@ class CizgiRepository private constructor(private val context: Context) {
 
     // Room Database 'Sonra Oku' actions
     fun toggleSaveStory(story: Story) {
-        scope.launch(Dispatchers.IO) {
-            val isCurrentlySaved = savedArticleDao.getSavedArticleById(story.id) != null
-            if (isCurrentlySaved) {
-                savedArticleDao.deleteArticleById(story.id)
-            } else {
-                savedArticleDao.insertArticle(SavedArticleEntity.fromStory(story))
+        scope.launch {
+            saveMutex.withLock {
+                if (savedArticleDao.getSavedArticleById(story.id) != null) {
+                    offlineJobs.remove(story.id)?.cancel()
+                    _offlineDownloads.update { it - story.id }
+                    _offlineErrors.update { it - story.id }
+                    savedArticleDao.deleteArticleById(story.id)
+                } else {
+                    val ready = (completeArticleUntil[story.id] ?: 0) > System.currentTimeMillis()
+                    savedArticleDao.insertArticle(SavedArticleEntity.fromStory(story, ready))
+                    downloadForOffline(story.id)
+                }
             }
+        }
+    }
+
+    fun downloadForOffline(storyId: String) {
+        if (offlineJobs[storyId]?.isActive == true) return
+        _offlineErrors.update { it - storyId }
+        _offlineDownloads.update { it + storyId }
+        offlineJobs[storyId] = scope.launch {
+            try {
+                val saved = savedArticleDao.getSavedArticleById(storyId) ?: return@launch
+                loadStoryFromArchive(storyId)
+                val article = loadFullArticle(storyId)
+                if (article != null) {
+                    savedArticleDao.updateOffline(storyId, StorySnapshot.encode(article), article.fullText, article.summary, true)
+                    if (article.imageUrl.isNotBlank()) {
+                        try {
+                            coil.Coil.imageLoader(context).execute(coil.request.ImageRequest.Builder(context)
+                                .data(article.imageUrl).size(1000).build())
+                        } catch (_: Exception) { /* The stored text remains readable if an image is unavailable. */ }
+                    }
+                } else if (!saved.offlineReady) {
+                    _offlineErrors.update { it + (storyId to "Tam metin alınamadı. Kayıtlı kısa içeriği okuyabilir veya yeniden deneyebilirsin.") }
+                }
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { _offlineErrors.update { it + (storyId to "İndirme tamamlanamadı. Bağlantını kontrol edip yeniden dene.") } }
+            finally { _offlineDownloads.update { it - storyId }; offlineJobs.remove(storyId) }
         }
     }
 
@@ -353,6 +439,10 @@ class CizgiRepository private constructor(private val context: Context) {
     }
 
     fun clearSavedStories() {
+        offlineJobs.values.toList().forEach { it.cancel() }
+        offlineJobs.clear()
+        _offlineDownloads.value = emptySet()
+        _offlineErrors.value = emptyMap()
         scope.launch(Dispatchers.IO) {
             savedArticleDao.clearAll()
         }
@@ -409,7 +499,21 @@ class CizgiRepository private constructor(private val context: Context) {
         scope.launch { refreshNewsData() }
     }
 
-    suspend fun refreshNewsInBackground(): Boolean = refreshNewsData()
+    suspend fun refreshNewsInBackground(): Boolean {
+        val refreshed = refreshNewsData()
+        if (_preferences.value.matchAlerts) {
+            val selections = userPrefs.getStringSet("followed_sports_selections", emptySet()).orEmpty().toList().sorted().take(6)
+            for (selection in selections) {
+                val parts = selection.split('|')
+                if (parts.size != 2) continue
+                try {
+                    processSportsNotifications(footballApiService.fetchFixtures(parts[1], parts[0], currentSportsSeasonYear(parts[1], parts[0])))
+                } catch (cancelled: CancellationException) { throw cancelled }
+                catch (_: Exception) { /* Other selected leagues can still refresh. */ }
+            }
+        }
+        return refreshed
+    }
 
     private suspend fun refreshNewsData(): Boolean = newsRefreshMutex.withLock {
         try {
@@ -467,35 +571,7 @@ class CizgiRepository private constructor(private val context: Context) {
 
         enrichMissingStoryImages(_stories.value.take(NEWS_PAGE_SIZE))
         prefetchReadingContent()
-        val now = System.currentTimeMillis()
-        val criticalBreaking = liveFeed.asSequence().filter { story ->
-            _preferences.value.breakingAlerts && story.isBreaking && story.id !in sentBreakingStoryIds &&
-                BreakingNewsClassifier.isBreaking(story.title, story.publishedAtEpochMs, now, story.isBreaking) &&
-                HIGH_IMPACT_BREAKING_TERMS.any { term -> story.title.contains(term, ignoreCase = true) }
-        }.maxByOrNull { it.publishedAtEpochMs }
-        if (criticalBreaking != null && now - lastBreakingNotifTimeMs > 20 * 60 * 1000L) {
-            sentBreakingStoryIds.add(criticalBreaking.id)
-            lastBreakingNotifTimeMs = now
-            val alert = NotificationItem(
-                id = "alert-${criticalBreaking.id}",
-                category = "Son Dakika",
-                title = criticalBreaking.title,
-                body = criticalBreaking.summary,
-                timeAgo = "Az önce",
-                storyId = criticalBreaking.id,
-            )
-            _notifications.update { list ->
-                if (list.none { it.storyId == criticalBreaking.id }) listOf(alert) + list.take(25) else list
-            }
-            if (!isQuietHoursNow()) {
-                CizgiNotificationHelper.sendBreakingNotification(
-                    context = context,
-                    title = criticalBreaking.title,
-                    body = criticalBreaking.summary,
-                    storyId = criticalBreaking.id,
-                )
-            }
-        }
+        processNewsNotifications(_stories.value.take(MAX_STORIES_PER_REFRESH))
         return true
     }
 
@@ -652,17 +728,22 @@ class CizgiRepository private constructor(private val context: Context) {
 
     suspend fun loadStoryFromArchive(storyId: String): Story? {
         _stories.value.firstOrNull { it.id == storyId }?.let { return it }
-        val article = withContext(Dispatchers.IO) { newsArticleDao.getById(storyId) } ?: return null
-        val saved = savedArticles.value.any { it.id == storyId }
-        val story = article.toStory().copy(isSaved = saved)
+        val savedArticle = savedArticleDao.getSavedArticleById(storyId)
+        val story = newsArticleDao.getById(storyId)?.toStory()
+            ?: savedArticle?.toStory()
+            ?: readerDao.readingState(storyId)?.story()
+            ?: return null
+        val loaded = story.copy(isSaved = savedArticle != null)
         _stories.update { current ->
-            if (current.any { it.id == storyId }) current else listOf(story) + current
+            if (current.any { it.id == storyId }) current else listOf(loaded) + current
         }
-        return story
+        return loaded
     }
 
     suspend fun loadFullArticle(storyId: String): Story? = articleLoadLocks.getOrPut(storyId) { Mutex() }.withLock {
-        val story = _stories.value.firstOrNull { it.id == storyId } ?: return@withLock null
+        val story = _stories.value.firstOrNull { it.id == storyId } ?: loadStoryFromArchive(storyId) ?: return@withLock null
+        val saved = savedArticleDao.getSavedArticleById(storyId)
+        if (saved?.offlineReady == true && saved.fullText.length >= 180) return@withLock saved.toStory()
         if ((completeArticleUntil[storyId] ?: 0L) > System.currentTimeMillis()) return@withLock story
         val hasLicensedArticleBody = story.fullText.length >= 400 &&
             (story.id.startsWith("pha-") || story.fullText.length >= 1_200)
@@ -686,6 +767,7 @@ class CizgiRepository private constructor(private val context: Context) {
         _stories.update { current -> current.map { if (it.id == storyId) updated else it } }
         withContext(Dispatchers.IO) {
             newsArticleDao.upsertAll(listOf(NewsArticleEntity.fromStory(updated)))
+            savedArticleDao.updateOffline(storyId, StorySnapshot.encode(updated), updated.fullText, updated.summary, true)
         }
         updated
     }
@@ -800,10 +882,6 @@ class CizgiRepository private constructor(private val context: Context) {
         }
 
         try {
-            val hadPreviousFixtures = requestKey in sportsFixtureSelectionsLoaded
-            val previousLiveIds = _sportsSnapshot.value.matches
-                .filter { it.status == com.example.model.MatchStatus.LIVE }
-                .mapTo(mutableSetOf()) { it.id }
             val fixtures = footballApiService.fetchFixtures(competition, sportType, seasonYear)
             if (activeSportsKey != requestKey) return
             _sportsSnapshot.update {
@@ -814,58 +892,7 @@ class CizgiRepository private constructor(private val context: Context) {
             }
             sportsFixtureSelectionsLoaded.add(requestKey)
 
-            fixtures.asSequence()
-                .filter { hadPreviousFixtures && it.status == com.example.model.MatchStatus.LIVE && it.id !in previousLiveIds }
-                .filter(::isMatchAlertSelected)
-                .forEach { match ->
-                    val alertId = "start-${match.id}"
-                    if (_preferences.value.matchAlerts && sentMatchStartAlertIds.add(alertId)) {
-                        val title = "Maç başladı: ${match.homeTeam} - ${match.awayTeam}"
-                        val body = "${match.competition} · ${match.statusLabel}"
-                        _notifications.update { list -> listOf(NotificationItem(alertId, "Spor", title, body, "Az önce")) + list.take(19) }
-                        if (!isQuietHoursNow()) {
-                            CizgiNotificationHelper.sendMatchStartNotification(
-                                context = context,
-                                matchTitle = "${match.homeTeam} - ${match.awayTeam}",
-                                competition = match.competition,
-                                sportType = match.sportType,
-                            )
-                        }
-                    }
-                }
-
-            if (!hadPreviousFixtures) {
-                fixtures.asSequence()
-                    .filter { it.status == com.example.model.MatchStatus.LIVE }
-                    .flatMap { match -> match.events.asSequence().filter { it.type == "GOL" }.map { match to it } }
-                    .forEach { (match, goal) -> sentGoalAlertIds.add("goal-${match.id}-${goal.minute}-${goal.player}") }
-            }
-
-            fixtures.asSequence()
-                .filter { it.status == com.example.model.MatchStatus.LIVE }
-                .flatMap { match -> match.events.asSequence().filter { it.type == "GOL" }.map { match to it } }
-                .forEach { (match, goal) ->
-                    val alertId = "goal-${match.id}-${goal.minute}-${goal.player}"
-                    if (_preferences.value.matchAlerts && isMatchAlertSelected(match) && sentGoalAlertIds.add(alertId)) {
-                        val notif = NotificationItem(
-                            id = alertId,
-                            category = "Spor",
-                            title = "⚽ GOL! ${goal.player} (${match.homeTeam} ${match.homeScore} - ${match.awayScore} ${match.awayTeam})",
-                            body = "${match.competition}: ${goal.minute}'. dakikada ${goal.player} fileleri havalandırdı!",
-                            timeAgo = "${goal.minute}'",
-                        )
-                        _notifications.update { list -> listOf(notif) + list.take(19) }
-                        if (!isQuietHoursNow()) {
-                            CizgiNotificationHelper.sendGoalNotification(
-                                context = context,
-                                matchTitle = "${match.homeTeam} vs ${match.awayTeam}",
-                                minute = goal.minute,
-                                player = goal.player,
-                                score = "${match.homeScore ?: 0} - ${match.awayScore ?: 0}",
-                            )
-                        }
-                    }
-                }
+            processSportsNotifications(fixtures)
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (_: Exception) {}
@@ -995,6 +1022,7 @@ class CizgiRepository private constructor(private val context: Context) {
         _preferences.update { it.copy(followedTeams = current) }
         context.getSharedPreferences("cizgi_user_prefs", Context.MODE_PRIVATE)
             .edit().putStringSet("followed_teams", current).apply()
+        rememberSportsSelection()
     }
 
     fun setThemeMode(mode: String) {
@@ -1010,6 +1038,7 @@ class CizgiRepository private constructor(private val context: Context) {
     }
 
     fun setBreakingAlerts(enabled: Boolean) {
+        if (enabled && !_preferences.value.breakingAlerts) userPrefs.edit().putLong("breaking_enabled_since", System.currentTimeMillis()).apply()
         _preferences.update { it.copy(breakingAlerts = enabled) }
         context.getSharedPreferences("cizgi_user_prefs", Context.MODE_PRIVATE)
             .edit().putBoolean("breaking_alerts", enabled).apply()
@@ -1028,6 +1057,7 @@ class CizgiRepository private constructor(private val context: Context) {
         _matchAlertIds.value = updated
         context.getSharedPreferences("cizgi_user_prefs", Context.MODE_PRIVATE)
             .edit().putStringSet("match_alert_ids", updated).apply()
+        rememberSportsSelection()
     }
 
     private fun isMatchAlertSelected(match: SportsMatch): Boolean {
@@ -1060,15 +1090,11 @@ class CizgiRepository private constructor(private val context: Context) {
 
     private fun isQuietHoursNow(): Boolean {
         val settings = _preferences.value
-        if (!settings.quietHoursEnabled) return false
-        val start = runCatching { java.time.LocalTime.parse(settings.quietHoursStart) }.getOrNull() ?: return false
-        val end = runCatching { java.time.LocalTime.parse(settings.quietHoursEnd) }.getOrNull() ?: return false
-        if (start == end) return true
-        val now = java.time.LocalTime.now()
-        return if (start < end) now >= start && now < end else now >= start || now < end
+        return NotificationPolicy.isQuiet(LocalTime.now(ZoneId.of("Europe/Istanbul")), settings.quietHoursEnabled, settings.quietHoursStart, settings.quietHoursEnd)
     }
 
     fun clearSearchHistory() {
+        _recentSearches.value = emptyList()
         context.getSharedPreferences("cizgi_user_prefs", Context.MODE_PRIVATE)
             .edit().remove("search_history").remove("recent_searches").apply()
     }
@@ -1081,14 +1107,175 @@ class CizgiRepository private constructor(private val context: Context) {
         }
     }
 
-    fun markNotificationRead(id: String) {
-        _notifications.update { list ->
-            list.map { if (it.id == id) it.copy(isRead = true) else it }
+    fun markNotificationRead(id: String) { scope.launch { notificationDao.markRead(id) } }
+    fun markAllNotificationsRead() { scope.launch { notificationDao.markAllRead() } }
+    fun clearNotifications() { scope.launch { notificationDao.clear() } }
+
+    fun completeOnboarding(topics: Set<String>, teams: Set<String>) {
+        _preferences.update { it.copy(followedTopics = topics, followedTeams = teams, onboardingCompleted = true) }
+        userPrefs.edit().putStringSet("followed_topics", topics).putStringSet("followed_teams", teams)
+            .putBoolean("onboarding_completed", true).apply()
+        rememberSportsSelection()
+    }
+
+    fun setReduceMotion(enabled: Boolean) {
+        _preferences.update { it.copy(reduceMotion = enabled) }
+        userPrefs.edit().putBoolean("reduce_motion", enabled).apply()
+    }
+
+    fun setHighContrast(enabled: Boolean) {
+        _preferences.update { it.copy(highContrast = enabled) }
+        userPrefs.edit().putBoolean("high_contrast", enabled).apply()
+    }
+
+    fun setTopicAlerts(enabled: Boolean) {
+        if (enabled && !_preferences.value.topicAlerts) userPrefs.edit().putLong("topic_enabled_since", System.currentTimeMillis()).apply()
+        _preferences.update { it.copy(topicAlerts = enabled) }
+        userPrefs.edit().putBoolean("topic_alerts", enabled).apply()
+    }
+
+    fun setDailyDigest(enabled: Boolean) {
+        _preferences.update { it.copy(dailyDigest = enabled) }
+        userPrefs.edit().putBoolean("daily_digest", enabled).apply()
+    }
+
+    fun setMatchStartAlerts(enabled: Boolean) {
+        _preferences.update { it.copy(matchStartAlerts = enabled) }
+        userPrefs.edit().putBoolean("match_start_alerts", enabled).apply()
+    }
+
+    fun setMatchScoreAlerts(enabled: Boolean) {
+        _preferences.update { it.copy(matchScoreAlerts = enabled) }
+        userPrefs.edit().putBoolean("match_score_alerts", enabled).apply()
+    }
+
+    fun rememberSearch(query: String) {
+        val text = query.trim().take(100)
+        if (text.length < 2) return
+        _recentSearches.update { list -> (listOf(text) + list.filterNot { ArchiveSearch.normalize(it) == ArchiveSearch.normalize(text) }).take(10) }
+        userPrefs.edit().putString("recent_searches", JSONArray(_recentSearches.value).toString()).apply()
+    }
+
+    suspend fun searchArchive(query: String, topic: String?, publisher: String?, from: Long?, until: Long?, offset: Int): ArchivePage = withContext(Dispatchers.Default) {
+        val terms = ArchiveSearch.terms(query).map(ArchiveSearch::like).toMutableList()
+        while (terms.size < 6) terms += "%"
+        val rows = newsArticleDao.search(terms[0], terms[1], terms[2], terms[3], terms[4], terms[5], topic, publisher, from, until, 61, offset)
+        val savedIds = savedArticles.value.mapTo(mutableSetOf()) { it.id }
+        ArchivePage(NewsStoryDeduplicator.merge(rows.take(60).map { it.toStory().copy(isSaved = it.id in savedIds) }), offset + minOf(60, rows.size), rows.size > 60)
+    }
+
+    suspend fun readingState(id: String): ReadingHistoryEntity? = readerDao.readingState(id)
+
+    fun saveReadingPosition(story: Story, anchor: String, offset: Int, progress: Int) {
+        scope.launch(Dispatchers.IO) {
+            readerDao.saveReadingState(ReadingHistoryEntity(story.id, StorySnapshot.encode(story), System.currentTimeMillis(), anchor, offset.coerceAtLeast(0), progress.coerceIn(0, 100)))
+            readerDao.pruneHistory()
         }
     }
 
-    fun markAllNotificationsRead() {
-        _notifications.update { list -> list.map { it.copy(isRead = true) } }
+    fun clearReadingHistory() { scope.launch { readerDao.clearHistory() } }
+
+    fun summaryFeedback(storyId: String): String? = userPrefs.getString("summary_feedback_$storyId", null)
+    fun recordSummaryFeedback(storyId: String, value: String) {
+        if (value !in setOf("helpful", "missing", "incorrect")) return
+        userPrefs.edit().putString("summary_feedback_$storyId", value).apply()
+    }
+
+    private suspend fun addInbox(id: String, category: String, title: String, body: String, storyId: String? = null, screen: String? = null): Boolean = inboxMutex.withLock {
+        val delivered = runCatching { JSONObject(userPrefs.getString("delivered_notifications", "{}") ?: "{}") }.getOrDefault(JSONObject())
+        if (delivered.has(id)) return@withLock false
+        val inserted = notificationDao.insert(NotificationEntity(id, category, title, body.take(500), storyId, System.currentTimeMillis()))
+        if (inserted == -1L) return@withLock false
+        delivered.put(id, System.currentTimeMillis())
+        delivered.keys().asSequence().toList().filter { delivered.optLong(it) < System.currentTimeMillis() - 7 * 86_400_000L }.forEach { delivered.remove(it) }
+        while (delivered.length() > 500) delivered.remove(delivered.keys().asSequence().minBy { delivered.optLong(it) })
+        userPrefs.edit().putString("delivered_notifications", delivered.toString()).apply()
+        notificationDao.prune()
+        if (!isQuietHoursNow()) CizgiNotificationHelper.sendContentNotification(context, id, category, title, body, storyId, screen)
+        true
+    }
+
+    private suspend fun processNewsNotifications(incoming: List<Story>) {
+        val now = System.currentTimeMillis()
+        val settings = _preferences.value
+        val breakingSince = userPrefs.getLong("breaking_enabled_since", now)
+        if (settings.breakingAlerts && now - userPrefs.getLong("last_breaking_alert", 0L) >= 20 * 60_000L) {
+            val latest = BreakingNewsClassifier.latest(incoming.filter { NotificationPolicy.isNewStory(it.publishedAtEpochMs, breakingSince, now) }, now)
+            if (latest != null && addNewsInbox(latest, "Son Dakika")) {
+                userPrefs.edit().putLong("last_breaking_alert", now).apply()
+            }
+        }
+        if (settings.topicAlerts && now - userPrefs.getLong("last_topic_alert", 0L) >= 30 * 60_000L) {
+            val since = userPrefs.getLong("topic_enabled_since", now)
+            val candidates = incoming.filter { NotificationPolicy.isNewStory(it.publishedAtEpochMs, since, now) && PersonalizedNews.matches(it, settings) }
+                .sortedByDescending { it.publishedAtEpochMs }.take(2)
+            for (story in candidates) {
+                if (addNewsInbox(story, "Konular")) userPrefs.edit().putLong("last_topic_alert", now).apply()
+            }
+        }
+        val zone = ZoneId.of("Europe/Istanbul")
+        val today = LocalDate.now(zone)
+        if (settings.dailyDigest && LocalTime.now(zone).hour >= 8) {
+            val todayStories = _stories.value.filter { it.publishedAtEpochMs in 1..(now + 60_000L) && java.time.Instant.ofEpochMilli(it.publishedAtEpochMs).atZone(zone).toLocalDate() == today }
+            val points = NewsDiscoveryInsights.dailyDigest(todayStories)
+            if (points.isNotEmpty()) addInbox("digest-$today", "Gündem", "Günün kısa turu", points.take(5).joinToString("\n"), todayStories.firstOrNull()?.id)
+        }
+    }
+
+    private suspend fun addNewsInbox(story: Story, category: String): Boolean {
+        val delivered = runCatching { JSONObject(userPrefs.getString("notified_news_links", "{}") ?: "{}") }.getOrDefault(JSONObject())
+        val cutoff = System.currentTimeMillis() - 7 * 86_400_000L
+        delivered.keys().asSequence().toList().filter { delivered.optLong(it) < cutoff }.forEach { delivered.remove(it) }
+        val keys = NotificationPolicy.newsKeys(story)
+        val alreadyCovered = keys.any { delivered.has(it) }
+        val inserted = if (alreadyCovered) false else addInbox("news-${story.id}", category, story.title, story.summary, story.id)
+        if (alreadyCovered || inserted) {
+            keys.forEach { delivered.put(it, System.currentTimeMillis()) }
+            while (delivered.length() > 1000) delivered.remove(delivered.keys().asSequence().minBy { delivered.optLong(it) })
+            userPrefs.edit().putString("notified_news_links", delivered.toString()).apply()
+        }
+        return inserted
+    }
+
+    fun rememberSportsSelection() {
+        val snapshot = _sportsSnapshot.value
+        if (snapshot.competition.isBlank() || snapshot.sportType.isBlank()) return
+        val selections = userPrefs.getStringSet("followed_sports_selections", emptySet()).orEmpty().toMutableSet()
+        selections += "${snapshot.sportType}|${snapshot.competition}"
+        userPrefs.edit().putStringSet("followed_sports_selections", selections.toList().takeLast(6).toSet()).apply()
+    }
+
+    private suspend fun processSportsNotifications(fixtures: List<SportsMatch>) = sportsNotificationMutex.withLock {
+        val baselines = runCatching { JSONObject(userPrefs.getString("sports_score_baselines", "{}") ?: "{}") }.getOrDefault(JSONObject())
+        val settings = _preferences.value
+        for (match in fixtures) {
+            val old = baselines.optJSONObject(match.id)
+            val hasScore = match.homeScore != null && match.awayScore != null
+            if (settings.matchAlerts && isMatchAlertSelected(match) && old != null) {
+                val changedScore = hasScore && old.has("home") && old.has("away") &&
+                    (old.optInt("home") != match.homeScore || old.optInt("away") != match.awayScore)
+                val started = match.status == com.example.model.MatchStatus.LIVE && old.optString("status") == "UPCOMING"
+                val finished = match.status == com.example.model.MatchStatus.FINISHED && old.optString("status") == "LIVE"
+                val title = "${match.homeTeam} – ${match.awayTeam}"
+                if (started && settings.matchStartAlerts) addInbox("start-${match.id}", "Spor", "Maç başladı · $title", match.competition, screen = "spor")
+                if (settings.matchScoreAlerts && (changedScore || finished)) {
+                    val last = old.optLong("lastScoreAlert")
+                    // Basketball has many scoring changes: consolidate them into at most one update per five minutes.
+                    if (match.sportType != "BASKETBOL" || finished || System.currentTimeMillis() - last >= 5 * 60_000L) {
+                        val score = "${match.homeScore} – ${match.awayScore}"
+                        val eventId = if (finished) "final-${match.id}" else "score-${match.id}-${match.homeScore}-${match.awayScore}"
+                        if (hasScore && addInbox(eventId, "Spor", "${if (finished) "Maç bitti" else "Skor değişti"} · $score", "$title · ${match.competition} · ${match.statusLabel}", screen = "spor")) old.put("lastScoreAlert", System.currentTimeMillis())
+                    }
+                }
+            }
+            val latest = JSONObject().put("status", match.status.name).put("kickoff", match.kickoffAtEpochMs).put("lastScoreAlert", old?.optLong("lastScoreAlert") ?: 0)
+            if (hasScore) latest.put("home", match.homeScore).put("away", match.awayScore)
+            baselines.put(match.id, latest)
+        }
+        val keys = baselines.keys().asSequence().toList()
+        keys.filter { key -> val kickoff = baselines.optJSONObject(key)?.optLong("kickoff") ?: 0; kickoff > 0 && kickoff < System.currentTimeMillis() - 3 * 86_400_000L }.forEach { baselines.remove(it) }
+        while (baselines.length() > 250) baselines.remove(baselines.keys().next())
+        userPrefs.edit().putString("sports_score_baselines", baselines.toString()).apply()
     }
 
     companion object {
@@ -1102,11 +1289,6 @@ class CizgiRepository private constructor(private val context: Context) {
         private const val MAX_IMAGES_PER_ENRICHMENT = 24
         private const val IMAGE_ENRICHMENT_CONCURRENCY = 4
         private const val IMAGE_ENRICHMENT_RETRY_MS = 12 * 60 * 60 * 1_000L
-        private val HIGH_IMPACT_BREAKING_TERMS = listOf(
-            "deprem", "tsunami", "tahliye", "can kaybı", "yaralı", "afet", "yangın",
-            "saldırı", "patlama", "acil durum", "seferberlik",
-        )
-
         @Volatile
         private var instance: CizgiRepository? = null
 
@@ -1117,3 +1299,5 @@ class CizgiRepository private constructor(private val context: Context) {
         }
     }
 }
+
+data class ArchivePage(val stories: List<Story>, val nextOffset: Int, val hasMore: Boolean)

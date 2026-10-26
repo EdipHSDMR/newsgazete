@@ -19,6 +19,8 @@ import com.example.data.CizgiRepository
 import com.example.ui.components.*
 import com.example.ui.screens.*
 import com.example.ui.theme.CizgiTheme
+import com.example.ui.theme.LocalReducedMotion
+import com.example.util.ReaderSettings
 
 private sealed interface SubScreen {
     data object None : SubScreen
@@ -26,6 +28,7 @@ private sealed interface SubScreen {
     data object Notifications : SubScreen
     data object Topics : SubScreen
     data object Profile : SubScreen
+    data object Personalize : SubScreen
     data class StoryDetail(val storyId: String) : SubScreen
     data class CompareSources(val storyId: String) : SubScreen
 }
@@ -60,12 +63,16 @@ fun CizgiApp(modifier: Modifier = Modifier, notificationNavigation: Notification
             else -> close()
         }
     }
-    CompositionLocalProvider(LocalDensity provides Density(density.density, density.fontScale * if (preferences.fontSize == "large") 1.125f else 1f)) {
-        CizgiTheme(darkTheme = dark) {
+    CompositionLocalProvider(LocalReducedMotion provides preferences.reduceMotion, LocalDensity provides Density(density.density, density.fontScale * ReaderSettings.fontScale(preferences.fontSize))) {
+        CizgiTheme(darkTheme = dark, highContrast = preferences.highContrast) {
+            if (!preferences.onboardingCompleted || subScreen == SubScreen.Personalize) {
+                OnboardingScreen(repository) { close() }
+                return@CizgiTheme
+            }
             AnimatedContent(
                 targetState = subScreen, modifier = modifier.fillMaxSize(), label = "page",
                 transitionSpec = {
-                    (fadeIn(tween(220)) + slideInHorizontally(tween(260)) { it / 14 }) togetherWith fadeOut(tween(120))
+                    if (preferences.reduceMotion) EnterTransition.None togetherWith ExitTransition.None else (fadeIn(tween(220)) + slideInHorizontally(tween(260)) { it / 14 }) togetherWith fadeOut(tween(120))
                 },
             ) { screen ->
                 when (screen) {
@@ -99,13 +106,14 @@ fun CizgiApp(modifier: Modifier = Modifier, notificationNavigation: Notification
                                 SubScreen.Topics -> TopicsScreen(repository, ::close)
                                 SubScreen.Profile -> ProfilScreen(
                                     repository = repository, onBack = ::close,
+                                    onNavigatePersonalize = { subScreen = SubScreen.Personalize },
                                     onNavigateTopics = { subScreen = SubScreen.Topics },
                                     onNavigateSports = { close(); currentTab = CizgiScreen.SPOR },
                                     onNavigateWeather = { subScreen = SubScreen.Weather }, onNavigateNotifications = { subScreen = SubScreen.Notifications },
                                 )
                                 else -> AnimatedContent(
                                     targetState = currentTab, label = "tab", transitionSpec = {
-                                        (fadeIn(tween(200)) + slideInVertically(tween(240)) { it / 24 }) togetherWith fadeOut(tween(100))
+                                        if (preferences.reduceMotion) EnterTransition.None togetherWith ExitTransition.None else (fadeIn(tween(200)) + slideInVertically(tween(240)) { it / 24 }) togetherWith fadeOut(tween(100))
                                     },
                                 ) { tab ->
                                     holder.SaveableStateProvider(tab.route) {

@@ -30,6 +30,7 @@ import com.example.model.Story
 import com.example.ui.components.*
 import com.example.ui.theme.CizgiColor
 import com.example.util.BreakingNewsClassifier
+import com.example.util.PersonalizedNews
 import kotlinx.coroutines.delay
 
 @Composable
@@ -53,14 +54,14 @@ fun AkisScreen(
             .collect { repository.prepareReadingContent(it) }
     }
     var visual by rememberSaveable { mutableStateOf(false) }
-    var personalized by rememberSaveable { mutableStateOf(false) }
+    var personalized by rememberSaveable { mutableStateOf(preferences.followedTopics.isNotEmpty() || preferences.followedTeams.isNotEmpty()) }
     var visibleLimit by rememberSaveable { mutableIntStateOf(50) }
     var requestedSize by remember { mutableIntStateOf(-1) }
     var clock by remember { mutableLongStateOf(System.currentTimeMillis()) }
     LaunchedEffect(Unit) { while (true) { delay(30_000); clock = System.currentTimeMillis() } }
     val breaking = remember(stories, clock) { BreakingNewsClassifier.latest(stories, clock) }
-    val selectedStories = remember(stories, personalized, preferences.followedTopics) {
-        if (personalized) stories.filter { it.topic in preferences.followedTopics } else stories
+    val selectedStories = remember(stories, personalized, preferences.followedTopics, preferences.followedTeams) {
+        if (personalized) PersonalizedNews.rank(stories, preferences) else stories
     }
     val hero = selectedStories.firstOrNull()
     val feed = remember(selectedStories, visibleLimit) { selectedStories.drop(1).take(visibleLimit) }

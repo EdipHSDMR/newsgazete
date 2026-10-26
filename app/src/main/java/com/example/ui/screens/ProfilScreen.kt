@@ -65,6 +65,11 @@ import androidx.compose.ui.unit.sp
 import com.example.data.CizgiRepository
 import com.example.ui.theme.CizgiColor
 import com.example.util.CizgiNotificationHelper
+import com.example.util.ReaderSettings
+import androidx.compose.material.icons.filled.AccessibilityNew
+import androidx.compose.material.icons.filled.Contrast
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.rememberScrollState
 import java.time.LocalTime
 import java.util.Locale
 
@@ -77,6 +82,7 @@ fun ProfilScreen(
     onNavigateNotifications: () -> Unit,
     modifier: Modifier = Modifier,
     onBack: () -> Unit = {},
+    onNavigatePersonalize: () -> Unit = {},
 ) {
     val prefs by repository.preferences.collectAsState()
     var showThemeDialog by remember { mutableStateOf(false) }
@@ -90,26 +96,28 @@ fun ProfilScreen(
         contract = ActivityResultContracts.RequestPermission(),
     ) { granted ->
         val pending = pendingNotificationToggle
-        if (granted && pending == "breaking") repository.setBreakingAlerts(true)
-        if (granted && pending == "matches") repository.setMatchAlerts(true)
+        if (granted) when (pending) {
+            "breaking" -> repository.setBreakingAlerts(true)
+            "matches" -> repository.setMatchAlerts(true)
+            "topics" -> repository.setTopicAlerts(true)
+            "digest" -> repository.setDailyDigest(true)
+        }
         pendingNotificationToggle = null
     }
 
-    fun setNotificationToggle(name: String, enabled: Boolean) {
-        if (!enabled) {
-            if (name == "breaking") repository.setBreakingAlerts(false) else repository.setMatchAlerts(false)
-            return
+    fun applyNotificationToggle(name: String, enabled: Boolean) {
+        when (name) {
+            "breaking" -> repository.setBreakingAlerts(enabled)
+            "matches" -> repository.setMatchAlerts(enabled)
+            "topics" -> repository.setTopicAlerts(enabled)
+            "digest" -> repository.setDailyDigest(enabled)
         }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-            !CizgiNotificationHelper.hasNotificationPermission(context)
-        ) {
+    }
+    fun setNotificationToggle(name: String, enabled: Boolean) {
+        if (enabled && Build.VERSION.SDK_INT >= 33 && !CizgiNotificationHelper.hasNotificationPermission(context)) {
             pendingNotificationToggle = name
             notificationPermissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
-        } else if (name == "breaking") {
-            repository.setBreakingAlerts(true)
-        } else {
-            repository.setMatchAlerts(true)
-        }
+        } else applyNotificationToggle(name, enabled)
     }
 
     LazyColumn(
@@ -175,6 +183,8 @@ fun ProfilScreen(
 
         item {
             SettingCard {
+                SettingNavigationRow(icon = Icons.Default.AccessibilityNew, title = "Akışımı kişiselleştir", subtitle = "Konu ve takım seçimlerini birlikte düzenle", onClick = onNavigatePersonalize)
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 SettingNavigationRow(
                     icon = Icons.Default.Topic,
                     title = "İlgi alanları",
@@ -219,9 +229,13 @@ fun ProfilScreen(
                 SettingNavigationRow(
                     icon = Icons.Default.TextFields,
                     title = "Yazı boyutu",
-                    subtitle = if (prefs.fontSize == "large") "Büyük" else "Standart",
+                    subtitle = ReaderSettings.fontSizes[prefs.fontSize] ?: "Standart",
                     onClick = { showFontSizeDialog = true },
                 )
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                SettingSwitchRow(title = "Yüksek kontrast", subtitle = "Yazıları ve sınırları daha belirgin göster", checked = prefs.highContrast, onCheckedChange = repository::setHighContrast)
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                SettingSwitchRow(title = "Hareketi azalt", subtitle = "Geçiş ve yükleme animasyonlarını sadeleştir", checked = prefs.reduceMotion, onCheckedChange = repository::setReduceMotion)
             }
         }
 
@@ -252,6 +266,15 @@ fun ProfilScreen(
                     checked = prefs.matchAlerts,
                     onCheckedChange = { setNotificationToggle("matches", it) },
                 )
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                if (prefs.matchAlerts) {
+                    SettingSwitchRow(title = "Maç başlangıcı", subtitle = "Seçili maç ve takımlar için", checked = prefs.matchStartAlerts, onCheckedChange = repository::setMatchStartAlerts)
+                    SettingSwitchRow(title = "Skor ve maç sonucu", subtitle = "Futbol ve basketbol karşılaşmaları için", checked = prefs.matchScoreAlerts, onCheckedChange = repository::setMatchScoreAlerts)
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                }
+                SettingSwitchRow(title = "Takip ettiğim konular", subtitle = "Seçtiğin konu ve takımlarla ilgili yeni haberler", checked = prefs.topicAlerts, onCheckedChange = { setNotificationToggle("topics", it) })
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                SettingSwitchRow(title = "Günün kısa turu", subtitle = "Günde bir kez kaynaklardan derlenen gündem", checked = prefs.dailyDigest, onCheckedChange = { setNotificationToggle("digest", it) })
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 SettingSwitchRow(
                     title = "Sessiz Saatler (${prefs.quietHoursStart} - ${prefs.quietHoursEnd})",
@@ -327,10 +350,11 @@ fun ProfilScreen(
     if (showFontSizeDialog) {
         AlertDialog(
             onDismissRequest = { showFontSizeDialog = false },
-            title = { Text("Yazı Boyutu") },
+            title = { Text("Yazı boyutu") },
             text = {
-                Column {
-                    listOf("normal" to "Standart", "large" to "Büyük").forEach { (key, label) ->
+                Column(Modifier.verticalScroll(rememberScrollState())) {
+                    Text("Haberleri rahatça okuyabileceğin boyutu seç. Cihazının yazı boyutu ayarı da korunur.", style = MaterialTheme.typography.bodyMedium)
+                    ReaderSettings.fontSizes.forEach { (key, label) ->
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier
@@ -401,12 +425,14 @@ fun ProfilScreen(
         AlertDialog(
             onDismissRequest = { showClearDataDialog = false },
             title = { Text("Verileri Temizle") },
-            text = { Text("Kayıtlı haberleriniz, arama geçmişiniz ve yerel önbellek temizlenecektir. Devam etmek istiyor musunuz?") },
+            text = { Text("Kayıtlı haberler, okuma ve arama geçmişi, bildirim kutusu ve yerel haber önbelleği temizlenecek. Devam etmek istiyor musunuz?") },
             confirmButton = {
                 TextButton(
                     onClick = {
                         repository.clearSavedStories()
                         repository.clearSearchHistory()
+                        repository.clearReadingHistory()
+                        repository.clearNotifications()
                         repository.clearLocalNewsData()
                         showClearDataDialog = false
                     },

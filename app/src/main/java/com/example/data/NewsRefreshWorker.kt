@@ -10,6 +10,7 @@ import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.CancellationException
 
 /** Keeps the local news archive fresh after the app leaves the foreground or the device restarts. */
 class NewsRefreshWorker(
@@ -22,6 +23,8 @@ class NewsRefreshWorker(
         } else {
             Result.retry()
         }
+    } catch (cancelled: CancellationException) {
+        throw cancelled
     } catch (_: Exception) {
         Result.retry()
     }

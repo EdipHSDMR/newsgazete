@@ -1,6 +1,8 @@
 package com.example.ui.screens
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.ui.semantics.Role
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -92,7 +94,7 @@ fun TopicsScreen(
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clickable { repository.toggleFollowTopic(topic) },
+                    .toggleable(isFollowed, role = Role.Checkbox) { repository.toggleFollowTopic(topic) },
             ) {
                 Row(
                     modifier = Modifier

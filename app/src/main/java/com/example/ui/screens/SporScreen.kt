@@ -3,7 +3,7 @@ package com.example.ui.screens
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.AnimatedVisibility
+import com.example.ui.theme.MotionVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.*
@@ -44,6 +44,7 @@ import androidx.lifecycle.repeatOnLifecycle
 import com.example.data.CizgiRepository
 import com.example.model.*
 import com.example.ui.theme.CizgiColor
+import com.example.ui.theme.LocalReducedMotion
 import com.example.util.CizgiNotificationHelper
 import com.example.util.FootballFormation
 import kotlinx.coroutines.CancellationException
@@ -127,7 +128,7 @@ fun SporScreen(repository: CizgiRepository, modifier: Modifier = Modifier) {
         }
         Row(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 6.dp).clip(RoundedCornerShape(16.dp)).background(MaterialTheme.colorScheme.surfaceVariant).padding(4.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             listOf("FUTBOL" to "Futbol", "BASKETBOL" to "Basketbol").forEach { (key, label) ->
-                val color by animateColorAsState(if (sport == key) MaterialTheme.colorScheme.surface else Color.Transparent, label = "sport")
+                val color by animateColorAsState(if (sport == key) MaterialTheme.colorScheme.surface else Color.Transparent, animationSpec = if (LocalReducedMotion.current) snap() else tween(180), label = "sport")
                 Surface(color = color, shape = RoundedCornerShape(12.dp), modifier = Modifier.weight(1f).clickable { sport = key }) {
                     Row(Modifier.padding(vertical = 9.dp), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
                         Icon(if (key == "FUTBOL") Icons.Outlined.SportsSoccer else Icons.Outlined.SportsBasketball, null, tint = if (sport == key) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(17.dp))
@@ -170,8 +171,11 @@ private fun SportChip(label: String, active: Boolean, onClick: () -> Unit) {
 
 @Composable
 private fun LiveDot() {
-    val transition = rememberInfiniteTransition(label = "live")
-    val alpha by transition.animateFloat(0.4f, 1f, infiniteRepeatable(tween(900), RepeatMode.Reverse), label = "live_dot")
+    val alpha = if (LocalReducedMotion.current) 1f else {
+        val transition = rememberInfiniteTransition(label = "live")
+        val animated by transition.animateFloat(0.4f, 1f, infiniteRepeatable(tween(900), RepeatMode.Reverse), label = "live_dot")
+        animated
+    }
     Box(Modifier.size(5.dp).clip(CircleShape).background(CizgiColor.Red.copy(alpha = alpha)))
 }
 
@@ -212,7 +216,7 @@ private fun MatchCard(match: SportsMatch, alerted: Boolean, onAlert: () -> Unit,
     }
     Surface(
         color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(22.dp),
-        modifier = Modifier.fillMaxWidth().animateContentSize().testTag("match_card_" + match.id),
+        modifier = Modifier.fillMaxWidth().then(if (LocalReducedMotion.current) Modifier else Modifier.animateContentSize()).testTag("match_card_" + match.id),
     ) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -234,7 +238,7 @@ private fun MatchCard(match: SportsMatch, alerted: Boolean, onAlert: () -> Unit,
                 }
                 ClubName(match.awayTeam, Modifier.weight(1f))
             }
-            AnimatedVisibility(expanded) {
+            MotionVisibility(expanded) {
                 Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                     when {

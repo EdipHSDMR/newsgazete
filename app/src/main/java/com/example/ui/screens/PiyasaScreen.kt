@@ -1,6 +1,7 @@
 package com.example.ui.screens
 
-import androidx.compose.animation.AnimatedVisibility
+import com.example.ui.theme.MotionVisibility
+import com.example.ui.theme.LocalReducedMotion
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
@@ -123,14 +124,14 @@ fun PiyasaScreen(repository: CizgiRepository, modifier: Modifier = Modifier) {
             }
         }
         if (tab == "Genel" && assets.any { it.code == "USD/TRY" }) item {
-            Surface(color = MaterialTheme.colorScheme.primaryContainer, shape = RoundedCornerShape(17.dp), modifier = Modifier.fillMaxWidth().animateContentSize()) {
+            Surface(color = MaterialTheme.colorScheme.primaryContainer, shape = RoundedCornerShape(17.dp), modifier = Modifier.fillMaxWidth().then(if (LocalReducedMotion.current) Modifier else Modifier.animateContentSize())) {
                 Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Row(Modifier.fillMaxWidth().clickable { converter = !converter }, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Icon(Icons.Outlined.CurrencyExchange, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(17.dp))
                         Text("Kur dönüştürücü", style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(1f))
                         Icon(if (converter) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore, "Dönüştürücüyü aç", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(19.dp))
                     }
-                    AnimatedVisibility(converter) {
+                    MotionVisibility(converter) {
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                             OutlinedTextField(amount, { next -> if (next.all { it.isDigit() || it in ".," }) amount = next }, modifier = Modifier.weight(1f), label = { Text("USD") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), shape = RoundedCornerShape(13.dp))
                             val rate = assets.firstOrNull { it.code == "USD/TRY" }?.currentPrice
@@ -173,12 +174,12 @@ private fun SectionHeading(title: String, detail: String) {
 @Composable
 fun BISTStockCard(stock: BISTStock, modifier: Modifier = Modifier, isFavorite: Boolean = false, onFavoriteClick: () -> Unit = {}) {
     var expanded by remember(stock.symbol) { mutableStateOf(false) }
-    Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(19.dp), modifier = modifier.fillMaxWidth().animateContentSize().clickable { expanded = !expanded }) {
+    Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(19.dp), modifier = modifier.fillMaxWidth().then(if (LocalReducedMotion.current) Modifier else Modifier.animateContentSize()).clickable { expanded = !expanded }) {
         Column(Modifier.padding(15.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             QuoteRow(stock.symbol, stock.companyName, stock.price, stock.unit, stock.changePct, isFavorite, onFavoriteClick)
             Text(stock.source + " · " + formatBistQuoteTime(stock.updatedAtEpochMs), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             if (stock.sparkline.size > 1) MiniSparkline(stock.sparkline, Modifier.fillMaxWidth().height(25.dp))
-            AnimatedVisibility(expanded) {
+            MotionVisibility(expanded) {
                 Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
                     if (stock.low != null && stock.high != null) Text("Gün içi " + formatPrice(stock.low) + " – " + formatPrice(stock.high) + " " + stock.unit, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     if (stock.volume.isNotBlank()) Text("Hacim " + stock.volume, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -191,13 +192,13 @@ fun BISTStockCard(stock: BISTStock, modifier: Modifier = Modifier, isFavorite: B
 @Composable
 fun FinancialAssetCard(asset: FinancialAsset, modifier: Modifier = Modifier, isFavorite: Boolean = false, onFavoriteClick: () -> Unit = {}) {
     var expanded by remember(asset.code) { mutableStateOf(false) }
-    Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(19.dp), modifier = modifier.fillMaxWidth().animateContentSize().clickable { expanded = !expanded }) {
+    Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(19.dp), modifier = modifier.fillMaxWidth().then(if (LocalReducedMotion.current) Modifier else Modifier.animateContentSize()).clickable { expanded = !expanded }) {
         Column(Modifier.padding(15.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             QuoteRow(asset.code, asset.name, asset.currentPrice, asset.unit, asset.changePct, isFavorite, onFavoriteClick)
             Text(asset.source + " · " + formatAssetQuoteTime(asset), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             if (asset.isEstimated && asset.quoteNote.isNotBlank()) Text(asset.quoteNote, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             if (asset.sparkline.size > 1) MiniSparkline(asset.sparkline, Modifier.fillMaxWidth().height(25.dp))
-            AnimatedVisibility(expanded) {
+            MotionVisibility(expanded) {
                 Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
                     if (asset.buyPrice != null && asset.sellPrice != null) Text("Alış " + formatPrice(asset.buyPrice) + " ₺ · Satış " + formatPrice(asset.sellPrice) + " ₺", style = MaterialTheme.typography.labelSmall)
                     if (asset.lowPrice != null && asset.highPrice != null) Text("Gün içi " + formatPrice(asset.lowPrice) + " – " + formatPrice(asset.highPrice) + " " + asset.unit, style = MaterialTheme.typography.labelSmall)

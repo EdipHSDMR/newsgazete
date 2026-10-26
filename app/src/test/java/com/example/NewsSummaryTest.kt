@@ -34,4 +34,36 @@ class NewsSummaryTest {
     @Test fun aTitleAloneIsNotLabeledAsASummary() {
         assertEquals("", NewsSummary.bestAvailableSummary("Yeni karar açıklandı", "Yeni karar açıklandı", "Yeni karar açıklandı"))
     }
+
+    @Test fun aCauseQuestionGetsTheReportedCause() {
+        val source = "Kentte ulaşım çalışmaları sürüyor. Seferler, yoğun kar yağışı nedeniyle iptal edildi. Ekipler yollarda temizlik çalışması başlattı."
+        val result = NewsSummary.assess("", source, "Seferler neden iptal edildi?")
+        assertTrue(result.text.contains("kar yağışı nedeniyle"))
+        assertNull(result.missingAnswer)
+    }
+
+    @Test fun channelAndPriceAnswersComeFromTheSource() {
+        val channel = NewsSummary.assess("", "Karşılaşmanın hazırlıkları tamamlandı. Mücadele beIN Sports 1 kanalından yayınlanacak.", "Maç hangi kanalda?")
+        assertTrue(channel.text.contains("beIN Sports 1"))
+        assertNull(channel.missingAnswer)
+        val price = NewsSummary.assess("", "Yeni tarife duyuruldu. Aylık abonelik bedeli 250 TL olarak açıklandı.", "Abonelik ne kadar?")
+        assertTrue(price.text.contains("250 TL"))
+        assertNull(price.missingAnswer)
+    }
+
+    @Test fun missingAnswersAreReportedWithoutInventingTheTitleClaim() {
+        val source = "Kurum, etkinlik için hazırlıkların devam ettiğini açıkladı. Ayrıntıların daha sonra paylaşılacağı belirtildi."
+        val result = NewsSummary.assess("", source, "Etkinlik ne zaman, saat kaçta?")
+        assertNotNull(result.missingAnswer)
+        assertTrue(result.missingAnswer!!.contains("tarih/saat"))
+        assertFalse(result.text.contains("20.00"))
+    }
+
+    @Test fun ordinalMatchMinutesStayWithTheirSentence() {
+        val opening = "Takım, karşılaşmanın 29. dakikasında üstünlük golünü kaydetti."
+        val source = ("Hazırlıklar tamamlandı. ".repeat(20)) + opening + " Bu sonuçla ligdeki puanını artırdı."
+        val paragraphs = NewsSummary.paragraphs(source)
+        assertTrue(paragraphs.any { it.contains(opening) })
+        assertFalse(paragraphs.any { it.startsWith("dakikasında") })
+    }
 }

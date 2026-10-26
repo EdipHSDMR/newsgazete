@@ -1,6 +1,7 @@
 package com.example.util
 
 import com.example.model.Story
+import com.example.model.SourceComparison
 import java.net.URI
 import java.util.Locale
 import kotlin.math.abs
@@ -123,7 +124,8 @@ object NewsStoryDeduplicator {
     }
 
     private fun mergeStory(existing: Story, incoming: Story): Story {
-        val comparisons = (existing.comparisons + incoming.comparisons)
+        fun origin(story: Story) = SourceComparison(story.publisher, story.title, story.summary, story.publishedAt, story.canonicalUrl)
+        val comparisons = (listOf(origin(existing), origin(incoming)) + existing.comparisons + incoming.comparisons)
             .distinctBy { it.publisher.trim().lowercase(Locale.ROOT) to normalizeUrl(it.url) }
             .take(MAX_COMPARISONS)
         val uniquePublishers = comparisons.map { it.publisher.trim().lowercase(Locale.ROOT) }.distinct().size
@@ -133,8 +135,8 @@ object NewsStoryDeduplicator {
             id = existing.id,
             sourceCount = maxOf(existing.sourceCount, incoming.sourceCount, uniquePublishers, 1),
             comparisons = comparisons,
-            canonicalUrl = existing.canonicalUrl.ifBlank { incoming.canonicalUrl },
-            imageUrl = existing.imageUrl.ifBlank { incoming.imageUrl },
+            canonicalUrl = richer.canonicalUrl.ifBlank { existing.canonicalUrl.ifBlank { incoming.canonicalUrl } },
+            imageUrl = richer.imageUrl.ifBlank { existing.imageUrl.ifBlank { incoming.imageUrl } },
             fullText = richer.fullText,
             summary = richer.summary.ifBlank { existing.summary.ifBlank { incoming.summary } },
             isBreaking = BreakingNewsClassifier.isBreaking(
@@ -167,7 +169,7 @@ object NewsStoryDeduplicator {
         .trim()
         .replace("\\s+".toRegex(), " ")
 
-    private fun normalizeUrl(value: String): String {
+    fun normalizeUrl(value: String): String {
         if (value.isBlank()) return ""
         return runCatching {
             val uri = URI(value.trim())

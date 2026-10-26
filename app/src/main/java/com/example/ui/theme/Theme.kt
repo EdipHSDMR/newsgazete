@@ -46,7 +46,7 @@ private val DarkColors = darkColorScheme(
     errorContainer = Color(0xFF3B202B), onErrorContainer = Color(0xFFFFBBC0),
 )
 @Composable
-fun CizgiTheme(darkTheme: Boolean = isSystemInDarkTheme(), content: @Composable () -> Unit) {
+fun CizgiTheme(darkTheme: Boolean = isSystemInDarkTheme(), highContrast: Boolean = false, content: @Composable () -> Unit) {
     val view = LocalView.current
     if (!view.isInEditMode) SideEffect {
         var context = view.context
@@ -58,8 +58,15 @@ fun CizgiTheme(darkTheme: Boolean = isSystemInDarkTheme(), content: @Composable 
             }
         }
     }
+    val base = if (darkTheme) DarkColors else LightColors
+    val colors = if (!highContrast) base else base.copy(
+        onSurfaceVariant = if (darkTheme) Color(0xFFE0E7F4) else Color(0xFF29364D),
+        outline = if (darkTheme) Color(0xFF9BAAC4) else Color(0xFF52647F),
+        outlineVariant = if (darkTheme) Color(0xFF63738D) else Color(0xFF8493AB),
+        primary = if (darkTheme) Color(0xFFBCC8FF) else Color(0xFF2644C6),
+    )
     MaterialTheme(
-        colorScheme = if (darkTheme) DarkColors else LightColors,
+        colorScheme = colors,
         typography = CizgiTypography,
         shapes = Shapes(
             extraSmall = RoundedCornerShape(8.dp), small = RoundedCornerShape(12.dp),

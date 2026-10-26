@@ -14,6 +14,9 @@ import com.example.MainActivity
 
 object CizgiNotificationHelper {
 
+    const val CHANNEL_TOPICS = "cizgi_followed_topics"
+    const val CHANNEL_DIGEST = "cizgi_daily_digest"
+
     const val CHANNEL_BREAKING = "cizgi_breaking_news_v2"
     const val CHANNEL_SPORTS = "cizgi_sports_goals_v2"
     const val CHANNEL_MARKETS = "cizgi_market_alerts_v2"
@@ -56,8 +59,27 @@ object CizgiNotificationHelper {
                 setShowBadge(false)
             }
 
-            notificationManager.createNotificationChannels(listOf(breakingChannel, sportsChannel, marketsChannel))
+            val topicsChannel = NotificationChannel(CHANNEL_TOPICS, "Takip ettiğim konular", NotificationManager.IMPORTANCE_DEFAULT)
+            val digestChannel = NotificationChannel(CHANNEL_DIGEST, "Günün kısa turu", NotificationManager.IMPORTANCE_LOW)
+            notificationManager.createNotificationChannels(listOf(breakingChannel, sportsChannel, marketsChannel, topicsChannel, digestChannel))
         }
+    }
+
+    fun sendContentNotification(context: Context, id: String, category: String, title: String, body: String, storyId: String?, screen: String?) {
+        if (!hasNotificationPermission(context) || !NotificationManagerCompat.from(context).areNotificationsEnabled()) return
+        createNotificationChannels(context)
+        val channel = when (category) { "Spor" -> CHANNEL_SPORTS; "Son Dakika" -> CHANNEL_BREAKING; "Konular" -> CHANNEL_TOPICS; else -> CHANNEL_DIGEST }
+        val intent = Intent(context, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            putExtra("extra_story_id", storyId)
+            putExtra("extra_screen", screen)
+        }
+        val pending = PendingIntent.getActivity(context, id.hashCode(), intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        val notification = NotificationCompat.Builder(context, channel)
+            .setSmallIcon(android.R.drawable.ic_dialog_info).setContentTitle(title).setContentText(body)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(body)).setContentIntent(pending)
+            .setAutoCancel(true).setOnlyAlertOnce(true).build()
+        try { NotificationManagerCompat.from(context).notify(id.hashCode(), notification) } catch (_: SecurityException) { }
     }
 
     fun hasNotificationPermission(context: Context): Boolean {

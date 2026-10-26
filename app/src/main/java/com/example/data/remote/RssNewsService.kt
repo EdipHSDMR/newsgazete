@@ -280,7 +280,7 @@ class RssNewsService(private val httpClient: OkHttpClient) {
     /**
      * Regex tabanlı hatasız RSS / Atom Ayrıştırıcı (CDATA, Enclosure, Media ve HTML içeriği tam destekler)
      */
-    private fun parseRssFeedRobust(xml: String, publisher: String, defaultTopic: String): List<Story> {
+    internal fun parseRssFeedRobust(xml: String, publisher: String, defaultTopic: String): List<Story> {
         val list = mutableListOf<Story>()
 
         // Find all <item>...</item> or <entry>...</entry> blocks
@@ -292,9 +292,9 @@ class RssNewsService(private val httpClient: OkHttpClient) {
 
             val rawTitle = extractTagContent(itemBlock, "title")
             val rawLink = extractLink(itemBlock)
-            val rawDesc = extractTagContent(itemBlock, "description")
-                .ifBlank { extractTagContent(itemBlock, "summary") }
-                .ifBlank { extractTagContent(itemBlock, "encoded") }
+            val rawDesc = extractTagRawContent(itemBlock, "description")
+                .ifBlank { extractTagRawContent(itemBlock, "summary") }
+                .ifBlank { extractTagRawContent(itemBlock, "encoded") }
             val rawPubDate = extractTagContent(itemBlock, "pubDate")
                 .ifBlank { extractTagContent(itemBlock, "published") }
                 .ifBlank { extractTagContent(itemBlock, "updated") }
@@ -306,7 +306,7 @@ class RssNewsService(private val httpClient: OkHttpClient) {
 
             if (cleanTitle.isNotBlank() && cleanTitle.length > 6) {
                 // Classify topic intelligently by content and category
-                val classifiedTopic = classifyTopic(cleanTitle, cleanDesc, rawCategory, defaultTopic)
+                val classifiedTopic = com.example.util.NewsTopics.classify(cleanTitle, cleanDesc, rawCategory, defaultTopic, rawLink)
 
                 // Keep only an image explicitly supplied by the publisher's feed.
                 val imageUrl = extractImageUrl(itemBlock, rawLink)
@@ -317,7 +317,7 @@ class RssNewsService(private val httpClient: OkHttpClient) {
                 // Keep the existing title-based ID so refreshes update the user's old cache
                 // instead of duplicating every story after the app upgrade.
                 val id = UUID.nameUUIDFromBytes(cleanTitle.toByteArray(Charsets.UTF_8)).toString()
-                val sourceText = cleanDesc.take(MAX_SOURCE_DESCRIPTION_CHARS)
+                val sourceText = NewsSummary.paragraphs(rawDesc).joinToString("\n\n").take(MAX_SOURCE_DESCRIPTION_CHARS)
 
                 list.add(
                     Story(
@@ -359,51 +359,11 @@ class RssNewsService(private val httpClient: OkHttpClient) {
         return list
     }
 
-    private fun classifyTopic(title: String, desc: String, category: String, defaultTopic: String): String {
-        val combined = "$title $desc $category".lowercase(Locale.forLanguageTag("tr-TR"))
 
-        return when {
-            combined.contains("tbmm") || combined.contains("meclis") || combined.contains("cumhurbaşkanı") ||
-                    combined.contains("bakan") || combined.contains("hükümet") || combined.contains("seçim") ||
-                    combined.contains("chp") || combined.contains("ak parti") || combined.contains("mhp") ||
-                    combined.contains("yargı") || combined.contains("kanun") || combined.contains("milletvekili") ||
-                    combined.contains("politika") || combined.contains("anayasa") || combined.contains("belediye başkanı") -> "Siyaset"
-
-            combined.contains("faiz") || combined.contains("enflasyon") || combined.contains("merkez bankası") ||
-                    combined.contains("tcmb") || combined.contains("dolar") || combined.contains("euro") ||
-                    combined.contains("borsa") || combined.contains("bist") || combined.contains("altın") ||
-                    combined.contains("ihracat") || combined.contains("ithalat") || combined.contains("asgari ücret") ||
-                    combined.contains("bütçe") || combined.contains("kredi") || combined.contains("vergi") ||
-                    combined.contains("ekonomi") || combined.contains("fiyat") -> "Ekonomi"
-
-            combined.contains("yapay zeka") || combined.contains("yazılım") || combined.contains("akıllı telefon") ||
-                    combined.contains("çip") || combined.contains("robot") || combined.contains("siber") ||
-                    combined.contains("nasa") || combined.contains("uzay") || combined.contains("apple") ||
-                    combined.contains("google") || combined.contains("microsoft") || combined.contains("teknoloji") ||
-                    combined.contains("donanım") || combined.contains("uydu") -> "Teknoloji"
-
-            combined.contains("maç") || combined.contains("futbol") || combined.contains("basketbol") ||
-                    combined.contains("voleybol") || combined.contains("derbi") || combined.contains("süper lig") ||
-                    combined.contains("uefa") || combined.contains("gol") || combined.contains("transfer") ||
-                    combined.contains("şampiyon") || combined.contains("milli takım") || combined.contains("spor") -> "Spor"
-
-            combined.contains("sağlık") || combined.contains("hastane") || combined.contains("ilaç") ||
-                    combined.contains("aşı") || combined.contains("doktor") || combined.contains("tedavi") ||
-                    combined.contains("kanser") || combined.contains("virüs") || combined.contains("beslenme") -> "Sağlık"
-
-            combined.contains("konser") || combined.contains("festival") || combined.contains("film") ||
-                    combined.contains("sinema") || combined.contains("tiyatro") || combined.contains("arkeoloji") ||
-                    combined.contains("müze") || combined.contains("sergi") || combined.contains("edebiyat") ||
-                    combined.contains("kültür") || combined.contains("sanat") || combined.contains("kitap") -> "Kültür-Sanat"
-
-            combined.contains("dünya") || combined.contains("abd") || combined.contains("rusya") ||
-                    combined.contains("ukrayna") || combined.contains("israil") || combined.contains("gazze") ||
-                    combined.contains("çin") || combined.contains("avrupa") || combined.contains("nato") ||
-                    combined.contains("bm ") || combined.contains("iran") -> "Dünya"
-
-            defaultTopic.isNotBlank() -> defaultTopic
-            else -> "Gündem"
-        }
+    private fun extractTagRawContent(block: String, tagName: String): String {
+        val pattern = Pattern.compile("<(?:[\\w.-]+:)?$tagName\\b(?:\\s+[^>]*)?>(.*?)</(?:[\\w.-]+:)?$tagName\\s*>", Pattern.DOTALL or Pattern.CASE_INSENSITIVE)
+        val matcher = pattern.matcher(block)
+        return if (matcher.find()) matcher.group(1).orEmpty().trim().removePrefix("<![CDATA[").removeSuffix("]]>") else ""
     }
 
     private fun extractTagContent(block: String, tagName: String): String {

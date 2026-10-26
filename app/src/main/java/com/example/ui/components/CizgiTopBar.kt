@@ -26,9 +26,9 @@ fun CizgiTopBar(
     onWeatherClick: () -> Unit, onSearchClick: () -> Unit, onNotificationsClick: () -> Unit,
     onProfileClick: () -> Unit, modifier: Modifier = Modifier,
 ) {
-    val date = LocalDate.now().format(DateTimeFormatter.ofPattern("d MMMM, EEEE", Locale.forLanguageTag("tr-TR")))
+    val date = LocalDate.now(java.time.ZoneId.of("Europe/Istanbul")).format(DateTimeFormatter.ofPattern("d MMMM, EEEE", Locale.forLanguageTag("tr-TR")))
     Row(
-        modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 20.dp, vertical = 12.dp),
+        modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(Modifier.weight(1f)) {
@@ -44,15 +44,15 @@ fun CizgiTopBar(
                 Text(weatherCity, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 58.dp))
             }
         }
-        IconButton(onSearchClick, Modifier.size(34.dp).testTag("topbar_search_button")) {
+        IconButton(onSearchClick, Modifier.size(48.dp).testTag("topbar_search_button")) {
             Icon(Icons.Outlined.Search, "Haber ara", modifier = Modifier.size(21.dp))
         }
-        IconButton(onNotificationsClick, Modifier.size(34.dp).testTag("topbar_notifications_button")) {
+        IconButton(onNotificationsClick, Modifier.size(48.dp).testTag("topbar_notifications_button")) {
             BadgedBox(badge = { if (unreadNotificationCount > 0) Badge { Text(unreadNotificationCount.coerceAtMost(99).toString()) } }) {
                 Icon(Icons.Outlined.Notifications, "Bildirimler", modifier = Modifier.size(20.dp))
             }
         }
-        IconButton(onProfileClick, Modifier.size(34.dp).testTag("topbar_profile_button")) {
+        IconButton(onProfileClick, Modifier.size(48.dp).testTag("topbar_profile_button")) {
             Icon(Icons.Outlined.Tune, "Ayarlar", modifier = Modifier.size(20.dp))
         }
     }

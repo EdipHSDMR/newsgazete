@@ -1,5 +1,7 @@
 package com.example.data.local
 
+import com.example.util.ArchiveSearch
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
@@ -34,6 +36,7 @@ data class NewsArticleEntity(
     val paragraphsJson: String,
     val comparisonsJson: String,
     val canonicalUrl: String,
+    @ColumnInfo(defaultValue = "''") val searchText: String = "",
 ) {
     fun toStory(): Story = Story(
         id = id,
@@ -59,7 +62,7 @@ data class NewsArticleEntity(
     companion object {
         fun fromStory(story: Story): NewsArticleEntity {
             val paragraphs = JSONArray()
-            story.paragraphs.take(12).forEach { paragraphs.put(it.take(1_200)) }
+            story.paragraphs.take(160).forEach { paragraphs.put(it.take(1_200)) }
 
             val comparisons = JSONArray()
             story.comparisons.take(8).forEach { item ->
@@ -88,10 +91,11 @@ data class NewsArticleEntity(
                 whatHappened = story.whatHappened.take(1_200),
                 whyItMatters = story.whyItMatters.take(1_200),
                 whatIsUnknown = story.whatIsUnknown.take(1_200),
-                fullText = story.fullText.take(6_000),
+                fullText = story.fullText.take(80_000),
                 paragraphsJson = paragraphs.toString(),
                 comparisonsJson = comparisons.toString(),
                 canonicalUrl = story.canonicalUrl.take(2_000),
+                searchText = ArchiveSearch.normalize(listOf(story.title, story.summary, story.topic, story.publisher).joinToString(" ")),
             )
         }
 

@@ -3,6 +3,9 @@ package com.example.ui.components
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.snap
+import androidx.compose.animation.core.tween
+import com.example.ui.theme.LocalReducedMotion
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -47,21 +50,21 @@ fun CizgiBottomBar(currentScreen: CizgiScreen, onNavigate: (CizgiScreen) -> Unit
                 .clip(RoundedCornerShape(25.dp)).background(CizgiColor.NavyDark).testTag("cizgi_bottom_bar"),
         ) {
             val cell = maxWidth / CizgiScreen.entries.size
-            val offset by animateDpAsState(cell * currentScreen.ordinal + 5.dp, spring(dampingRatio = 0.8f, stiffness = 420f), label = "navigation")
+            val offset by animateDpAsState(cell * currentScreen.ordinal + 5.dp, if (LocalReducedMotion.current) snap() else spring(dampingRatio = 0.8f, stiffness = 420f), label = "navigation")
             Box(Modifier.offset(x = offset, y = 6.dp).width(cell - 10.dp).height(52.dp).clip(RoundedCornerShape(19.dp)).background(CizgiColor.Blue))
             Row(Modifier.fillMaxSize()) {
                 CizgiScreen.entries.forEach { screen ->
                     val active = screen == currentScreen
-                    val color by animateColorAsState(if (active) Color.White else Color(0xFF98A6BC), label = "tab_color")
+                    val color by animateColorAsState(if (active) Color.White else Color(0xFFBCC7DA), animationSpec = if (LocalReducedMotion.current) snap() else tween(180), label = "tab_color")
                     Column(
                         modifier = Modifier.weight(1f).fillMaxHeight().clip(RoundedCornerShape(22.dp))
                             .clickable(role = Role.Tab) { onNavigate(screen) }
                             .semantics { selected = active }.testTag("nav_item_" + screen.route),
                         horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center,
                     ) {
-                        Icon(if (active) screen.selectedIcon else screen.unselectedIcon, contentDescription = screen.title, tint = color, modifier = Modifier.size(21.dp))
+                        Icon(if (active) screen.selectedIcon else screen.unselectedIcon, contentDescription = null, tint = color, modifier = Modifier.size(21.dp))
                         Spacer(Modifier.height(4.dp))
-                        Text(screen.title, color = color, fontSize = 10.sp, lineHeight = 12.sp, fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal, maxLines = 1)
+                        Text(screen.title, color = color, fontSize = 11.sp, lineHeight = 14.sp, fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal, maxLines = 1)
                     }
                 }
             }

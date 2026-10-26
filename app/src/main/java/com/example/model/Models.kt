@@ -1,11 +1,14 @@
 package com.example.model
 
+import kotlinx.serialization.Serializable
+
 enum class MatchStatus {
     LIVE,
     UPCOMING,
     FINISHED
 }
 
+@Serializable
 data class SourceComparison(
     val publisher: String,
     val headline: String,
@@ -14,6 +17,7 @@ data class SourceComparison(
     val url: String = "",
 )
 
+@Serializable
 data class Story(
     val id: String,
     val title: String,
@@ -208,6 +212,7 @@ data class NotificationItem(
     val timeAgo: String,
     val isRead: Boolean = false,
     val storyId: String? = null,
+    val createdAtEpochMs: Long = 0L,
 )
 
 data class UserPreferences(
@@ -217,10 +222,16 @@ data class UserPreferences(
     val selectedDistrict: String? = null,
     val followedTopics: Set<String> = emptySet(),
     val followedTeams: Set<String> = emptySet(),
-    val breakingAlerts: Boolean = true,
+    val breakingAlerts: Boolean = false,
     val matchAlerts: Boolean = false,
-    val dailyDigest: Boolean = true,
+    val dailyDigest: Boolean = false,
     val quietHoursEnabled: Boolean = true,
     val quietHoursStart: String = "23:00",
     val quietHoursEnd: String = "07:00",
+    val onboardingCompleted: Boolean = false,
+    val topicAlerts: Boolean = false,
+    val matchStartAlerts: Boolean = true,
+    val matchScoreAlerts: Boolean = true,
+    val reduceMotion: Boolean = false,
+    val highContrast: Boolean = false,
 )

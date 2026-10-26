@@ -1,6 +1,6 @@
 package com.example.ui.components
 
-import androidx.compose.animation.AnimatedVisibility
+import com.example.ui.theme.MotionVisibility
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
@@ -33,13 +33,15 @@ import coil.request.ImageRequest
 import com.example.data.remote.BISTStock
 import com.example.model.*
 import com.example.ui.theme.CizgiColor
+import com.example.ui.theme.LocalReducedMotion
 import java.text.NumberFormat
 import java.util.Locale
 
 fun Modifier.pressable(onClick: () -> Unit): Modifier = composed {
     val source = remember { MutableInteractionSource() }
     val pressed by source.collectIsPressedAsState()
-    val scale by animateFloatAsState(if (pressed) 0.975f else 1f, spring(stiffness = 550f), label = "press")
+    val reduced = LocalReducedMotion.current
+    val scale by animateFloatAsState(if (pressed && !reduced) 0.975f else 1f, if (reduced) snap() else spring(stiffness = 550f), label = "press")
     this.graphicsLayer { scaleX = scale; scaleY = scale }
         .clickable(interactionSource = source, indication = null, onClick = onClick)
 }
@@ -47,7 +49,8 @@ fun Modifier.pressable(onClick: () -> Unit): Modifier = composed {
 @Composable
 fun SourceImage(model: String, contentDescription: String?, contentScale: ContentScale = ContentScale.Crop, modifier: Modifier = Modifier) {
     val context = LocalContext.current
-    val request = remember(model, context) { ImageRequest.Builder(context).data(model).crossfade(220).build() }
+    val reduced = LocalReducedMotion.current
+    val request = remember(model, context, reduced) { ImageRequest.Builder(context).data(model).crossfade(if (reduced) 0 else 220).build() }
     AsyncImage(model = request, contentDescription = contentDescription, contentScale = contentScale, modifier = modifier)
 }
 
@@ -68,7 +71,7 @@ fun MansetHeroCard(story: Story, onClick: () -> Unit, onSaveToggle: () -> Unit, 
             }
             Spacer(Modifier.weight(1f))
             Surface(color = Color.Black.copy(alpha = 0.18f), shape = CircleShape) {
-                IconButton(onSaveToggle, Modifier.size(34.dp)) {
+                IconButton(onSaveToggle, Modifier.size(48.dp)) {
                     Icon(if (story.isSaved) Icons.Outlined.BookmarkAdded else Icons.Outlined.BookmarkBorder, "Haberi kaydet", tint = Color.White, modifier = Modifier.size(18.dp))
                 }
             }
@@ -145,7 +148,7 @@ fun ModernNewsCard(story: Story, onClick: () -> Unit, onSaveToggle: () -> Unit, 
 fun GununOzetiCard(points: List<String>, modifier: Modifier = Modifier) {
     if (points.isEmpty()) return
     var expanded by remember { mutableStateOf(false) }
-    Surface(color = MaterialTheme.colorScheme.primaryContainer, shape = RoundedCornerShape(22.dp), modifier = modifier.fillMaxWidth().animateContentSize().clickable { expanded = !expanded }) {
+    Surface(color = MaterialTheme.colorScheme.primaryContainer, shape = RoundedCornerShape(22.dp), modifier = modifier.fillMaxWidth().then(if (LocalReducedMotion.current) Modifier else Modifier.animateContentSize()).clickable { expanded = !expanded }) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Icon(Icons.Outlined.AutoAwesome, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(21.dp))
@@ -155,7 +158,7 @@ fun GununOzetiCard(points: List<String>, modifier: Modifier = Modifier) {
                 }
                 Icon(if (expanded) Icons.Outlined.KeyboardArrowUp else Icons.Outlined.KeyboardArrowDown, if (expanded) "Özeti kapat" else "Günün özetini aç", tint = MaterialTheme.colorScheme.primary)
             }
-            AnimatedVisibility(expanded) {
+            MotionVisibility(expanded) {
                 Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
                     points.forEachIndexed { index, point ->
                         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -189,8 +192,11 @@ fun MiniMatchCard(match: SportsMatch, onClick: () -> Unit, modifier: Modifier = 
 
 @Composable
 fun SkeletonCard(modifier: Modifier = Modifier) {
-    val transition = rememberInfiniteTransition(label = "loading")
-    val alpha by transition.animateFloat(0.3f, 0.7f, infiniteRepeatable(tween(900), RepeatMode.Reverse), label = "skeleton")
+    val alpha = if (LocalReducedMotion.current) .6f else {
+        val transition = rememberInfiniteTransition(label = "loading")
+        val animated by transition.animateFloat(0.3f, 0.7f, infiniteRepeatable(tween(900), RepeatMode.Reverse), label = "skeleton")
+        animated
+    }
     Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(22.dp), modifier = modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Box(Modifier.fillMaxWidth().height(125.dp).clip(RoundedCornerShape(15.dp)).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = alpha)))

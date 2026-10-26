@@ -1,5 +1,6 @@
 package com.example.data.local
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.PrimaryKey
 import com.example.model.Story
@@ -23,9 +24,12 @@ data class SavedArticleEntity(
     val whatIsUnknown: String = "",
     val fullText: String = "",
     val canonicalUrl: String = "",
+    @ColumnInfo(defaultValue = "''") val storyJson: String = "",
+    @ColumnInfo(defaultValue = "0") val offlineReady: Boolean = false,
     val savedAtTimestamp: Long = System.currentTimeMillis(),
 ) {
     fun toStory(): Story {
+        StorySnapshot.decode(storyJson)?.let { return it.copy(isSaved = true) }
         return Story(
             id = id,
             title = title,
@@ -48,9 +52,11 @@ data class SavedArticleEntity(
     }
 
     companion object {
-        fun fromStory(story: Story): SavedArticleEntity {
+        fun fromStory(story: Story, offlineReady: Boolean = false): SavedArticleEntity {
             return SavedArticleEntity(
                 id = story.id,
+                storyJson = StorySnapshot.encode(story),
+                offlineReady = offlineReady,
                 title = story.title,
                 summary = story.summary,
                 topic = story.topic,

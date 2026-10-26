@@ -1,5 +1,16 @@
 package com.example.ui.screens
 
+import android.content.Intent
+import android.provider.Settings
+import androidx.core.app.NotificationManagerCompat
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.material.icons.filled.DeleteSweep
+import androidx.compose.material3.AlertDialog
+import androidx.compose.runtime.DisposableEffect
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -62,7 +73,16 @@ fun BildirimlerScreen(
     val context = LocalContext.current
     val notifications by repository.notifications.collectAsState()
     var selectedCategory by remember { mutableStateOf("Tümü") }
-    val categories = listOf("Tümü", "Son Dakika", "Spor", "Gündem")
+    val categories = listOf("Tümü", "Son Dakika", "Spor", "Konular", "Gündem")
+    var clearDialog by remember { mutableStateOf(false) }
+    var permissionEnabled by remember { mutableStateOf(CizgiNotificationHelper.hasNotificationPermission(context) && NotificationManagerCompat.from(context).areNotificationsEnabled()) }
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    DisposableEffect(lifecycle) {
+        val observer = LifecycleEventObserver { _, event -> if (event == Lifecycle.Event.ON_RESUME) permissionEnabled = CizgiNotificationHelper.hasNotificationPermission(context) && NotificationManagerCompat.from(context).areNotificationsEnabled() }
+        lifecycle.addObserver(observer)
+        onDispose { lifecycle.removeObserver(observer) }
+    }
+    if (clearDialog) AlertDialog(onDismissRequest = { clearDialog = false }, title = { Text("Bildirim geçmişini temizle") }, text = { Text("Bu cihazda saklanan bildirimler silinecek.") }, confirmButton = { TextButton({ repository.clearNotifications(); clearDialog = false }) { Text("Temizle") } }, dismissButton = { TextButton({ clearDialog = false }) { Text("Vazgeç") } })
 
     val filteredNotifications = remember(notifications, selectedCategory) {
         if (selectedCategory == "Tümü") notifications
@@ -82,6 +102,7 @@ fun BildirimlerScreen(
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
             Row(
+                modifier = Modifier.weight(1f),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
@@ -106,19 +127,20 @@ fun BildirimlerScreen(
                 }
             }
 
+            if (notifications.isNotEmpty()) IconButton({ clearDialog = true }) { Icon(Icons.Default.DeleteSweep, "Bildirim geçmişini temizle") }
             if (notifications.any { !it.isRead }) {
-                TextButton(onClick = { repository.markAllNotificationsRead() }) {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Icon(Icons.Default.DoneAll, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Text("Tümünü Oku", style = MaterialTheme.typography.labelSmall)
-                    }
+                IconButton(onClick = { repository.markAllNotificationsRead() }) {
+                    Icon(Icons.Default.DoneAll, contentDescription = "Tümünü okundu olarak işaretle")
                 }
             }
         }
 
+        if (!permissionEnabled) TextButton({ context.startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)) }) {
+            Text("Telefon bildirimleri kapalı · Sistem ayarlarını aç")
+        }
         // Category Filter Chips
         Row(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             categories.forEach { cat ->

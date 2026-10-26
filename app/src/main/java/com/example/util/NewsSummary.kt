@@ -5,9 +5,22 @@ import java.util.Locale
 
 /** Selects complementary facts from the source; no remote model or invented information. */
 object NewsSummary {
+    data class Result(val text: String, val missingAnswer: String?, val limitedSource: Boolean)
+
+    fun assess(summaryCandidate: String, sourceText: String, title: String, maxCharacters: Int = 420): Result {
+        val source = cleanText(sourceText).ifBlank { cleanText(summaryCandidate) }
+        val asked = title.lowercase(locale)
+        val missing = mutableListOf<String>()
+        if (Regex("ne zaman|saat kaç|hangi gün").containsMatchIn(asked) && !timeFact.containsMatchIn(source)) missing += "tarih/saat"
+        if (Regex("hangi kanalda|nereden izlen").containsMatchIn(asked) && !channelFact.containsMatchIn(source)) missing += "yayın kanalı"
+        if (Regex("neden|niçin|sebebi").containsMatchIn(asked) && !causeFact.containsMatchIn(source)) missing += "neden"
+        if (Regex("kaç (?:tl|lira)|ne kadar|fiyatı ne").containsMatchIn(asked) && !priceFact.containsMatchIn(source)) missing += "tutar"
+        return Result(bestAvailableSummary(summaryCandidate, sourceText, title, maxCharacters),
+            missing.takeIf { it.isNotEmpty() }?.let { "Kaynak metninde ${it.joinToString(" ve ")} bilgisi açıkça belirtilmiyor." }, source.length < 180)
+    }
     private val locale = Locale.forLanguageTag("tr-TR")
     private val wordPattern = Regex("[\\p{L}\\p{N}]+")
-    private val boundary = Regex("(?<=[.!?])\\s+|\\n+")
+    private val boundary = Regex("(?<=[.!?])(?<!\\d\\.)\\s+|\\n+")
     private val stopWords = setOf("ama", "ancak", "bir", "bu", "çok", "daha", "da", "de", "diye", "en", "gibi",
         "ile", "için", "kadar", "karşı", "ki", "olan", "olarak", "oldu", "sonra", "ve", "veya", "yeni", "üzere",
         "haber", "son", "dakika", "nedir", "nasıl", "hangi", "zaman", "bugün")
@@ -25,6 +38,8 @@ object NewsSummary {
         RegexOption.IGNORE_CASE)
     private val timeFact = Regex("\\b\\d{1,2}[.:/]\\d{2}(?:[./]\\d{2,4})?\\b|\\b\\d{1,2}\\s+(?:ocak|şubat|mart|nisan|mayıs|haziran|temmuz|ağustos|eylül|ekim|kasım|aralık)\\b|\\b(?:pazartesi|salı|çarşamba|perşembe|cuma|cumartesi|pazar)\\b", RegexOption.IGNORE_CASE)
     private val causeFact = Regex("çünkü|nedeni|sebebi|bu nedenle|sonucunda|yüzünden|dolayı", RegexOption.IGNORE_CASE)
+    private val channelFact = Regex("beIN|TRT|S Sport|A Spor|TV ?[0-9]|kanal|yayınlanacak|yayınlayacak|yayınlıyor", RegexOption.IGNORE_CASE)
+    private val priceFact = Regex("\\d[\\d.,]*\\s*(?:TL|lira|dolar|euro|avro|₺|€|\\$)", RegexOption.IGNORE_CASE)
 
     fun concise(sourceText: String, title: String = "", maxCharacters: Int = 380): String {
         val titleKey = normalize(title)
@@ -111,9 +126,11 @@ object NewsSummary {
         val numeric = Regex("\\d").containsMatchIn(sentence)
         val answersTime = Regex("ne zaman|saat kaç|hangi gün|tarihi").containsMatchIn(asked) && timeFact.containsMatchIn(sentence)
         val answersWhy = Regex("neden|niçin|sebebi").containsMatchIn(asked) && causeFact.containsMatchIn(sentence)
+        val answersChannel = Regex("hangi kanalda|nereden izlen").containsMatchIn(asked) && channelFact.containsMatchIn(sentence)
+        val answersPrice = Regex("kaç (?:tl|lira)|ne kadar|fiyatı ne").containsMatchIn(asked) && priceFact.containsMatchIn(sentence)
         return overlap * 4 + (if (action.containsMatchIn(sentence)) 7 else 0) +
             (if (numeric) 4 else 0) + (if (answersTime) 24 else 0) +
-            (if (answersWhy) 20 else 0) + (if (sentence.length in 45..260) 3 else 0) +
+            (if (answersWhy) 20 else 0) + (if (answersChannel || answersPrice) 24 else 0) + (if (sentence.length in 45..260) 3 else 0) +
             (if (index in 1..5) 2 else 0) - (if (sentence.length > 440) 5 else 0)
     }
 

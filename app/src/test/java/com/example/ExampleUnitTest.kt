@@ -61,7 +61,9 @@ class ExampleUnitTest {
         val prefs = UserPreferences()
         assertEquals("light", prefs.themeMode)
         assertEquals("İstanbul", prefs.selectedCity)
-        assertTrue(prefs.breakingAlerts)
+        assertFalse(prefs.breakingAlerts)
+        assertFalse(prefs.topicAlerts)
+        assertFalse(prefs.dailyDigest)
         assertTrue(prefs.followedTopics.isEmpty())
         assertTrue(prefs.followedTeams.isEmpty())
     }

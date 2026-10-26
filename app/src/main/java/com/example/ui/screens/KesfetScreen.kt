@@ -1,454 +1,175 @@
 package com.example.ui.screens
 
+import android.app.DatePickerDialog
 import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.snapshotFlow
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Clear
-import androidx.compose.material.icons.filled.FilterList
-import androidx.compose.material.icons.filled.Search
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FilterChipDefaults
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.material3.rememberModalBottomSheetState
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.compose.material.icons.outlined.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.example.data.CizgiRepository
+import com.example.model.Story
 import com.example.ui.components.NewsFeedCard
-import com.example.ui.theme.CizgiColor
+import com.example.util.ArchiveSearch
+import com.example.util.NewsStoryDeduplicator
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
+import java.time.LocalDate
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
-fun KesfetScreen(
-    repository: CizgiRepository,
-    onStoryClick: (String) -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val stories by repository.stories.collectAsState()
-
-    var searchQuery by rememberSaveable { mutableStateOf("") }
-    var selectedTopicFilter by rememberSaveable { mutableStateOf<String?>(null) }
-    var selectedSourceFilter by rememberSaveable { mutableStateOf<String?>(null) }
-    val listState = rememberLazyListState()
-    LaunchedEffect(listState) {
-        snapshotFlow { listState.layoutInfo.visibleItemsInfo.map { it.key.toString() } }
-            .collect { repository.prepareReadingContent(it) }
-    }
-    var filterOptionQuery by remember { mutableStateOf("") }
-    var showFilterSheet by remember { mutableStateOf(false) }
-
-    val topicCounts = remember(stories) {
-        stories.asSequence()
-            .map { it.topic.trim() }
-            .filter(String::isNotBlank)
-            .groupingBy { it }
-            .eachCount()
-            .entries
-            .sortedWith(compareByDescending<Map.Entry<String, Int>> { it.value }.thenBy { it.key })
-            .associate { it.key to it.value }
-    }
-
-    val allPublishers = remember(stories) {
-        stories.map { it.publisher.trim() }.filter(String::isNotBlank).distinct().sorted()
-    }
-
-    val filteredResults = remember(stories, searchQuery, selectedTopicFilter, selectedSourceFilter) {
-        stories.filter { story ->
-            val matchesQuery = searchQuery.isBlank() ||
-                story.title.contains(searchQuery, ignoreCase = true) ||
-                story.summary.contains(searchQuery, ignoreCase = true) ||
-                story.whatHappened.contains(searchQuery, ignoreCase = true) ||
-                story.whyItMatters.contains(searchQuery, ignoreCase = true) ||
-                story.topic.contains(searchQuery, ignoreCase = true) ||
-                story.publisher.contains(searchQuery, ignoreCase = true)
-
-            val matchesTopic = selectedTopicFilter == null ||
-                story.topic.equals(selectedTopicFilter, ignoreCase = true)
-
-            val matchesSource = selectedSourceFilter == null ||
-                story.publisher.equals(selectedSourceFilter, ignoreCase = true)
-
-            matchesQuery && matchesTopic && matchesSource
+fun KesfetScreen(repository: CizgiRepository, onStoryClick: (String) -> Unit, modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    val keyboard = LocalSoftwareKeyboardController.current
+    val archiveCount by repository.newsArchiveCount.collectAsState()
+    val topics by repository.archiveTopics.collectAsState()
+    val publishers by repository.archivePublishers.collectAsState()
+    val recent by repository.recentSearches.collectAsState()
+    val saved by repository.savedArticles.collectAsState()
+    var query by rememberSaveable { mutableStateOf("") }
+    var topic by rememberSaveable { mutableStateOf<String?>(null) }
+    var publisher by rememberSaveable { mutableStateOf<String?>(null) }
+    var fromDay by rememberSaveable { mutableStateOf<String?>(null) }
+    var untilDay by rememberSaveable { mutableStateOf<String?>(null) }
+    var showFilters by remember { mutableStateOf(false) }
+    var optionQuery by remember { mutableStateOf("") }
+    var results by remember { mutableStateOf<List<Story>>(emptyList()) }
+    var loading by remember { mutableStateOf(false) }
+    var hasMore by remember { mutableStateOf(true) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var loadToken by remember { mutableIntStateOf(0) }
+    val state = rememberLazyListState()
+    val zone = ZoneId.of("Europe/Istanbul")
+    val active = topic != null || publisher != null || fromDay != null || untilDay != null
+    LaunchedEffect(query, topic, publisher, fromDay, untilDay, archiveCount) {
+        loading = true; error = null; results = emptyList(); hasMore = true
+        var offset = 0
+        var lastToken = loadToken
+        delay(280)
+        val from = fromDay?.let { LocalDate.parse(it).atStartOfDay(zone).toInstant().toEpochMilli() }
+        val until = untilDay?.let { LocalDate.parse(it).plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli() }
+        suspend fun page() {
+            loading = true; error = null
+            try {
+                val next = repository.searchArchive(query, topic, publisher, from, until, offset)
+                results = NewsStoryDeduplicator.merge(results + next.stories)
+                offset = next.nextOffset; hasMore = next.hasMore
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { error = "Arama tamamlanamadı. Yeniden deneyebilirsin." }
+            finally { loading = false }
         }
-    }
-
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .testTag("kesfet_screen"),
-    ) {
-        Text("Keşfet", style = MaterialTheme.typography.headlineMedium, modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp))
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            // Search Input Row
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                OutlinedTextField(
-                    value = searchQuery,
-                    onValueChange = { searchQuery = it },
-                    placeholder = {
-                        Text(
-                            text = "Başlık, konu veya yayıncı ara...",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    },
-                    leadingIcon = {
-                        Icon(
-                            imageVector = Icons.Default.Search,
-                            contentDescription = "Ara",
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    },
-                    trailingIcon = {
-                        if (searchQuery.isNotEmpty()) {
-                            IconButton(onClick = { searchQuery = "" }) {
-                                Icon(
-                                    imageVector = Icons.Default.Clear,
-                                    contentDescription = "Temizle",
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                        }
-                    },
-                    singleLine = true,
-                    shape = RoundedCornerShape(17.dp),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = MaterialTheme.colorScheme.primary,
-                        unfocusedBorderColor = Color.Transparent,
-                        focusedContainerColor = MaterialTheme.colorScheme.surface,
-                        unfocusedContainerColor = MaterialTheme.colorScheme.surface,
-                    ),
-                    modifier = Modifier
-                        .weight(1f)
-                        .testTag("search_text_field"),
-                )
-
-                // Filter Sheet Button
-                Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = if (selectedTopicFilter != null || selectedSourceFilter != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant,
-                    modifier = Modifier.size(52.dp),
-                    onClick = { showFilterSheet = true },
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Icon(
-                            imageVector = Icons.Default.FilterList,
-                            contentDescription = "Filtreler",
-                            tint = if (selectedTopicFilter != null || selectedSourceFilter != null) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(22.dp),
-                        )
-                    }
-                }
-            }
-
-            if (topicCounts.isNotEmpty()) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    FilterChip(
-                        selected = selectedTopicFilter == null,
-                        onClick = { selectedTopicFilter = null },
-                        label = { Text("Tümü") },
-                    )
-                    topicCounts.keys.take(6).forEach { topic ->
-                        FilterChip(
-                            selected = selectedTopicFilter.equals(topic, ignoreCase = true),
-                            onClick = {
-                                selectedTopicFilter = if (selectedTopicFilter.equals(topic, ignoreCase = true)) null else topic
-                            },
-                            label = { Text(topic, maxLines = 1) },
-                        )
-                    }
-                }
-            }
-
-        }
-
-        // Active filter pills indicator
-        if (selectedTopicFilter != null || selectedSourceFilter != null) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 4.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Text(
-                    text = "Filtreler:",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-
-                selectedTopicFilter?.let { topic ->
-                    Surface(
-                        shape = RoundedCornerShape(12.dp),
-                        color = MaterialTheme.colorScheme.primary,
-                        onClick = { selectedTopicFilter = null },
-                    ) {
-                        Text(
-                            text = "$topic ✕",
-                            color = MaterialTheme.colorScheme.onPrimary,
-                            fontSize = 11.sp,
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                        )
-                    }
-                }
-
-                selectedSourceFilter?.let { src ->
-                    Surface(
-                        shape = RoundedCornerShape(12.dp),
-                        color = MaterialTheme.colorScheme.primary,
-                        onClick = { selectedSourceFilter = null },
-                    ) {
-                        Text(
-                            text = "$src ✕",
-                            color = MaterialTheme.colorScheme.onPrimary,
-                            fontSize = 11.sp,
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                        )
-                    }
-                }
-
-                Spacer(Modifier.weight(1f))
-
-                TextButton(
-                    onClick = {
-                        selectedTopicFilter = null
-                        selectedSourceFilter = null
-                    },
-                ) {
-                    Text("Tümünü Temizle", style = MaterialTheme.typography.labelSmall)
-                }
-            }
-        }
-
-        // Results Section
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 6.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                text = if (searchQuery.isBlank()) "Senin keşfin · ${filteredResults.size} haber" else "${filteredResults.size} sonuç",
-                style = MaterialTheme.typography.labelSmall.copy(
-                    fontWeight = FontWeight.Bold,
-                    letterSpacing = 0.8.sp,
-                ),
-                color = MaterialTheme.colorScheme.primary,
-            )
-        }
-
-        if (filteredResults.isEmpty()) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(32.dp),
-                contentAlignment = Alignment.Center,
-            ) {
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    Text("🔍", fontSize = 40.sp)
-                    Text(
-                        text = "Sonuç Bulunamadı",
-                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                        color = MaterialTheme.colorScheme.onSurface,
-                    )
-                    Text(
-                        text = "Farklı bir arama terimi deneyebilir veya filtreleri temizleyebilirsiniz.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
-        } else {
-            LazyColumn(
-                state = listState,
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                items(
-                    items = filteredResults,
-                    key = { it.id },
-                ) { story ->
-                    NewsFeedCard(
-                        story = story,
-                        onClick = { onStoryClick(story.id) },
-                        onSaveToggle = { repository.toggleSaveStory(story.id) },
-                    )
-                }
+        page()
+        snapshotFlow { Triple(state.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0, state.layoutInfo.totalItemsCount, loadToken) }.collect { (last, total, token) ->
+            if (hasMore && !loading && (last >= total - 5 || token != lastToken) && (error == null || token != lastToken)) {
+                lastToken = token; page()
             }
         }
     }
-
-    // Filter Bottom Sheet
-    if (showFilterSheet) {
-        val sheetState = rememberModalBottomSheetState()
-        ModalBottomSheet(
-            onDismissRequest = { showFilterSheet = false },
-            sheetState = sheetState,
-            containerColor = MaterialTheme.colorScheme.surface,
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 20.dp, vertical = 12.dp)
-                    .padding(bottom = 32.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp),
-            ) {
-                Text(
-                    text = "Arama Filtreleri",
-                    style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
-                    color = MaterialTheme.colorScheme.primary,
-                )
-
-                OutlinedTextField(
-                    value = filterOptionQuery,
-                    onValueChange = { filterOptionQuery = it },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                    placeholder = { Text("Kategori veya yayıncı ara...") },
-                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
-                    trailingIcon = {
-                        if (filterOptionQuery.isNotEmpty()) {
-                            IconButton(onClick = { filterOptionQuery = "" }) {
-                                Icon(Icons.Default.Clear, contentDescription = "Filtre aramasını temizle")
-                            }
-                        }
-                    },
-                    shape = RoundedCornerShape(12.dp),
-                )
-
-                // Konu Filtresi
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(
-                        text = "Konu Seçimi",
-                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
-                    )
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        topicCounts.keys.filter { it.contains(filterOptionQuery, ignoreCase = true) }.forEach { topic ->
-                            val isSelected = selectedTopicFilter == topic
-                            FilterChip(
-                                selected = isSelected,
-                                onClick = {
-                                    selectedTopicFilter = if (isSelected) null else topic
-                                },
-                                label = { Text(topic) },
-                            )
-                        }
-                    }
+    LaunchedEffect(state) {
+        snapshotFlow { state.layoutInfo.visibleItemsInfo.map { it.key.toString() } }.collect { repository.prepareReadingContent(it) }
+    }
+    fun rememberQuery() { repository.rememberSearch(query); keyboard?.hide() }
+    fun chooseDate(isFrom: Boolean) {
+        val old = (if (isFrom) fromDay else untilDay)?.let(LocalDate::parse) ?: LocalDate.now(zone)
+        val dialog = DatePickerDialog(context, { _, year, month, day ->
+            val chosen = LocalDate.of(year, month + 1, day).toString()
+            if (isFrom) { fromDay = chosen; if (untilDay != null && chosen > untilDay!!) untilDay = chosen }
+            else { untilDay = chosen; if (fromDay != null && chosen < fromDay!!) fromDay = chosen }
+        }, old.year, old.monthValue - 1, old.dayOfMonth)
+        dialog.datePicker.maxDate = System.currentTimeMillis()
+        dialog.show()
+    }
+    Column(modifier.fillMaxSize().testTag("kesfet_screen")) {
+        Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text("Keşfet", style = MaterialTheme.typography.headlineMedium, modifier = Modifier.weight(1f).semantics { heading() })
+            Text("$archiveCount haberlik arşiv", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Row(Modifier.padding(horizontal = 18.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            OutlinedTextField(query, { query = it }, Modifier.weight(1f).testTag("search_text_field"), singleLine = true,
+                label = { Text("Arşivde ara") }, leadingIcon = { Icon(Icons.Outlined.Search, null) },
+                trailingIcon = { if (query.isNotEmpty()) IconButton({ query = "" }) { Icon(Icons.Outlined.Close, "Aramayı temizle") } },
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search), keyboardActions = KeyboardActions(onSearch = { rememberQuery() }), shape = RoundedCornerShape(17.dp))
+            FilledTonalIconButton({ showFilters = true }, Modifier.size(48.dp)) { Icon(Icons.Outlined.Tune, if (active) "Filtreler etkin, düzenle" else "Arama filtreleri") }
+        }
+        if (query.isBlank() && recent.isNotEmpty()) Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 18.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            recent.forEach { text -> SuggestionChip({ query = text }, { Text(text) }, icon = { Icon(Icons.Outlined.History, null, Modifier.size(16.dp)) }) }
+            TextButton(repository::clearSearchHistory) { Text("Temizle") }
+        }
+        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 18.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FilterChip(topic == null, { topic = null }, { Text("Tümü") })
+            topics.take(8).forEach { value -> FilterChip(topic == value, { topic = if (topic == value) null else value }, { Text(value) }) }
+        }
+        if (active) Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 18.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            listOfNotNull(topic, publisher, fromDay?.let { "Başlangıç: $it" }, untilDay?.let { "Bitiş: $it" }).forEach { Text(it, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(vertical = 12.dp)) }
+            TextButton({ topic = null; publisher = null; fromDay = null; untilDay = null }) { Text("Sıfırla") }
+        }
+        LazyColumn(state = state, modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            if (loading && results.isEmpty()) item { Box(Modifier.fillMaxWidth().padding(30.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() } }
+            if (!loading && results.isEmpty() && error == null) item {
+                Column(Modifier.padding(vertical = 30.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Arşivde eşleşen haber bulunamadı", style = MaterialTheme.typography.titleMedium)
+                    Text("Arama sözcüklerini veya tarih aralığını değiştirebilirsin. Arşiv, uygulamanın kaynaklardan aldığı haberleri içerir.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-
-                // Yayıncı Filtresi
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(
-                        text = "Yayıncı Kaynağı",
-                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
-                    )
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        allPublishers.filter { it.contains(filterOptionQuery, ignoreCase = true) }.forEach { pub ->
-                            val isSelected = selectedSourceFilter == pub
-                            FilterChip(
-                                selected = isSelected,
-                                onClick = {
-                                    selectedSourceFilter = if (isSelected) null else pub
-                                },
-                                label = { Text(pub) },
-                            )
-                        }
-                    }
+            }
+            items(results, key = { it.id }) { item ->
+                val story = item.copy(isSaved = saved.any { it.id == item.id })
+                NewsFeedCard(story, { rememberQuery(); onStoryClick(story.id) }, { repository.toggleSaveStory(story) })
+            }
+            if (error != null) item { TextButton({ loadToken++ }) { Text("${error} Tekrar dene") } }
+            else if (hasMore && results.isNotEmpty()) item {
+                if (loading) Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) { CircularProgressIndicator(Modifier.size(24.dp)) }
+                else TextButton({ loadToken++ }, Modifier.fillMaxWidth()) { Text("Daha fazla göster") }
+            }
+            if (!hasMore && results.isNotEmpty()) item { Text("Arşivdeki eşleşmelerin sonuna geldin.", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+        }
+    }
+    if (showFilters) ModalBottomSheet(onDismissRequest = { showFilters = false }, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
+        LazyColumn(Modifier.fillMaxWidth().fillMaxHeight(.85f), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            item { Text("Aramayı daralt", style = MaterialTheme.typography.titleLarge) }
+            item {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton({ chooseDate(true) }, Modifier.weight(1f)) { Text(fromDay ?: "Başlangıç tarihi") }
+                    OutlinedButton({ chooseDate(false) }, Modifier.weight(1f)) { Text(untilDay ?: "Bitiş tarihi") }
                 }
-
-                Spacer(Modifier.height(8.dp))
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    TextButton(
-                        onClick = {
-                            selectedTopicFilter = null
-                            selectedSourceFilter = null
-                            filterOptionQuery = ""
-                            showFilterSheet = false
-                        },
-                        modifier = Modifier.weight(1f),
-                    ) {
-                        Text("Sıfırla")
-                    }
-
-                    androidx.compose.material3.Button(
-                        onClick = { showFilterSheet = false },
-                        colors = androidx.compose.material3.ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
-                        modifier = Modifier.weight(1f),
-                    ) {
-                        Text("Uygula (${filteredResults.size})", color = MaterialTheme.colorScheme.onPrimary)
+                if (fromDay != null || untilDay != null) TextButton({ fromDay = null; untilDay = null }) { Text("Tarihleri kaldır") }
+            }
+            item { OutlinedTextField(optionQuery, { optionQuery = it }, Modifier.fillMaxWidth(), label = { Text("Konu veya yayıncı bul") }, singleLine = true) }
+            item { Text("Konular", style = MaterialTheme.typography.titleSmall) }
+            item {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    topics.filter { ArchiveSearch.normalize(it).contains(ArchiveSearch.normalize(optionQuery)) }.forEach { value ->
+                        FilterChip(topic == value, { topic = if (topic == value) null else value }, { Text(value) })
                     }
                 }
             }
+            item { Text("Yayıncılar", style = MaterialTheme.typography.titleSmall) }
+            item {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    publishers.filter { ArchiveSearch.normalize(it).contains(ArchiveSearch.normalize(optionQuery)) }.forEach { value ->
+                        FilterChip(publisher == value, { publisher = if (publisher == value) null else value }, { Text(value) })
+                    }
+                }
+            }
+            item { Button({ showFilters = false }, Modifier.fillMaxWidth()) { Text("Sonuçları göster") } }
         }
     }
 }
