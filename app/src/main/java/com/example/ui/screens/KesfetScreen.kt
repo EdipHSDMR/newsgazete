@@ -49,7 +49,6 @@ import androidx.compose.ui.unit.sp
 import com.example.data.CizgiRepository
 import com.example.ui.components.NewsFeedCard
 import com.example.ui.theme.CizgiColor
-import com.example.util.NewsDiscoveryInsights
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -63,14 +62,22 @@ fun KesfetScreen(
     var searchQuery by remember { mutableStateOf("") }
     var selectedTopicFilter by remember { mutableStateOf<String?>(null) }
     var selectedSourceFilter by remember { mutableStateOf<String?>(null) }
+    var filterOptionQuery by remember { mutableStateOf("") }
     var showFilterSheet by remember { mutableStateOf(false) }
 
-    val trendingTags = remember(stories) {
-        NewsDiscoveryInsights.trendingTerms(stories, limit = 12)
+    val topicCounts = remember(stories) {
+        stories.asSequence()
+            .map { it.topic.trim() }
+            .filter(String::isNotBlank)
+            .groupingBy { it }
+            .eachCount()
+            .entries
+            .sortedWith(compareByDescending<Map.Entry<String, Int>> { it.value }.thenBy { it.key })
+            .associate { it.key to it.value }
     }
 
     val allPublishers = remember(stories) {
-        stories.map { it.publisher }.distinct()
+        stories.map { it.publisher.trim() }.filter(String::isNotBlank).distinct().sorted()
     }
 
     val filteredResults = remember(stories, searchQuery, selectedTopicFilter, selectedSourceFilter) {
@@ -78,6 +85,9 @@ fun KesfetScreen(
             val matchesQuery = searchQuery.isBlank() ||
                 story.title.contains(searchQuery, ignoreCase = true) ||
                 story.summary.contains(searchQuery, ignoreCase = true) ||
+                story.whatHappened.contains(searchQuery, ignoreCase = true) ||
+                story.whyItMatters.contains(searchQuery, ignoreCase = true) ||
+                story.topic.contains(searchQuery, ignoreCase = true) ||
                 story.publisher.contains(searchQuery, ignoreCase = true)
 
             val matchesTopic = selectedTopicFilter == null ||
@@ -195,30 +205,31 @@ fun KesfetScreen(
                 }
             }
 
-            // Trending Tags Row
-            if (trendingTags.isNotEmpty()) {
+            if (topicCounts.isNotEmpty()) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    trendingTags.forEach { tag ->
-                        Surface(
-                            shape = RoundedCornerShape(16.dp),
-                            color = MaterialTheme.colorScheme.primaryContainer,
-                            onClick = { searchQuery = tag },
-                        ) {
-                            Text(
-                                text = "#$tag",
-                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
-                                color = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                            )
-                        }
+                    FilterChip(
+                        selected = selectedTopicFilter == null,
+                        onClick = { selectedTopicFilter = null },
+                        label = { Text("Tümü") },
+                    )
+                    topicCounts.keys.take(6).forEach { topic ->
+                        FilterChip(
+                            selected = selectedTopicFilter.equals(topic, ignoreCase = true),
+                            onClick = {
+                                selectedTopicFilter = if (selectedTopicFilter.equals(topic, ignoreCase = true)) null else topic
+                            },
+                            label = { Text(topic, maxLines = 1) },
+                        )
                     }
                 }
             }
+
         }
 
         // Active filter pills indicator
@@ -362,6 +373,23 @@ fun KesfetScreen(
                     color = MaterialTheme.colorScheme.primary,
                 )
 
+                OutlinedTextField(
+                    value = filterOptionQuery,
+                    onValueChange = { filterOptionQuery = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    placeholder = { Text("Kategori veya yayıncı ara...") },
+                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                    trailingIcon = {
+                        if (filterOptionQuery.isNotEmpty()) {
+                            IconButton(onClick = { filterOptionQuery = "" }) {
+                                Icon(Icons.Default.Clear, contentDescription = "Filtre aramasını temizle")
+                            }
+                        }
+                    },
+                    shape = RoundedCornerShape(12.dp),
+                )
+
                 // Konu Filtresi
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
@@ -374,8 +402,7 @@ fun KesfetScreen(
                             .horizontalScroll(rememberScrollState()),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        stories.asSequence().map { it.topic.trim() }
-                            .filter(String::isNotBlank).distinct().forEach { topic ->
+                        topicCounts.keys.filter { it.contains(filterOptionQuery, ignoreCase = true) }.forEach { topic ->
                             val isSelected = selectedTopicFilter == topic
                             FilterChip(
                                 selected = isSelected,
@@ -400,7 +427,7 @@ fun KesfetScreen(
                             .horizontalScroll(rememberScrollState()),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        allPublishers.forEach { pub ->
+                        allPublishers.filter { it.contains(filterOptionQuery, ignoreCase = true) }.forEach { pub ->
                             val isSelected = selectedSourceFilter == pub
                             FilterChip(
                                 selected = isSelected,
@@ -423,6 +450,7 @@ fun KesfetScreen(
                         onClick = {
                             selectedTopicFilter = null
                             selectedSourceFilter = null
+                            filterOptionQuery = ""
                             showFilterSheet = false
                         },
                         modifier = Modifier.weight(1f),

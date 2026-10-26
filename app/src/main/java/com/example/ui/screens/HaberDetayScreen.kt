@@ -162,8 +162,30 @@ fun HaberDetayScreen(
         }
         return
     }
-    val detailSummary = remember(story.id, story.summary, story.fullText) {
-        NewsSummary.bestAvailableSummary(story.summary, story.fullText, story.title)
+    val summarySources = remember(story.id, story.whatHappened, story.whyItMatters, story.paragraphs, story.fullText, story.summary) {
+        listOf(
+            story.whatHappened,
+            story.whyItMatters,
+            story.paragraphs.joinToString(" "),
+            story.fullText,
+            story.summary,
+        ).filter(String::isNotBlank)
+    }
+    val summarySourceText = remember(summarySources) { summarySources.joinToString("\n\n") }
+    val detailSummary = remember(story.id, story.summary, story.fullText, story.paragraphs, story.whatHappened, story.whyItMatters) {
+        NewsSummary.bestAvailableSummary(story.summary, summarySourceText, story.title)
+            .ifBlank { NewsSummary.concise(summarySourceText, story.title) }
+            .ifBlank {
+                summarySources.firstOrNull { it.isNotBlank() && !it.trim().equals(story.title.trim(), ignoreCase = true) }
+                    ?.let { candidate ->
+                        NewsSummary.concise(candidate, story.title).ifBlank {
+                            candidate.trim().let { text ->
+                                if (text.length <= 280) text else text.take(279).substringBeforeLast(' ') + "…"
+                            }
+                        }
+                    }.orEmpty()
+            }
+            .ifBlank { story.title }
     }
     val sourceUri = remember(story.canonicalUrl) { runCatching { Uri.parse(story.canonicalUrl) }.getOrNull() }
     val hasSourceUrl = (sourceUri?.scheme == "http" || sourceUri?.scheme == "https") && !sourceUri?.host.isNullOrBlank()
@@ -181,16 +203,20 @@ fun HaberDetayScreen(
             .filterNot { it in ignoredWords }
             .toSet()
         stories.asSequence()
-            .filter { it.id != story.id }
+            .filter { candidate ->
+                candidate.id != story.id &&
+                    (story.canonicalUrl.isBlank() || !candidate.canonicalUrl.equals(story.canonicalUrl, ignoreCase = true))
+            }
             .map { candidate ->
                 val candidateTitle = candidate.title.lowercase(trLocale)
                 val sharedWords = titleWords.count { word -> candidateTitle.contains(word) }
                 val sameTopic = candidate.topic.equals(story.topic, ignoreCase = true)
-                candidate to (sharedWords * 3 + if (sameTopic && sharedWords > 0) 1 else 0)
+                candidate to (sharedWords * 3 + if (sameTopic) 2 else 0)
             }
             .filter { (_, relevance) -> relevance > 0 }
             .sortedWith(compareByDescending<Pair<Story, Int>> { it.second }.thenByDescending { it.first.publishedAtEpochMs })
-            .take(3)
+            .distinctBy { (candidate, _) -> candidate.canonicalUrl.ifBlank { candidate.id }.lowercase(Locale.ROOT) }
+            .take(6)
             .map { it.first }
             .toList()
     }
@@ -536,7 +562,7 @@ fun HaberDetayScreen(
                                     color = MaterialTheme.colorScheme.primary,
                                 )
                                 Text(
-                                    text = detailSummary.ifBlank { "Bu haber için kısa özet henüz hazır değil. Haberin devamını açabilirsin." },
+                                    text = detailSummary,
                                     style = MaterialTheme.typography.bodyMedium.copy(
                                         fontSize = if (preferences.fontSize == "large") 16.sp else 14.sp,
                                         lineHeight = if (preferences.fontSize == "large") 24.sp else 21.sp,
@@ -665,7 +691,7 @@ fun HaberDetayScreen(
                         HorizontalDivider(color = CizgiColor.BorderLight)
                         Spacer(Modifier.height(4.dp))
                         Text(
-                            text = "BUNLARA DA BAK",
+                            text = "KONUYLA İLGİLİ DAHA FAZLA HABER",
                             style = MaterialTheme.typography.labelMedium.copy(
                                 fontWeight = FontWeight.Bold,
                                 letterSpacing = 0.8.sp,

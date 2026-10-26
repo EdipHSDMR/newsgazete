@@ -4,7 +4,6 @@ import android.content.Intent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -19,22 +18,15 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Clear
-import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material.icons.filled.GridView
-import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.ViewAgenda
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -60,16 +52,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.CizgiRepository
 import com.example.model.Story
-import com.example.ui.components.CityDistrictPickerDialog
 import com.example.ui.components.GununOzetiCard
-import com.example.ui.components.KompaktHavaKarti
 import com.example.ui.components.MansetCompactCard
 import com.example.ui.components.MiniMatchCard
 import com.example.ui.components.ModernNewsCard
 import com.example.ui.components.NewsFeedCard
 import com.example.ui.components.SkeletonCard
 import com.example.ui.theme.CizgiColor
-import com.example.util.NewsDiscoveryInsights
 import com.example.util.BreakingNewsClassifier
 import kotlinx.coroutines.delay
 
@@ -77,7 +66,6 @@ import kotlinx.coroutines.delay
 fun AkisScreen(
     repository: CizgiRepository,
     onStoryClick: (String) -> Unit,
-    onWeatherClick: () -> Unit,
     onSportsClick: () -> Unit,
     onMarketClick: () -> Unit = {},
     modifier: Modifier = Modifier,
@@ -85,9 +73,7 @@ fun AkisScreen(
     val context = LocalContext.current
     val stories by repository.stories.collectAsState()
     val newsArchiveCount by repository.newsArchiveCount.collectAsState()
-    val weather by repository.weather.collectAsState()
     val matches by repository.matches.collectAsState()
-    val prefs by repository.preferences.collectAsState()
     val isRefreshing by repository.isRefreshing.collectAsState()
     val dailyDigestPoints by repository.dailyDigest.collectAsState()
     val bistStocks by repository.bistStocks.collectAsState()
@@ -101,48 +87,9 @@ fun AkisScreen(
         }
     }
 
-    // Filter by main topic: Siyaset, Ekonomi, Teknoloji, Gündem, etc.
-    var selectedTopic by remember { mutableStateOf("Tümü") }
-    // Optional hashtag sub-filter
-    var selectedHashtag by remember { mutableStateOf<String?>(null) }
-    // City & District Dialog state
-    var showCityPicker by remember { mutableStateOf(false) }
     // Visual card mode vs compact list
     var isVisualCardMode by remember { mutableStateOf(false) }
-
-    val categories = remember(stories) {
-        buildList {
-            add("Tümü" to "⚡")
-            stories.asSequence()
-                .map { it.topic.trim() }
-                .filter(String::isNotBlank)
-                .distinct()
-                .forEach { topic -> add(topic to "📰") }
-        }
-    }
-
-    val hashtags = remember(stories) {
-        NewsDiscoveryInsights.trendingTerms(stories, limit = 12).map { "#$it" }
-    }
-
-    // Filter stories dynamically
-    val filteredStories = remember(stories, selectedTopic, selectedHashtag) {
-        var result = if (selectedTopic == "Tümü") {
-            stories
-        } else {
-            stories.filter { it.topic.equals(selectedTopic, ignoreCase = true) }
-        }
-
-        if (!selectedHashtag.isNullOrBlank()) {
-            val cleanTag = selectedHashtag!!.removePrefix("#").lowercase()
-            result = result.filter {
-                it.title.lowercase().contains(cleanTag) ||
-                        it.summary.lowercase().contains(cleanTag) ||
-                        it.whatHappened.lowercase().contains(cleanTag)
-            }
-        }
-        result
-    }
+    val filteredStories = stories
 
     val mansetStory = remember(filteredStories) {
         filteredStories.firstOrNull { it.isManset } ?: filteredStories.firstOrNull()
@@ -168,154 +115,11 @@ fun AkisScreen(
         context.startActivity(Intent.createChooser(sendIntent, "Haberi Paylaş"))
     }
 
-    // City & District Dialog
-    if (showCityPicker) {
-        CityDistrictPickerDialog(
-            currentCity = prefs.selectedCity,
-            currentDistrict = prefs.selectedDistrict,
-            onDismiss = { showCityPicker = false },
-            onSelect = { city, district ->
-                repository.selectCityAndDistrict(city, district)
-                showCityPicker = false
-            }
-        )
-    }
-
     Column(
         modifier = modifier
             .fillMaxSize()
             .testTag("akis_screen"),
     ) {
-        // 1. Haber Akışının En Üstünde: Yatayda Kaydırılabilir Kategori Çip Grubu
-        Surface(
-            color = MaterialTheme.colorScheme.surface,
-            shadowElevation = 1.dp,
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Column(modifier = Modifier.fillMaxWidth()) {
-                // Topic chips row with counters
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState())
-                        .padding(horizontal = 16.dp, vertical = 8.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    categories.forEach { (catName, emoji) ->
-                        val isSelected = selectedTopic == catName
-                        val count = if (catName == "Tümü") stories.size else stories.count { it.topic.equals(catName, ignoreCase = true) }
-
-                        FilterChip(
-                            selected = isSelected,
-                            onClick = {
-                                selectedTopic = catName
-                                selectedHashtag = null
-                            },
-                            label = {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                ) {
-                                    Text(emoji, fontSize = 13.sp)
-                                    Text(
-                                        text = catName,
-                                        style = MaterialTheme.typography.labelMedium.copy(
-                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                                            fontSize = 13.sp,
-                                        ),
-                                    )
-                                    if (count > 0) {
-                                        Surface(
-                                            shape = CircleShape,
-                                            color = if (isSelected) MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.25f) else MaterialTheme.colorScheme.primaryContainer,
-                                        ) {
-                                            Text(
-                                                text = "$count",
-                                                fontSize = 10.sp,
-                                                fontWeight = FontWeight.Bold,
-                                                color = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.primary,
-                                                modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
-                                            )
-                                        }
-                                    }
-                                }
-                            },
-                            colors = FilterChipDefaults.filterChipColors(
-                                selectedContainerColor = MaterialTheme.colorScheme.primary,
-                                selectedLabelColor = MaterialTheme.colorScheme.onPrimary,
-                                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
-                                labelColor = MaterialTheme.colorScheme.onSurface,
-                            ),
-                            shape = RoundedCornerShape(20.dp),
-                            modifier = Modifier
-                                .height(38.dp)
-                                .testTag("category_chip_$catName"),
-                        )
-                    }
-                }
-
-                // Trending Hashtag Quick Filter Row
-                if (hashtags.isNotEmpty()) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .horizontalScroll(rememberScrollState())
-                            .padding(start = 16.dp, end = 16.dp, bottom = 8.dp),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Text(
-                            text = "Gündemde:",
-                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                            color = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.padding(end = 2.dp)
-                        )
-
-                        hashtags.forEach { tag ->
-                            val isTagSelected = selectedHashtag == tag
-                            Surface(
-                                shape = RoundedCornerShape(12.dp),
-                                color = if (isTagSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .clickable {
-                                        selectedHashtag = if (isTagSelected) null else tag
-                                    }
-                            ) {
-                                Text(
-                                    text = tag,
-                                    fontSize = 11.5.sp,
-                                    fontWeight = if (isTagSelected) FontWeight.Bold else FontWeight.Normal,
-                                    color = if (isTagSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                                )
-                            }
-                        }
-
-                        if (selectedHashtag != null) {
-                            Surface(
-                                shape = CircleShape,
-                                color = MaterialTheme.colorScheme.errorContainer,
-                                modifier = Modifier
-                                    .clip(CircleShape)
-                                    .clickable { selectedHashtag = null }
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Clear,
-                                    contentDescription = "Filtreyi Temizle",
-                                    tint = MaterialTheme.colorScheme.error,
-                                    modifier = Modifier
-                                        .size(20.dp)
-                                        .padding(3.dp)
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
         // Canlı Son Dakika Ticker Bandı
         val breakingStory = remember(stories, tickerClock) { BreakingNewsClassifier.latest(stories, tickerClock) }
         if (breakingStory != null) {
@@ -383,89 +187,20 @@ fun AkisScreen(
                     )
                 }
 
-                // Akışta hızlı hava özeti; ayrıntılar haftalık tahmin ekranında.
-                item(key = "top_compact_weather") {
-                    val displayName = if (!prefs.selectedDistrict.isNullOrBlank()) {
-                        "${prefs.selectedDistrict}, ${prefs.selectedCity}"
-                    } else {
-                        prefs.selectedCity
-                    }
-
-                    val emoji = when {
-                        weather.currentTempC == null -> "⏳"
-                        weather.condition.contains("Güneş", ignoreCase = true) -> "☀️"
-                        weather.condition.contains("Yağmur", ignoreCase = true) -> "🌧️"
-                        weather.condition.contains("Kar", ignoreCase = true) -> "❄️"
-                        weather.condition.contains("Bulut", ignoreCase = true) -> "⛅"
-                        else -> "🌤️"
-                    }
-                    Card(
-                        shape = RoundedCornerShape(14.dp),
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                        modifier = Modifier.fillMaxWidth().clickable(onClick = onWeatherClick).testTag("kompakt_hava_karti"),
-                    ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        ) {
-                            Surface(
-                                shape = RoundedCornerShape(18.dp),
-                                color = MaterialTheme.colorScheme.primaryContainer,
-                                modifier = Modifier.clickable { showCityPicker = true },
-                            ) {
-                                Row(
-                                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 7.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(4.dp),
-                                ) {
-                                    Icon(Icons.Default.LocationOn, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(15.dp))
-                                    Text(
-                                        text = displayName,
-                                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
-                                        color = MaterialTheme.colorScheme.primary,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                    )
-                                }
-                            }
-                            Spacer(Modifier.weight(1f))
-                            Text(emoji, fontSize = 22.sp)
-                            Column(horizontalAlignment = Alignment.End) {
-                                Text(
-                                    text = weather.currentTempC?.let { "$it°" } ?: "--°",
-                                    style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
-                                    color = MaterialTheme.colorScheme.onSurface,
-                                )
-                                Text(
-                                    text = weather.condition.takeIf(String::isNotBlank) ?: "Yükleniyor",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 1,
-                                )
-                            }
-                        }
-                    }
-                }
-
-                // Yalnızca "Tümü" veya "Gündem" sekmesindeyken Günün Özeti ve Canlı Spor Maçı Hızlı Bakışı
-                if (selectedTopic == "Tümü" || selectedTopic == "Gündem") {
-                    if (dailyDigestPoints.isNotEmpty()) {
+                if (dailyDigestPoints.isNotEmpty()) {
                     item(key = "daily_digest") {
                         GununOzetiCard(points = dailyDigestPoints)
                     }
-                    }
-
-                    if (nextMatch != null) {
-                        item(key = "live_match_glance") {
-                            MiniMatchCard(
-                                match = nextMatch,
-                                onClick = onSportsClick,
-                            )
-                        }
-                    }
                 }
 
+                if (nextMatch != null) {
+                    item(key = "live_match_glance") {
+                        MiniMatchCard(
+                            match = nextMatch,
+                            onClick = onSportsClick,
+                        )
+                    }
+                }
                 // Section Başlığı ve Görünüm Değiştirici
                 item(key = "feed_section_header") {
                     Row(
@@ -477,7 +212,7 @@ fun AkisScreen(
                     ) {
                         Column {
                             Text(
-                                text = if (selectedTopic == "Tümü") "SON VE ÖNE ÇIKAN HABERLER" else "${selectedTopic.uppercase()} HABERLERİ",
+                                text = "SON VE ÖNE ÇIKAN HABERLER",
                                 style = MaterialTheme.typography.labelMedium.copy(
                                     fontWeight = FontWeight.Bold,
                                     letterSpacing = 0.8.sp,
@@ -485,7 +220,7 @@ fun AkisScreen(
                                 color = MaterialTheme.colorScheme.primary,
                             )
                             Text(
-                                text = "${filteredStories.size} haber listeleniyor" + if (!selectedHashtag.isNullOrBlank()) " ($selectedHashtag)" else "",
+                                text = "${filteredStories.size} haber listeleniyor",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -541,17 +276,14 @@ fun AkisScreen(
                             ) {
                                 Text("📰", fontSize = 36.sp)
                                 Text(
-                                    text = "$selectedTopic kategorisinde henüz haber bulunamadı",
+                                    text = "Henüz haber bulunamadı",
                                     style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
                                     color = MaterialTheme.colorScheme.onSurface,
                                 )
                                 TextButton(
-                                    onClick = {
-                                        selectedTopic = "Tümü"
-                                        selectedHashtag = null
-                                    }
+                                    onClick = { repository.refreshAll() }
                                 ) {
-                                    Text("Tüm Haberleri Göster")
+                                    Text("Yeniden Dene")
                                 }
                             }
                         }

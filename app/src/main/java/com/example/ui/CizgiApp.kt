@@ -202,7 +202,6 @@ fun CizgiApp(
                                         AkisScreen(
                                             repository = repository,
                                             onStoryClick = { storyId -> subScreen = SubScreen.StoryDetail(storyId) },
-                                            onWeatherClick = { subScreen = SubScreen.Weather },
                                             onSportsClick = { currentTab = CizgiScreen.SPOR },
                                             onMarketClick = { currentTab = CizgiScreen.PIYASA },
                                         )

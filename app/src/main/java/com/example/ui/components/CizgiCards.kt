@@ -1332,8 +1332,6 @@ fun BistWatchlistCard(
             .testTag("bist_watchlist_widget"),
     ) {
         Column(modifier = Modifier.padding(14.dp)) {
-            val hasMarketData = financialAssets.isNotEmpty() || stocks.isNotEmpty()
-            val statusColor = if (hasMarketData) Color(0xFF15803D) else MaterialTheme.colorScheme.onSurfaceVariant
             // Header Row
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -1342,14 +1340,7 @@ fun BistWatchlistCard(
                 Row(
                     modifier = Modifier.weight(1f),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
-                    Box(
-                        modifier = Modifier
-                            .size(8.dp)
-                            .clip(CircleShape)
-                            .background(statusColor),
-                    )
                     Text(
                         text = "PİYASA TAKİBİ",
                         style = MaterialTheme.typography.labelSmall.copy(
@@ -1361,19 +1352,6 @@ fun BistWatchlistCard(
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f),
                     )
-                    Surface(
-                        shape = RoundedCornerShape(4.dp),
-                        color = statusColor.copy(alpha = 0.12f),
-                    ) {
-                        Text(
-                            text = if (hasMarketData) "GÜNCEL" else "BEKLENİYOR",
-                            fontSize = 9.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = statusColor,
-                            maxLines = 1,
-                            modifier = Modifier.padding(horizontal = 5.dp, vertical = 3.dp),
-                        )
-                    }
                 }
 
                 Text(
