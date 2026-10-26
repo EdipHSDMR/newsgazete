@@ -25,15 +25,16 @@ object NewsSummary {
             .map { it.value }
             .filter { it.length > 2 && it !in stopWords }
             .toSet()
-        val allSentences = sentenceBoundary.split(sourceWithoutTruncation)
+        val candidateSentences = sentenceBoundary.split(sourceWithoutTruncation)
             .map { it.trim().trimStart('•', '-', '–', '—').trim() }
             .filter { it.length >= MIN_SENTENCE_CHARS }
             .distinctBy(::normalize)
             .filter { sentence -> normalize(sentence) != titleKey }
             .filterNot(::isBoilerplateLead)
             .filterNot { it.trimEnd().endsWith('?') }
-            .filter(::containsSourceFact)
-        val sentences = if (hasTruncatedEnding && allSentences.size > 1) allSentences.dropLast(1) else allSentences
+        val factualSentences = candidateSentences.filter(::containsSourceFact)
+        val selectedPool = factualSentences.ifEmpty { candidateSentences }
+        val sentences = if (hasTruncatedEnding && selectedPool.size > 1) selectedPool.dropLast(1) else selectedPool
 
         if (sentences.isEmpty()) return ""
         val chosen = sentences.withIndex()
@@ -55,7 +56,7 @@ object NewsSummary {
         )
     }
 
-    /** Prefer a generated stored summary, but reject a verbatim one-sentence source lead. */
+    /** Keep useful stored summaries, but reject summaries copied from the source opening. */
     fun bestAvailableSummary(
         summaryCandidate: String,
         sourceText: String,
@@ -196,7 +197,7 @@ object NewsSummary {
         RegexOption.IGNORE_CASE,
     )
     private val FACT_VERB = Regex(
-        "\\b(açıkladı|duyurdu|belirtti|kabul edildi|reddedildi|başladı|tamamlandı|gerçekleşti|arttı|azaldı|yayımlandı|bulundu|açıldı|kapandı|seçildi|kazandı|kaybetti|kaydedildi|meydana geldi|yaşandı|ölçüldü|hissedildi|gözlendi|tespit edildi|görüldü|düştü|yükseldi|devam ediyor|etkiliyor|karar verdi|gözaltına alındı|hayatını kaybetti|yaralandı|tutuklandı|yakalandı|iptal edildi|durduruldu|onaylandı|reddetti)\\b",
+        "\\b(açıkladı|duyurdu|belirtti|kabul edildi|reddedildi|başladı|tamamlandı|gerçekleşti|arttı|azaldı|yayımlandı|bulundu|açıldı|kapandı|seçildi|kazandı|kaybetti|kaydedildi|meydana geldi|yaşandı|ölçüldü|hissedildi|gözlendi|tespit edildi|görüldü|düştü|yükseldi|devam ediyor|etkiliyor|karar verdi|gözaltına alındı|hayatını kaybetti|yaralandı|tutuklandı|yakalandı|iptal edildi|durduruldu|onaylandı|reddetti|dedi|söyledi|konuştu|hedef aldı|tepki gösterdi|yanıt verdi|yanıt geldi|karşılık verdi|eleştirdi|savundu|öne sürdü|iddia etti|ifade etti|vurguladı|hatırlattı|paylaştı|çağrıda bulundu|ziyaret etti|imzaladı|başvurdu|gündeme getirdi|sözlerine tepki gösterdi|açıklama yaptı|açıklamada bulundu)\\b",
         RegexOption.IGNORE_CASE,
     )
     private val QUESTION_ANSWER_FACT = Regex(
