@@ -446,44 +446,15 @@ fun MackolikLiveMatchesList(
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            item {
-                Card(
-                    shape = RoundedCornerShape(14.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                    border = CardDefaults.outlinedCardBorder().copy(brush = SolidColor(MaterialTheme.colorScheme.outlineVariant)),
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(22.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        Text("⏱️", fontSize = 36.sp)
-                        Text(
-                            text = "Şu Anda Oynanan Canlı Karşılaşma Bulunmuyor",
-                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                            color = MaterialTheme.colorScheme.onSurface,
-                            textAlign = TextAlign.Center,
-                        )
-                        Text(
-                            text = "Günün maçlarını, fikstürü ve alınan sonuçları aşağıdan inceleyebilirsiniz.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            textAlign = TextAlign.Center,
-                        )
-                    }
+            if (allMatches.isNotEmpty()) {
+                item {
+                    Text(
+                        text = "GÜNÜN MAÇLARI VE DETAYLI KADROLAR",
+                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(top = 8.dp),
+                    )
                 }
-            }
-
-            item {
-                Text(
-                    text = "GÜNÜN MAÇLARI VE DETAYLI KADROLAR",
-                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
-                    color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.padding(top = 8.dp),
-                )
             }
 
             items(allMatches, key = { it.id }) { match ->
