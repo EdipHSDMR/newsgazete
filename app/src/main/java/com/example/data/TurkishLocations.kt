@@ -154,3 +154,4 @@ object TurkishLocations {
         return found?.districts ?: listOf("Merkez", "Kuzey", "Güney", "Doğu", "Batı")
     }
 }
+

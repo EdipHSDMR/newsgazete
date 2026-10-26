@@ -24,3 +24,4 @@ interface CachedStoryDao {
     @Query("DELETE FROM cached_stories")
     suspend fun clearAll()
 }
+

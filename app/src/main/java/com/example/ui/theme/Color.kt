@@ -34,3 +34,4 @@ object CizgiColor {
     val Rule = Color(0xFFC5CCD6)        // Neutral divider / skeleton rule
     val BorderDark = Color(0xFF1E2E42)  // Dark theme border
 }
+

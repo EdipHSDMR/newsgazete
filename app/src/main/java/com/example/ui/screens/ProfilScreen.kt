@@ -1,5 +1,9 @@
 package com.example.ui.screens
 
+import android.app.TimePickerDialog
+import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -26,7 +30,6 @@ import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.SportsSoccer
 import androidx.compose.material.icons.filled.Topic
-import androidx.compose.material.icons.filled.VpnKey
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -34,7 +37,6 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
@@ -53,12 +55,15 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.CizgiRepository
-import com.example.data.CizgiSeedData
 import com.example.ui.theme.CizgiColor
+import com.example.util.CizgiNotificationHelper
+import java.time.LocalTime
+import java.util.Locale
 
 @Composable
 fun ProfilScreen(
@@ -74,7 +79,34 @@ fun ProfilScreen(
     var showFontSizeDialog by remember { mutableStateOf(false) }
     var showClearDataDialog by remember { mutableStateOf(false) }
     var showAboutDialog by remember { mutableStateOf(false) }
-    var showApiKeysDialog by remember { mutableStateOf(false) }
+    var showQuietHoursDialog by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    var pendingNotificationToggle by remember { mutableStateOf<String?>(null) }
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        val pending = pendingNotificationToggle
+        if (granted && pending == "breaking") repository.setBreakingAlerts(true)
+        if (granted && pending == "matches") repository.setMatchAlerts(true)
+        pendingNotificationToggle = null
+    }
+
+    fun setNotificationToggle(name: String, enabled: Boolean) {
+        if (!enabled) {
+            if (name == "breaking") repository.setBreakingAlerts(false) else repository.setMatchAlerts(false)
+            return
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            !CizgiNotificationHelper.hasNotificationPermission(context)
+        ) {
+            pendingNotificationToggle = name
+            notificationPermissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+        } else if (name == "breaking") {
+            repository.setBreakingAlerts(true)
+        } else {
+            repository.setMatchAlerts(true)
+        }
+    }
 
     LazyColumn(
         modifier = modifier
@@ -203,41 +235,22 @@ fun ProfilScreen(
                     title = "Son Dakika Bildirimleri",
                     subtitle = "Önemli editoryal gelişmeler anlık iletilir",
                     checked = prefs.breakingAlerts,
-                    onCheckedChange = { },
+                    onCheckedChange = { setNotificationToggle("breaking", it) },
                 )
                 HorizontalDivider(color = CizgiColor.BorderLight.copy(alpha = 0.5f))
                 SettingSwitchRow(
                     title = "Maç Başlangıç ve Gol Alarmları",
                     subtitle = "Takip ettiğin takımların maçlarında",
                     checked = prefs.matchAlerts,
-                    onCheckedChange = { },
+                    onCheckedChange = { setNotificationToggle("matches", it) },
                 )
                 HorizontalDivider(color = CizgiColor.BorderLight.copy(alpha = 0.5f))
                 SettingSwitchRow(
                     title = "Sessiz Saatler (${prefs.quietHoursStart} - ${prefs.quietHoursEnd})",
-                    subtitle = "Gece saatlerinde bildirimler sessize alınır",
+                    subtitle = "Başlığa dokunup saatleri düzenle; bu aralıkta telefon bildirimleri susar",
                     checked = prefs.quietHoursEnabled,
                     onCheckedChange = { repository.setQuietHours(it) },
-                )
-            }
-        }
-
-        // Section: Canlı API ve Veri Bağlantıları
-        item {
-            SettingSectionHeader("CANLI APİ VE VERİ BAĞLANTILARI")
-        }
-
-        item {
-            SettingCard {
-                SettingNavigationRow(
-                    icon = Icons.Default.VpnKey,
-                    title = "Canlı API Ayarları (Spor & Hava Durumu)",
-                    subtitle = if (prefs.footballApiKey.isNotBlank() || prefs.weatherApiKey.isNotBlank()) {
-                        "Özel API Anahtarları Kayıtlı ve Aktif"
-                    } else {
-                        "api-football.com & weatherapi.com yapılandırması"
-                    },
-                    onClick = { showApiKeysDialog = true },
+                    onTitleClick = { showQuietHoursDialog = true },
                 )
             }
         }
@@ -252,7 +265,7 @@ fun ProfilScreen(
                 SettingNavigationRow(
                     icon = Icons.Default.Delete,
                     title = "Verileri ve Önbelleği Temizle",
-                    subtitle = "Arama geçmişi ve kayıtlı haberleri sıfırla",
+                    subtitle = "Kayıtlı haberleri ve cihazdaki haber önbelleğini temizle",
                     onClick = { showClearDataDialog = true },
                 )
                 HorizontalDivider(color = CizgiColor.BorderLight.copy(alpha = 0.5f))
@@ -338,6 +351,43 @@ fun ProfilScreen(
         )
     }
 
+    if (showQuietHoursDialog) {
+        AlertDialog(
+            onDismissRequest = { showQuietHoursDialog = false },
+            title = { Text("Sessiz Saatleri Ayarla") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Bu saatlerde telefon bildirimi gönderilmez; uygulama içi bildirim geçmişi korunur.")
+                    TextButton(
+                        onClick = {
+                            val start = runCatching { LocalTime.parse(prefs.quietHoursStart) }.getOrDefault(LocalTime.of(23, 0))
+                            TimePickerDialog(context, { _, hour, minute ->
+                                repository.setQuietHours(
+                                    prefs.quietHoursEnabled,
+                                    String.format(Locale.ROOT, "%02d:%02d", hour, minute),
+                                    prefs.quietHoursEnd,
+                                )
+                            }, start.hour, start.minute, true).show()
+                        },
+                    ) { Text("Başlangıç: ${prefs.quietHoursStart}") }
+                    TextButton(
+                        onClick = {
+                            val end = runCatching { LocalTime.parse(prefs.quietHoursEnd) }.getOrDefault(LocalTime.of(7, 0))
+                            TimePickerDialog(context, { _, hour, minute ->
+                                repository.setQuietHours(
+                                    prefs.quietHoursEnabled,
+                                    prefs.quietHoursStart,
+                                    String.format(Locale.ROOT, "%02d:%02d", hour, minute),
+                                )
+                            }, end.hour, end.minute, true).show()
+                        },
+                    ) { Text("Bitiş: ${prefs.quietHoursEnd}") }
+                }
+            },
+            confirmButton = { TextButton(onClick = { showQuietHoursDialog = false }) { Text("Tamam") } },
+        )
+    }
+
     // Clear Data Confirmation Dialog
     if (showClearDataDialog) {
         AlertDialog(
@@ -349,6 +399,7 @@ fun ProfilScreen(
                     onClick = {
                         repository.clearSavedStories()
                         repository.clearSearchHistory()
+                        repository.clearLocalNewsData()
                         showClearDataDialog = false
                     },
                 ) {
@@ -365,15 +416,15 @@ fun ProfilScreen(
     if (showAboutDialog) {
         AlertDialog(
             onDismissRequest = { showAboutDialog = false },
-            title = { Text("ÇİZGİ / Editoryal Standartlar") },
+            title = { Text("Çizgi Hakkında") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
-                        text = "Çizgi, haber okuruna gürültüden uzak, güvenilir ve bağlamı anlaşılır bir gündem sunmak için geliştirilmiştir.",
+                        text = "Haber, spor ve piyasa gelişmelerini tek yerde takip edebilirsin.",
                         style = MaterialTheme.typography.bodyMedium,
                     )
                     Text(
-                        text = "• Çoklu Kaynak Şeffaflığı: Her haber birden fazla bağımsız kaynakla teyit edilir.\n• Reklamsız Haber Hiyerarşisi: İçerik akışı yanıltıcı başlıklar ve tam ekran reklamlarla bölünmez.\n• Gizlilik Önceliği: Konum ve ilgi alanları sunucuda profil oluşturulmadan cihazınızda tutulur.",
+                        text = "Haberin yayıncısı haber başlığının altında görünür. Şehir ve takip tercihlerin bu cihazda saklanır.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -385,116 +436,7 @@ fun ProfilScreen(
         )
     }
 
-    // Live API Keys Configuration Dialog
-    if (showApiKeysDialog) {
-        var footballInput by remember { mutableStateOf(prefs.footballApiKey) }
-        var weatherInput by remember { mutableStateOf(prefs.weatherApiKey) }
-        var statusMsg by remember { mutableStateOf("") }
 
-        AlertDialog(
-            onDismissRequest = { showApiKeysDialog = false },
-            title = {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.VpnKey,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
-                    )
-                    Text("Canlı API Yapılandırması", fontWeight = FontWeight.Bold)
-                }
-            },
-            text = {
-                Column(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalArrangement = Arrangement.spacedBy(14.dp),
-                ) {
-                    Text(
-                        text = "Kendi hesaplarınızdan aldığınız API anahtarlarını buraya girerek doğrudan canlı veri çekebilirsiniz.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-
-                    // 1. Football API Key
-                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text(
-                            text = "⚽ API-Football (api-sports.io)",
-                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
-                            color = MaterialTheme.colorScheme.primary,
-                        )
-                        Text(
-                            text = "dashboard.api-football.com/profile?access",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            fontSize = 11.sp,
-                        )
-                        OutlinedTextField(
-                            value = footballInput,
-                            onValueChange = { footballInput = it },
-                            placeholder = { Text("API-Football anahtarınızı girin") },
-                            modifier = Modifier.fillMaxWidth(),
-                            singleLine = true,
-                        )
-                    }
-
-                    // 2. Weather API Key
-                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text(
-                            text = "☀️ WeatherAPI (weatherapi.com)",
-                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
-                            color = MaterialTheme.colorScheme.primary,
-                        )
-                        Text(
-                            text = "weatherapi.com/my/upgrade.aspx",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            fontSize = 11.sp,
-                        )
-                        OutlinedTextField(
-                            value = weatherInput,
-                            onValueChange = { weatherInput = it },
-                            placeholder = { Text("WeatherAPI anahtarınızı girin") },
-                            modifier = Modifier.fillMaxWidth(),
-                            singleLine = true,
-                        )
-                    }
-
-                    if (statusMsg.isNotBlank()) {
-                        Surface(
-                            shape = RoundedCornerShape(8.dp),
-                            color = MaterialTheme.colorScheme.primaryContainer,
-                            modifier = Modifier.fillMaxWidth(),
-                        ) {
-                            Text(
-                                text = statusMsg,
-                                style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold),
-                                color = MaterialTheme.colorScheme.onPrimaryContainer,
-                                modifier = Modifier.padding(10.dp),
-                            )
-                        }
-                    }
-                }
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        repository.setCustomApiKeys(footballInput, weatherInput)
-                        statusMsg = "API anahtarları kaydedildi ve canlı akışlar güncellendi!"
-                        showApiKeysDialog = false
-                    }
-                ) {
-                    Text("Kaydet ve Yenile")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showApiKeysDialog = false }) {
-                    Text("Kapat")
-                }
-            }
-        )
-    }
 }
 
 @Composable
@@ -571,6 +513,7 @@ private fun SettingSwitchRow(
     subtitle: String,
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
+    onTitleClick: (() -> Unit)? = null,
 ) {
     Row(
         modifier = Modifier
@@ -579,7 +522,10 @@ private fun SettingSwitchRow(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween,
     ) {
-        Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+        Column(
+            modifier = Modifier.weight(1f).padding(end = 12.dp)
+                .then(if (onTitleClick != null) Modifier.clickable(onClick = onTitleClick) else Modifier),
+        ) {
             Text(
                 text = title,
                 style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
@@ -602,3 +548,4 @@ private fun SettingSwitchRow(
         )
     }
 }
+

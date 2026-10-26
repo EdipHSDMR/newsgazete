@@ -27,3 +27,4 @@ interface CachedSportStatDao {
     @Query("DELETE FROM cached_sport_stats")
     suspend fun clearAll()
 }
+

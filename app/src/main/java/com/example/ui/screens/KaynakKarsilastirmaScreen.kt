@@ -51,19 +51,34 @@ fun KaynakKarsilastirmaScreen(
     val context = LocalContext.current
     val stories by repository.stories.collectAsState()
     val story = remember(stories, storyId) {
-        stories.firstOrNull { it.id == storyId } ?: stories.first()
+        stories.firstOrNull { it.id == storyId }
+    }
+
+    if (story == null) {
+        Column(
+            modifier = modifier.fillMaxSize().padding(24.dp),
+            verticalArrangement = Arrangement.Center,
+        ) {
+            Text(
+                text = "Bu haber artık arşivde bulunmuyor.",
+                style = MaterialTheme.typography.titleMedium,
+            )
+            TextButton(onClick = onBack) { Text("Geri dön") }
+        }
+        return
     }
 
     val allSources = remember(story) {
-        listOf(
-            SourceComparison(
-                publisher = story.publisher,
-                headline = story.title,
-                angle = "Birincil / Ana bülten haberi",
-                publishedTime = story.publishedAt,
-                url = story.canonicalUrl,
-            )
-        ) + story.comparisons
+        val primary = SourceComparison(
+            publisher = story.publisher,
+            headline = story.title,
+            angle = "Haber bağlantısı",
+            publishedTime = story.publishedAt,
+            url = story.canonicalUrl,
+        )
+        (listOf(primary) + story.comparisons).distinctBy { source ->
+            source.url.ifBlank { "${source.publisher}:${source.headline}" }.trim().lowercase()
+        }
     }
 
     LazyColumn(
@@ -107,7 +122,7 @@ fun KaynakKarsilastirmaScreen(
                         color = MaterialTheme.colorScheme.primary,
                     )
                     Text(
-                        text = "Çizgi, bir olayı tek bir yayıncının kelimeleriyle sınırlamaz. Farklı ajans ve medya organlarının aynı habere nasıl yaklaştığını, hangi noktaları öne çıkardığını şeffafça karşılaştırır.",
+                        text = "Aynı gelişmenin farklı yayınlardaki başlıklarını burada görebilirsin.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -206,3 +221,4 @@ fun KaynakKarsilastirmaScreen(
         }
     }
 }
+

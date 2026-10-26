@@ -92,3 +92,4 @@ val CizgiTypography = Typography(
         letterSpacing = 0.3.sp,
     ),
 )
+

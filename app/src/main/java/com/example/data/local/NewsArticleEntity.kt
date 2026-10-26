@@ -80,7 +80,7 @@ data class NewsArticleEntity(
                 topic = story.topic,
                 publisher = story.publisher,
                 publishedAt = story.publishedAt,
-                publishedAtEpochMs = story.publishedAtEpochMs.takeIf { it > 0 } ?: System.currentTimeMillis(),
+                publishedAtEpochMs = story.publishedAtEpochMs,
                 readTimeMin = story.readTimeMin,
                 imageUrl = story.imageUrl,
                 isBreaking = story.isBreaking,
@@ -133,3 +133,4 @@ data class NewsArticleEntity(
         }
     }
 }
+

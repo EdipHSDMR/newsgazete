@@ -71,3 +71,4 @@ fun CizgiTheme(
         content = content,
     )
 }
+

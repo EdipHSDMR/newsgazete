@@ -26,3 +26,4 @@ interface SavedArticleDao {
     @Query("DELETE FROM saved_articles")
     suspend fun clearAll()
 }
+

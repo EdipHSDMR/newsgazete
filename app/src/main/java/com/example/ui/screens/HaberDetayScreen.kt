@@ -1,7 +1,14 @@
 package com.example.ui.screens
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.Handler
+import android.os.Looper
+import android.speech.tts.TextToSpeech
+import android.speech.tts.UtteranceProgressListener
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
@@ -35,11 +42,17 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CompareArrows
 import androidx.compose.material.icons.filled.FormatSize
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.Link
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -48,7 +61,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -64,17 +80,21 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import coil.compose.AsyncImage
 import com.example.data.CizgiRepository
 import com.example.model.Story
+import com.example.util.NewsSummary
 import com.example.ui.components.ModernNewsCard
 import com.example.ui.components.PublisherAvatar
 import com.example.ui.theme.CizgiColor
 import kotlinx.coroutines.launch
+import java.util.Locale
+import android.widget.Toast
 
 @Composable
 fun HaberDetayScreen(
@@ -88,22 +108,100 @@ fun HaberDetayScreen(
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
     val listState = rememberLazyListState()
-
-    // 1. Android Sistem Geri Hareketi Desteği (BackHandler)
-    BackHandler(enabled = true) {
-        onBack()
+    var showFullArticle by remember(storyId) { mutableStateOf(false) }
+    var showMoreActions by remember(storyId) { mutableStateOf(false) }
+    var fullArticleStory by remember(storyId) { mutableStateOf<Story?>(null) }
+    var isLoadingFullArticle by remember(storyId) { mutableStateOf(false) }
+    val ttsReady = remember { mutableStateOf(false) }
+    var isSpeaking by remember { mutableStateOf(false) }
+    val textToSpeech = remember(context) {
+        TextToSpeech(context.applicationContext) { status -> ttsReady.value = status == TextToSpeech.SUCCESS }
     }
+    DisposableEffect(textToSpeech) {
+        onDispose {
+            textToSpeech.stop()
+            textToSpeech.shutdown()
+        }
+    }
+
+    BackHandler(enabled = showFullArticle) { showFullArticle = false }
+    BackHandler(enabled = !showFullArticle) { onBack() }
 
     val stories by repository.stories.collectAsState()
-    val story = remember(stories, storyId) {
-        stories.firstOrNull { it.id == storyId } ?: stories.first()
+    val preferences by repository.preferences.collectAsState()
+    var archivedStory by remember(storyId) { mutableStateOf<Story?>(null) }
+    var isLoadingStory by remember(storyId) { mutableStateOf(true) }
+    LaunchedEffect(storyId) {
+        try {
+            archivedStory = repository.loadStoryFromArchive(storyId)
+        } catch (_: Exception) {
+            archivedStory = null
+        } finally {
+            isLoadingStory = false
+        }
     }
-    val relatedStories = remember(stories, story) {
-        stories.filter { it.id != story.id && (it.topic == story.topic || it.isManset) }.take(3)
+    val story = remember(stories, storyId, archivedStory) {
+        stories.firstOrNull { it.id == storyId } ?: archivedStory
     }
+    LaunchedEffect(story?.id) {
+        story?.let { repository.refreshStoryDescription(it.id) }
+    }
+    if (story == null) {
+        Column(
+            modifier = Modifier.fillMaxSize().padding(24.dp),
+            verticalArrangement = Arrangement.Center,
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            if (isLoadingStory) {
+                CircularProgressIndicator()
+                Text("Haber açılıyor", modifier = Modifier.padding(top = 12.dp))
+            } else {
+                Text("Bu haber artık arşivde bulunmuyor.", style = MaterialTheme.typography.titleMedium)
+                Button(onClick = onBack, modifier = Modifier.padding(top = 12.dp)) { Text("Akışa dön") }
+            }
+        }
+        return
+    }
+    val detailSummary = remember(story.id, story.summary, story.fullText) {
+        NewsSummary.bestAvailableSummary(story.summary, story.fullText, story.title)
+    }
+    val sourceUri = remember(story.canonicalUrl) { runCatching { Uri.parse(story.canonicalUrl) }.getOrNull() }
+    val hasSourceUrl = (sourceUri?.scheme == "http" || sourceUri?.scheme == "https") && !sourceUri?.host.isNullOrBlank()
 
-    // Okuma fontu boyutu değiştirici (Standart vs Büyük font)
-    var isLargeFont by remember { mutableStateOf(false) }
+    val relatedStories = remember(stories, story) {
+        val trLocale = Locale.forLanguageTag("tr-TR")
+        val ignoredWords = setOf(
+            "olan", "için", "ile", "daha", "sonra", "gibi", "üzere", "hakkında", "maç", "maçı",
+            "canlı", "izle", "şifresiz", "lig", "takım", "saat", "bugün", "son", "dakika", "haber",
+            "zaman", "hangi", "nerede", "nasıl", "gözler", "için",
+        )
+        val titleWords = Regex("[\\p{L}\\p{N}]{4,}")
+            .findAll(story.title.lowercase(trLocale))
+            .map { it.value }
+            .filterNot { it in ignoredWords }
+            .toSet()
+        stories.asSequence()
+            .filter { it.id != story.id }
+            .map { candidate ->
+                val candidateTitle = candidate.title.lowercase(trLocale)
+                val sharedWords = titleWords.count { word -> candidateTitle.contains(word) }
+                val sameTopic = candidate.topic.equals(story.topic, ignoreCase = true)
+                candidate to (sharedWords * 3 + if (sameTopic && sharedWords > 0) 1 else 0)
+            }
+            .filter { (_, relevance) -> relevance > 0 }
+            .sortedWith(compareByDescending<Pair<Story, Int>> { it.second }.thenByDescending { it.first.publishedAtEpochMs })
+            .take(3)
+            .map { it.first }
+            .toList()
+    }
+    val comparisonPublisherCount = remember(story) {
+        (story.comparisons.map { it.publisher } + story.publisher)
+            .map { it.trim().lowercase(java.util.Locale.ROOT) }
+            .filter(String::isNotBlank)
+            .distinct()
+            .size
+            .coerceAtLeast(1)
+    }
 
     // Okuma ilerleme çubuğu hesaplaması
     val readingProgress by remember {
@@ -122,11 +220,40 @@ fun HaberDetayScreen(
             action = Intent.ACTION_SEND
             putExtra(
                 Intent.EXTRA_TEXT,
-                "${currentStory.title}\n\n${currentStory.summary}\n\nÇizgi üzerinden okundu: ${currentStory.canonicalUrl.ifBlank { "https://cizgi.app" }}"
+                listOfNotNull(
+                    currentStory.title,
+                    NewsSummary.bestAvailableSummary(currentStory.summary, currentStory.fullText, currentStory.title)
+                        .takeIf(String::isNotBlank),
+                    currentStory.canonicalUrl.takeIf { value ->
+                        val uri = runCatching { Uri.parse(value) }.getOrNull()
+                        (uri?.scheme == "http" || uri?.scheme == "https") && !uri?.host.isNullOrBlank()
+                    },
+                ).joinToString("\n\n")
             )
             type = "text/plain"
         }
         context.startActivity(Intent.createChooser(sendIntent, "Haberi Paylaş"))
+    }
+
+    fun requestFullArticle() {
+        showFullArticle = true
+        val alreadyAvailable = story.fullText.length >= 1_200 ||
+            (story.id.startsWith("pha-") && story.fullText.length >= 400)
+        if (alreadyAvailable) {
+            fullArticleStory = story
+            return
+        }
+        if (isLoadingFullArticle) return
+        isLoadingFullArticle = true
+        coroutineScope.launch {
+            try {
+                fullArticleStory = repository.loadFullArticle(story.id)
+            } catch (_: Exception) {
+                fullArticleStory = null
+            } finally {
+                isLoadingFullArticle = false
+            }
+        }
     }
 
     // Tam ekran kapsayıcı
@@ -153,81 +280,114 @@ fun HaberDetayScreen(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween,
                     ) {
-                        // Geri Dön Butonu
                         IconButton(
                             onClick = onBack,
-                            modifier = Modifier
-                                .size(44.dp)
-                                .testTag("detail_back_button"),
+                            modifier = Modifier.size(44.dp).testTag("detail_back_button"),
                         ) {
                             Icon(
                                 imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                                contentDescription = "Geri Dön",
+                                contentDescription = "Geri",
                                 tint = MaterialTheme.colorScheme.primary,
                                 modifier = Modifier.size(24.dp),
                             )
                         }
 
-                        // Kategori Başlığı Rozeti
-                        Surface(
-                            shape = RoundedCornerShape(16.dp),
-                            color = MaterialTheme.colorScheme.primaryContainer,
-                            modifier = Modifier.padding(horizontal = 4.dp),
-                        ) {
-                            Text(
-                                text = story.topic.uppercase(),
-                                style = MaterialTheme.typography.labelSmall.copy(
-                                    fontWeight = FontWeight.Bold,
-                                    letterSpacing = 0.8.sp,
-                                ),
-                                color = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
-                            )
+                        Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                            Surface(
+                                shape = RoundedCornerShape(16.dp),
+                                color = MaterialTheme.colorScheme.primaryContainer,
+                            ) {
+                                Text(
+                                    text = story.topic,
+                                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
+                                    color = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                                    maxLines = 1,
+                                )
+                            }
                         }
 
-                        // Üst Sağ Eylemler: Font Değiştir, Paylaş, Kaydet
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(2.dp),
-                        ) {
-                            IconButton(
-                                onClick = { isLargeFont = !isLargeFont },
-                                modifier = Modifier.size(40.dp),
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.FormatSize,
-                                    contentDescription = if (isLargeFont) "Standart Yazı Boyutu" else "Büyük Yazı Boyutu",
-                                    tint = if (isLargeFont) CizgiColor.Blue else MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.size(20.dp),
-                                )
-                            }
-
-                            IconButton(
-                                onClick = { shareCurrentStory(story) },
-                                modifier = Modifier
-                                    .size(40.dp)
-                                    .testTag("detail_share_button"),
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Share,
-                                    contentDescription = "Haberi Paylaş",
-                                    tint = MaterialTheme.colorScheme.onSurface,
-                                    modifier = Modifier.size(20.dp),
-                                )
-                            }
-
+                        Row(verticalAlignment = Alignment.CenterVertically) {
                             IconButton(
                                 onClick = { repository.toggleSaveStory(story) },
-                                modifier = Modifier
-                                    .size(40.dp)
-                                    .testTag("detail_save_button"),
+                                modifier = Modifier.size(40.dp).testTag("detail_save_button"),
                             ) {
                                 Icon(
                                     imageVector = if (story.isSaved) Icons.Filled.Bookmark else Icons.Default.BookmarkBorder,
                                     contentDescription = if (story.isSaved) "Kaydedildi" else "Kaydet",
                                     tint = if (story.isSaved) CizgiColor.Gold else MaterialTheme.colorScheme.onSurface,
-                                    modifier = Modifier.size(22.dp),
+                                    modifier = Modifier.size(20.dp),
                                 )
+                            }
+                            IconButton(
+                                onClick = { shareCurrentStory(story) },
+                                modifier = Modifier.size(40.dp).testTag("detail_share_button"),
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Share,
+                                    contentDescription = "Haberi paylaş",
+                                    tint = MaterialTheme.colorScheme.onSurface,
+                                    modifier = Modifier.size(19.dp),
+                                )
+                            }
+
+                            Box {
+                                IconButton(
+                                    onClick = { showMoreActions = true },
+                                    modifier = Modifier.size(40.dp),
+                                ) {
+                                    Icon(Icons.Default.MoreVert, contentDescription = "Diğer işlemler")
+                                }
+                                DropdownMenu(
+                                    expanded = showMoreActions,
+                                    onDismissRequest = { showMoreActions = false },
+                                ) {
+                                    DropdownMenuItem(
+                                        text = { Text(if (isSpeaking) "Dinlemeyi durdur" else "Özeti dinle") },
+                                        leadingIcon = { Icon(Icons.Default.VolumeUp, contentDescription = null) },
+                                        enabled = ttsReady.value,
+                                        onClick = {
+                                            showMoreActions = false
+                                            if (isSpeaking) {
+                                                textToSpeech.stop()
+                                                isSpeaking = false
+                                            } else if (detailSummary.isNotBlank()) {
+                                                textToSpeech.language = Locale.forLanguageTag("tr-TR")
+                                                textToSpeech.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+                                                    private fun setSpeaking(value: Boolean) {
+                                                        Handler(Looper.getMainLooper()).post { isSpeaking = value }
+                                                    }
+                                                    override fun onStart(utteranceId: String?) = setSpeaking(true)
+                                                    override fun onDone(utteranceId: String?) = setSpeaking(false)
+                                                    override fun onError(utteranceId: String?) = setSpeaking(false)
+                                                })
+                                                val result = textToSpeech.speak(detailSummary, TextToSpeech.QUEUE_FLUSH, null, "cizgi-summary")
+                                                if (result == TextToSpeech.ERROR) isSpeaking = false
+                                            }
+                                        },
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text(if (preferences.fontSize == "large") "Yazıyı küçült" else "Yazıyı büyüt") },
+                                        leadingIcon = { Icon(Icons.Default.FormatSize, contentDescription = null) },
+                                        onClick = {
+                                            showMoreActions = false
+                                            repository.setFontSize(if (preferences.fontSize == "large") "normal" else "large")
+                                        },
+                                    )
+                                    if (hasSourceUrl) {
+                                        DropdownMenuItem(
+                                            text = { Text("Bağlantıyı kopyala") },
+                                            leadingIcon = { Icon(Icons.Default.Link, contentDescription = null) },
+                                            modifier = Modifier.testTag("detail_copy_link_button"),
+                                            onClick = {
+                                                showMoreActions = false
+                                                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                                                clipboard?.setPrimaryClip(ClipData.newPlainText("Haber bağlantısı", story.canonicalUrl))
+                                                Toast.makeText(context, "Haber bağlantısı kopyalandı", Toast.LENGTH_SHORT).show()
+                                            },
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
@@ -250,12 +410,12 @@ fun HaberDetayScreen(
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth(),
-                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 40.dp),
-                verticalArrangement = Arrangement.spacedBy(18.dp),
+                contentPadding = PaddingValues(start = 14.dp, end = 14.dp, top = 12.dp, bottom = 28.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 // Başlık & Kategori & Okuma Süresi
                 item(key = "header_section") {
-                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -276,7 +436,7 @@ fun HaberDetayScreen(
                             }
 
                             Text(
-                                text = "⏱️ ${story.readTimeMin} dakika okuma süresi",
+                                text = "${story.readTimeMin} dk okuma",
                                 style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Medium),
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -285,25 +445,25 @@ fun HaberDetayScreen(
                         // Büyük Manşet Başlık
                         Text(
                             text = story.title,
-                            style = MaterialTheme.typography.displayMedium.copy(
+                            style = MaterialTheme.typography.headlineSmall.copy(
                                 fontWeight = FontWeight.Bold,
-                                fontSize = if (isLargeFont) 26.sp else 23.sp,
-                                lineHeight = if (isLargeFont) 36.sp else 32.sp,
+                                fontSize = if (preferences.fontSize == "large") 23.sp else 20.sp,
+                                lineHeight = if (preferences.fontSize == "large") 31.sp else 27.sp,
                             ),
                             color = MaterialTheme.colorScheme.onSurface,
                         )
 
-                        // Yayıncı ve Doğrulama Satırı
+                        // Yayıncı bilgisi
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clip(RoundedCornerShape(10.dp))
                                 .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
-                                .padding(horizontal = 12.dp, vertical = 8.dp),
+                            .padding(horizontal = 10.dp, vertical = 6.dp),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(10.dp),
                         ) {
-                            PublisherAvatar(publisher = story.publisher, modifier = Modifier.size(34.dp))
+                            PublisherAvatar(publisher = story.publisher, modifier = Modifier.size(28.dp))
 
                             Column(modifier = Modifier.weight(1f)) {
                                 Row(
@@ -315,15 +475,9 @@ fun HaberDetayScreen(
                                         style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
                                         color = MaterialTheme.colorScheme.primary,
                                     )
-                                    Icon(
-                                        imageVector = Icons.Default.CheckCircle,
-                                        contentDescription = "Doğrulanmış Kaynak",
-                                        tint = CizgiColor.Blue,
-                                        modifier = Modifier.size(14.dp),
-                                    )
                                 }
                                 Text(
-                                    text = "${story.publishedAt} · ${story.sourceCount} bağımsız kaynak teyit etti",
+                                    text = "${story.publishedAt} · ${maxOf(story.sourceCount, comparisonPublisherCount)} kaynak",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
@@ -332,15 +486,15 @@ fun HaberDetayScreen(
                     }
                 }
 
-                // 16:9 Büyük Görsel
+                // Haber görseli
                 if (story.imageUrl.isNotBlank()) {
                     item(key = "hero_image") {
-                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Column {
                             Box(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .aspectRatio(16f / 9f)
-                                    .clip(RoundedCornerShape(16.dp))
+                                    .aspectRatio(2.2f)
+                                    .clip(RoundedCornerShape(12.dp))
                                     .background(CizgiColor.SurfaceVariant),
                             ) {
                                 AsyncImage(
@@ -350,17 +504,11 @@ fun HaberDetayScreen(
                                     modifier = Modifier.fillMaxSize(),
                                 )
                             }
-                            Text(
-                                text = "Fotoğraf: ${story.publisher} Arşivi · Çizgi Görsel Servisi",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(start = 4.dp),
-                            )
                         }
                     }
                 }
 
-                // Editöryal Özet Kartı
+                // Kısa özet
                 item(key = "lead_summary") {
                     Card(
                         shape = RoundedCornerShape(12.dp),
@@ -369,7 +517,7 @@ fun HaberDetayScreen(
                         modifier = Modifier.fillMaxWidth(),
                     ) {
                         Row(
-                            modifier = Modifier.padding(14.dp),
+                            modifier = Modifier.padding(12.dp),
                             horizontalArrangement = Arrangement.spacedBy(10.dp),
                         ) {
                             Box(
@@ -380,7 +528,7 @@ fun HaberDetayScreen(
                             )
                             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                 Text(
-                                    text = "ÖZET VE ANA FİKİR",
+                                    text = "KISA ÖZET",
                                     style = MaterialTheme.typography.labelSmall.copy(
                                         fontWeight = FontWeight.Bold,
                                         letterSpacing = 0.8.sp,
@@ -388,10 +536,10 @@ fun HaberDetayScreen(
                                     color = MaterialTheme.colorScheme.primary,
                                 )
                                 Text(
-                                    text = story.summary,
+                                    text = detailSummary.ifBlank { "Bu haber için kısa özet henüz hazır değil. Haberin devamını açabilirsin." },
                                     style = MaterialTheme.typography.bodyMedium.copy(
-                                        fontSize = if (isLargeFont) 16.sp else 14.5.sp,
-                                        lineHeight = if (isLargeFont) 24.sp else 22.sp,
+                                        fontSize = if (preferences.fontSize == "large") 16.sp else 14.sp,
+                                        lineHeight = if (preferences.fontSize == "large") 24.sp else 21.sp,
                                         fontWeight = FontWeight.Medium,
                                     ),
                                     color = MaterialTheme.colorScheme.onSurface,
@@ -401,96 +549,8 @@ fun HaberDetayScreen(
                     }
                 }
 
-                // Çizgi 3 Ayaklı Analiz Matrisi: Ne Oldu? Neden Önemli? Bilinmeyenler
-                item(key = "context_matrix") {
-                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        // 1. Ne Oldu?
-                        DetailContextBlock(
-                            badge = "📌 NE OLDU?",
-                            badgeColor = CizgiColor.Navy,
-                            content = story.whatHappened.ifBlank { story.summary },
-                            isLargeFont = isLargeFont,
-                        )
-
-                        // 2. Neden Önemli?
-                        DetailContextBlock(
-                            badge = "💡 NEDEN ÖNEMLİ?",
-                            badgeColor = CizgiColor.Gold,
-                            badgeTextColor = CizgiColor.Navy,
-                            content = story.whyItMatters.ifBlank { "Karar ve gelişmeler hem piyasa dengeleri hem de vatandaşın günlük yaşamı açısından kritik sonuçlar doğurmaktadır." },
-                            isLargeFont = isLargeFont,
-                        )
-
-                        // 3. Bilinmeyenler & Gelişen Noktalar
-                        if (story.whatIsUnknown.isNotBlank()) {
-                            DetailContextBlock(
-                                badge = "❓ BİLİNMEYENLER / SONRAKİ ADIMLAR",
-                                badgeColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                                content = story.whatIsUnknown,
-                                isLargeFont = isLargeFont,
-                            )
-                        }
-                    }
-                }
-
-                // Tam Makale Paragrafları (Full Editorial Narrative)
-                item(key = "article_paragraphs") {
-                    Column(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalArrangement = Arrangement.spacedBy(14.dp),
-                    ) {
-                        val paragraphs = if (story.paragraphs.isNotEmpty()) {
-                            story.paragraphs
-                        } else {
-                            listOf(
-                                "${story.title} konusuyla ilgili gelişmeler kamuoyunda geniş yankı bulmaya devam ediyor. Yetkililerden alınan son bilgilere göre süreç çok yönlü olarak takip edilirken, uzmanlar yeni gelişmelerin etkilerini değerlendiriyor.",
-                                "Söz konusu gelişme, sektör temsilcileri ve vatandaşlar açısından önemli dinamikleri beraberinde getiriyor. İlgili kurumlarca yapılan açıklamada, çalışmaların şeffaflıkla ve belirlenen yol haritasına uygun şekilde yürütüleceği belirtildi.",
-                                "Önümüzdeki günlerde sürecin aşamaları netleştikçe yeni detayların kamuoyuyla paylaşılması ve ilgili mevzuatın yürürlüğe girmesi bekleniyor."
-                            )
-                        }
-
-                        paragraphs.forEachIndexed { index, paragraph ->
-                            Text(
-                                text = paragraph,
-                                style = MaterialTheme.typography.bodyLarge.copy(
-                                    fontSize = if (isLargeFont) 18.sp else 16.sp,
-                                    lineHeight = if (isLargeFont) 28.sp else 25.sp,
-                                ),
-                                color = MaterialTheme.colorScheme.onSurface,
-                            )
-
-                            // 2. paragraftan sonra editöryal vurgu kutusu ekle
-                            if (index == 0) {
-                                Surface(
-                                    shape = RoundedCornerShape(10.dp),
-                                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
-                                    border = CardDefaults.outlinedCardBorder().copy(brush = SolidColor(CizgiColor.BorderLight)),
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(vertical = 4.dp),
-                                ) {
-                                    Row(
-                                        modifier = Modifier.padding(14.dp),
-                                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                                    ) {
-                                        Text("“", fontSize = 28.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-                                        Text(
-                                            text = "“Piyasalardaki ilk reaksiyonlar ve uzman değerlendirmeleri dengeli seyrederken, orta vadeli öngörülerin sağlam temellere oturduğu vurgulanıyor.”",
-                                            style = MaterialTheme.typography.bodyMedium.copy(
-                                                fontStyle = FontStyle.Italic,
-                                                lineHeight = 22.sp,
-                                            ),
-                                            color = MaterialTheme.colorScheme.onSurface,
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
                 // Kaynak Karşılaştırması ve Şeffaflık Bloğu
-                if (story.comparisons.isNotEmpty()) {
+                if (comparisonPublisherCount > 1) {
                     item(key = "comparison_card") {
                         Card(
                             shape = RoundedCornerShape(14.dp),
@@ -513,7 +573,7 @@ fun HaberDetayScreen(
                                         modifier = Modifier.size(18.dp),
                                     )
                                     Text(
-                                        text = "FARKLI KAYNAKLAR NASIL GÖRDÜ?",
+                                        text = "DİĞER YAYINLAR",
                                         style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
                                         color = MaterialTheme.colorScheme.primary,
                                     )
@@ -556,7 +616,7 @@ fun HaberDetayScreen(
                                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                                     ) {
                                         Icon(Icons.Default.CompareArrows, contentDescription = null, modifier = Modifier.size(16.dp))
-                                        Text("Tüm Kaynak Karşılaştırmalarını İncele (${story.comparisons.size + 1} Yayıncı)")
+                                        Text("Diğer yayınları gör")
                                     }
                                 }
                             }
@@ -564,58 +624,37 @@ fun HaberDetayScreen(
                     }
                 }
 
-                // Özgün Kaynak Butonu (Telif güvencesi & Kaynağında Oku)
+                // Kaynağı ve uygulama içi okuma eylemi
                 item(key = "source_button") {
-                    Card(
-                        shape = RoundedCornerShape(14.dp),
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)),
-                        border = CardDefaults.outlinedCardBorder().copy(brush = SolidColor(CizgiColor.BorderLight)),
-                        modifier = Modifier.fillMaxWidth(),
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f))
+                            .padding(start = 12.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
-                        Column(
-                            modifier = Modifier.padding(14.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
+                        Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = "ŞEFFAFLIK VE KAYNAK BİLGİSİ",
-                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                                color = MaterialTheme.colorScheme.primary,
-                            )
-                            Text(
-                                text = "Bu içerik ${story.publisher} tarafından yayınlanmış olup tüm telif hakları yayıncı kuruluşa aittir.",
-                                style = MaterialTheme.typography.bodySmall,
+                                text = "Kaynak",
+                                style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
-                            Button(
-                                onClick = {
-                                    val url = story.canonicalUrl.ifBlank { "https://google.com/search?q=${Uri.encode(story.title)}" }
-                                    val browserIntent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
-                                    context.startActivity(browserIntent)
-                                },
-                                colors = ButtonDefaults.buttonColors(containerColor = CizgiColor.Navy),
-                                shape = RoundedCornerShape(10.dp),
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(48.dp)
-                                    .testTag("open_source_button"),
-                            ) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                ) {
-                                    Text(
-                                        text = "Haberin Kaynağında Oku (${story.publisher})",
-                                        fontWeight = FontWeight.Bold,
-                                        color = Color.White,
-                                    )
-                                    Icon(
-                                        imageVector = Icons.AutoMirrored.Filled.OpenInNew,
-                                        contentDescription = null,
-                                        tint = Color.White,
-                                        modifier = Modifier.size(16.dp),
-                                    )
-                                }
-                            }
+                            Text(
+                                text = story.publisher,
+                                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
+                                color = MaterialTheme.colorScheme.onSurface,
+                                maxLines = 1,
+                            )
+                        }
+                        OutlinedButton(
+                            onClick = ::requestFullArticle,
+                            enabled = hasSourceUrl,
+                            modifier = Modifier.testTag("open_full_article_button"),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                        ) {
+                            Text("Devamını oku", maxLines = 1)
                         }
                     }
                 }
@@ -626,7 +665,7 @@ fun HaberDetayScreen(
                         HorizontalDivider(color = CizgiColor.BorderLight)
                         Spacer(Modifier.height(4.dp))
                         Text(
-                            text = "İLGİLİ HABERLER",
+                            text = "BUNLARA DA BAK",
                             style = MaterialTheme.typography.labelMedium.copy(
                                 fontWeight = FontWeight.Bold,
                                 letterSpacing = 0.8.sp,
@@ -636,12 +675,45 @@ fun HaberDetayScreen(
                     }
 
                     items(relatedStories, key = { it.id }) { related ->
-                        ModernNewsCard(
-                            story = related,
-                            onClick = { onStoryClick(related.id) },
-                            onSaveToggle = { repository.toggleSaveStory(related) },
-                            onShareClick = { shareCurrentStory(related) },
-                        )
+                        Card(
+                            shape = RoundedCornerShape(12.dp),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                            border = CardDefaults.outlinedCardBorder().copy(brush = SolidColor(MaterialTheme.colorScheme.outlineVariant)),
+                            modifier = Modifier.fillMaxWidth().clickable { onStoryClick(related.id) },
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            ) {
+                                if (related.imageUrl.isNotBlank()) {
+                                    AsyncImage(
+                                        model = related.imageUrl,
+                                        contentDescription = null,
+                                        contentScale = ContentScale.Crop,
+                                        modifier = Modifier.size(width = 68.dp, height = 58.dp).clip(RoundedCornerShape(8.dp)),
+                                    )
+                                }
+                                Column(
+                                    modifier = Modifier.weight(1f),
+                                    verticalArrangement = Arrangement.spacedBy(3.dp),
+                                ) {
+                                    Text(
+                                        text = "${related.publisher} · ${related.publishedAt}",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                    )
+                                    Text(
+                                        text = related.title,
+                                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                        maxLines = 2,
+                                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -677,46 +749,137 @@ fun HaberDetayScreen(
             }
         }
     }
-}
 
-@Composable
-private fun DetailContextBlock(
-    badge: String,
-    badgeColor: Color,
-    badgeTextColor: Color = Color.White,
-    content: String,
-    isLargeFont: Boolean,
-) {
-    Card(
-        shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        border = CardDefaults.outlinedCardBorder().copy(brush = SolidColor(CizgiColor.BorderLight)),
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        Column(
-            modifier = Modifier.padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+    if (showFullArticle) {
+        Dialog(
+            onDismissRequest = { showFullArticle = false },
+            properties = DialogProperties(usePlatformDefaultWidth = false),
         ) {
             Surface(
-                shape = RoundedCornerShape(4.dp),
-                color = badgeColor,
+                modifier = Modifier.fillMaxSize().padding(10.dp),
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.surface,
             ) {
-                Text(
-                    text = badge,
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = badgeTextColor,
-                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
-                )
+                Column {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("${story.publisher}", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                            Text("Haber", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        TextButton(onClick = { showFullArticle = false }) { Text("Kapat") }
+                    }
+                    HorizontalDivider()
+                    when {
+                        isLoadingFullArticle -> Box(
+                            modifier = Modifier.fillMaxSize().padding(24.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                                CircularProgressIndicator()
+                                Text("Haber yükleniyor", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                        fullArticleStory != null -> {
+                            val article = fullArticleStory!!
+                            val articleParagraphs = remember(article.id, article.fullText, article.paragraphs) {
+                                article.paragraphs.filter(String::isNotBlank).ifEmpty { NewsSummary.paragraphs(article.fullText) }
+                            }
+                            LazyColumn(
+                                modifier = Modifier.fillMaxSize(),
+                                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 18.dp),
+                                verticalArrangement = Arrangement.spacedBy(14.dp),
+                            ) {
+                                item(key = "reader_heading") {
+                                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        Text(
+                                            text = article.title,
+                                            style = MaterialTheme.typography.headlineSmall.copy(
+                                                fontSize = if (preferences.fontSize == "large") 23.sp else 21.sp,
+                                                lineHeight = if (preferences.fontSize == "large") 32.sp else 28.sp,
+                                                fontWeight = FontWeight.Bold,
+                                            ),
+                                            color = MaterialTheme.colorScheme.onSurface,
+                                        )
+                                        Text(
+                                            text = "${article.publisher} · ${article.publishedAt}",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    }
+                                }
+                                if (article.imageUrl.isNotBlank()) {
+                                    item(key = "reader_image") {
+                                        AsyncImage(
+                                            model = article.imageUrl,
+                                            contentDescription = article.title,
+                                            contentScale = ContentScale.Crop,
+                                            modifier = Modifier.fillMaxWidth().aspectRatio(1.8f).clip(RoundedCornerShape(12.dp)),
+                                        )
+                                    }
+                                }
+                                items(articleParagraphs) { paragraph ->
+                                    Text(
+                                        text = paragraph,
+                                        style = MaterialTheme.typography.bodyLarge.copy(
+                                            fontSize = if (preferences.fontSize == "large") 18.sp else 16.sp,
+                                            lineHeight = if (preferences.fontSize == "large") 29.sp else 26.sp,
+                                        ),
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                    )
+                                }
+                                if (hasSourceUrl) {
+                                    item(key = "reader_source_link") {
+                                        TextButton(
+                                            onClick = {
+                                                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(story.canonicalUrl)))
+                                            },
+                                            modifier = Modifier.testTag("open_source_button"),
+                                        ) {
+                                            Icon(Icons.AutoMirrored.Filled.OpenInNew, contentDescription = null)
+                                            Spacer(Modifier.width(6.dp))
+                                            Text("Yayıncı sayfasını aç")
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        else -> Column(
+                            modifier = Modifier.fillMaxSize().padding(24.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Center,
+                        ) {
+                            Text(
+                                text = "Bu haberin tam metni uygulamada açılamadı.",
+                                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
+                                color = MaterialTheme.colorScheme.onSurface,
+                            )
+                            Spacer(Modifier.height(8.dp))
+                            Text(
+                                text = "Yayıncı metni paylaşmıyor ya da erişimi sınırlıyor olabilir.",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            if (hasSourceUrl) {
+                                TextButton(
+                                    onClick = {
+                                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(story.canonicalUrl)))
+                                    },
+                                    modifier = Modifier.padding(top = 12.dp).testTag("open_source_button"),
+                                ) {
+                                    Icon(Icons.AutoMirrored.Filled.OpenInNew, contentDescription = null)
+                                    Spacer(Modifier.width(6.dp))
+                                    Text("Yayıncı sayfasını aç")
+                                }
+                            }
+                        }
+                    }
+                }
             }
-            Text(
-                text = content,
-                style = MaterialTheme.typography.bodyLarge.copy(
-                    fontSize = if (isLargeFont) 17.sp else 15.sp,
-                    lineHeight = if (isLargeFont) 26.sp else 23.sp,
-                ),
-                color = MaterialTheme.colorScheme.onSurface,
-            )
         }
     }
 }
+
+

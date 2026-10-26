@@ -14,6 +14,9 @@ interface NewsArticleDao {
     @Query("SELECT COUNT(*) FROM news_articles")
     fun observeCount(): Flow<Int>
 
+    @Query("SELECT * FROM news_articles WHERE id = :id LIMIT 1")
+    suspend fun getById(id: String): NewsArticleEntity?
+
     @Query(
         """SELECT * FROM news_articles
            WHERE publishedAtEpochMs < :timestamp
@@ -26,6 +29,12 @@ interface NewsArticleDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertAll(articles: List<NewsArticleEntity>)
 
+    @Query("DELETE FROM news_articles WHERE id IN (:ids)")
+    suspend fun deleteByIds(ids: List<String>)
+
+    @Query("DELETE FROM news_articles")
+    suspend fun clearAll()
+
     @Query(
         """DELETE FROM news_articles
            WHERE id NOT IN (
@@ -36,3 +45,4 @@ interface NewsArticleDao {
     )
     suspend fun pruneOldest(keepLimit: Int)
 }
+

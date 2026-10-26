@@ -89,15 +89,39 @@ fun MansetHeroCard(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .aspectRatio(16f / 9f)
+                    .aspectRatio(1.95f)
                     .background(CizgiColor.NavyDark),
             ) {
-                AsyncImage(
-                    model = story.imageUrl,
-                    contentDescription = story.title,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize(),
-                )
+                if (story.imageUrl.isNotBlank()) {
+                    AsyncImage(
+                        model = story.imageUrl,
+                        contentDescription = story.title,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                } else {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(
+                                Brush.linearGradient(
+                                    listOf(
+                                        MaterialTheme.colorScheme.primaryContainer,
+                                        MaterialTheme.colorScheme.surfaceVariant,
+                                    ),
+                                ),
+                            ),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            text = "ÇİZGİ · ${story.topic.uppercase()}",
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 15.sp,
+                            letterSpacing = 1.sp,
+                        )
+                    }
+                }
 
                 // Top Badges
                 Row(
@@ -158,30 +182,30 @@ fun MansetHeroCard(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(16.dp),
+                    .padding(12.dp),
             ) {
                 Text(
                     text = story.title,
                     style = MaterialTheme.typography.titleLarge.copy(
                         fontWeight = FontWeight.Bold,
-                        lineHeight = 26.sp,
+                        lineHeight = 24.sp,
                     ),
                     color = MaterialTheme.colorScheme.onSurface,
-                    maxLines = 3,
+                    maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
 
-                Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(6.dp))
 
                 Text(
                     text = story.summary,
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 2,
+                    maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
 
-                Spacer(Modifier.height(12.dp))
+                Spacer(Modifier.height(8.dp))
 
                 // Metadata Row
                 Row(
@@ -228,6 +252,99 @@ fun MansetHeroCard(
 }
 
 @Composable
+fun MansetCompactCard(
+    story: Story,
+    onClick: () -> Unit,
+    onSaveToggle: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Card(
+        shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = CardDefaults.outlinedCardBorder().copy(
+            brush = Brush.linearGradient(listOf(CizgiColor.BorderLight, CizgiColor.BorderLight.copy(alpha = 0.5f))),
+        ),
+        modifier = modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).clickable(onClick = onClick)
+            .testTag("manset_card_${story.id}"),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Surface(shape = RoundedCornerShape(4.dp), color = CizgiColor.Navy) {
+                        Text(
+                            text = "MANŞET",
+                            color = CizgiColor.Gold,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                        )
+                    }
+                    Text(
+                        text = "${story.publisher} · ${story.publishedAt}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                Text(
+                    text = story.title,
+                    style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold, lineHeight = 21.sp),
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = story.summary,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+
+            Box(
+                modifier = Modifier.size(width = 88.dp, height = 80.dp)
+                    .clip(RoundedCornerShape(9.dp)).background(CizgiColor.SurfaceVariant),
+            ) {
+                if (story.imageUrl.isNotBlank()) {
+                    AsyncImage(
+                        model = story.imageUrl,
+                        contentDescription = story.title,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                } else {
+                    Box(
+                        modifier = Modifier.fillMaxSize().background(
+                            Brush.linearGradient(listOf(MaterialTheme.colorScheme.primaryContainer, MaterialTheme.colorScheme.surfaceVariant)),
+                        ),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(story.topic.take(3).uppercase(), color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                    }
+                }
+                IconButton(onClick = onSaveToggle, modifier = Modifier.align(Alignment.TopEnd).size(34.dp)) {
+                    Icon(
+                        imageVector = if (story.isSaved) Icons.Filled.Bookmark else Icons.Outlined.BookmarkBorder,
+                        contentDescription = if (story.isSaved) "Kaydedildi" else "Kaydet",
+                        tint = if (story.isSaved) CizgiColor.Gold else Color.White,
+                        modifier = Modifier.size(19.dp),
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
 fun NewsFeedCard(
     story: Story,
     onClick: () -> Unit,
@@ -248,8 +365,8 @@ fun NewsFeedCard(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(14.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                .padding(10.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             // Left content
@@ -348,7 +465,7 @@ fun NewsFeedCard(
             // Right thumbnail image
             Box(
                 modifier = Modifier
-                    .size(width = 92.dp, height = 80.dp)
+                    .size(width = 76.dp, height = 64.dp)
                     .clip(RoundedCornerShape(8.dp))
                     .background(CizgiColor.SurfaceVariant),
             ) {
@@ -420,12 +537,12 @@ fun GununOzetiCard(
                             .background(CizgiColor.Navy),
                         contentAlignment = Alignment.Center,
                     ) {
-                        Text("5", color = CizgiColor.Gold, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                        Text(points.size.toString(), color = CizgiColor.Gold, fontWeight = FontWeight.Bold, fontSize = 12.sp)
                     }
 
                     Column {
                         Text(
-                            text = "GÜNÜN 5 MADDELİK ÖZETİ",
+                            text = "SON 24 SAATTEN ${points.size} ÖZET",
                             style = MaterialTheme.typography.labelMedium.copy(
                                 fontWeight = FontWeight.Bold,
                                 letterSpacing = 0.5.sp,
@@ -433,7 +550,7 @@ fun GununOzetiCard(
                             color = MaterialTheme.colorScheme.primary,
                         )
                         Text(
-                            text = "Gündemin en can alıcı noktaları",
+                            text = "Gündemde öne çıkanlar",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -555,15 +672,15 @@ fun KompaktHavaKarti(
                         modifier = Modifier
                             .size(8.dp)
                             .clip(CircleShape)
-                            .background(Color(0xFF2E7D32)),
+                            .background(if (weather.currentTempC == null) MaterialTheme.colorScheme.outline else Color(0xFF2E7D32)),
                     )
                     Text(
-                        text = "CANLI • WeatherAPI",
+                        text = if (weather.currentTempC == null) "YÜKLENİYOR" else "CANLI HAVA",
                         style = MaterialTheme.typography.labelSmall.copy(
                             fontWeight = FontWeight.SemiBold,
                             fontSize = 11.sp,
                         ),
-                        color = Color(0xFF2E7D32),
+                        color = if (weather.currentTempC == null) MaterialTheme.colorScheme.onSurfaceVariant else Color(0xFF2E7D32),
                     )
                 }
             }
@@ -610,6 +727,7 @@ fun KompaktHavaKarti(
                 ) {
                     Text(
                         text = when {
+                            weather.currentTempC == null -> "⏳"
                             weather.condition.contains("Güneşli", ignoreCase = true) -> "☀️"
                             weather.condition.contains("Yağmur", ignoreCase = true) -> "🌧️"
                             weather.condition.contains("Bulutlu", ignoreCase = true) -> "⛅"
@@ -621,7 +739,7 @@ fun KompaktHavaKarti(
                     )
                     Column {
                         Text(
-                            text = if (weather.lastUpdated == "Veri bekleniyor") "--°C" else "${weather.currentTempC}°C",
+                            text = weather.currentTempC?.let { "$it°C" } ?: "--°C",
                             style = MaterialTheme.typography.headlineMedium.copy(
                                 fontWeight = FontWeight.Bold,
                                 letterSpacing = (-0.5).sp,
@@ -641,7 +759,7 @@ fun KompaktHavaKarti(
                     verticalArrangement = Arrangement.spacedBy(2.dp),
                 ) {
                     Text(
-                        text = if (weather.lastUpdated == "Veri bekleniyor") "Hissedilen: --°C" else "Hissedilen: ${weather.feelsLikeC}°C",
+                        text = "Hissedilen: ${weather.feelsLikeC?.let { "$it°C" } ?: "—"}",
                         style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -669,7 +787,7 @@ fun KompaktHavaKarti(
                 ) {
                     Text("💧", fontSize = 12.sp)
                     Text(
-                        text = "Yağış: %${weather.rainChancePct}",
+                        text = "Yağış: ${weather.rainChancePct?.let { "%$it" } ?: "—"}",
                         style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Medium),
                         color = MaterialTheme.colorScheme.onSurface,
                     )
@@ -683,7 +801,7 @@ fun KompaktHavaKarti(
                 ) {
                     Text("💨", fontSize = 12.sp)
                     Text(
-                        text = "Rüzgar: ${weather.windKmh} km/s",
+                        text = "Rüzgar: ${weather.windKmh?.let { "$it km/s" } ?: "—"}",
                         style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Medium),
                         color = MaterialTheme.colorScheme.onSurface,
                     )
@@ -697,7 +815,7 @@ fun KompaktHavaKarti(
                 ) {
                     Text("🌫️", fontSize = 12.sp)
                     Text(
-                        text = "Nem: %${weather.humidityPct}",
+                        text = "Nem: ${weather.humidityPct?.let { "%$it" } ?: "—"}",
                         style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Medium),
                         color = MaterialTheme.colorScheme.onSurface,
                     )
@@ -736,7 +854,7 @@ fun MiniWeatherCard(
                 Column {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         Text(
-                            text = if (weather.lastUpdated == "Veri bekleniyor") "--°" else "${weather.currentTempC}°",
+                            text = weather.currentTempC?.let { "$it°" } ?: "--°",
                             style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
                             color = MaterialTheme.colorScheme.primary,
                         )
@@ -747,7 +865,7 @@ fun MiniWeatherCard(
                         )
                     }
                     Text(
-                        text = if (weather.lastUpdated == "Veri bekleniyor") weather.condition else "${weather.condition} · Yağış ihtimali %${weather.rainChancePct}",
+                        text = if (weather.rainChancePct == null) weather.condition else "${weather.condition} · Yağış ihtimali %${weather.rainChancePct}",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -827,9 +945,11 @@ fun MiniMatchCard(
             }
 
             Text(
-                text = "Maç Merkezi ›",
+                text = "Detay ›",
                 style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
                 color = CizgiColor.Blue,
+                maxLines = 1,
+                softWrap = false,
             )
         }
     }
@@ -1101,7 +1221,7 @@ fun ModernNewsCard(
 
                         if (story.sourceCount > 1) {
                             Text(
-                                text = "${story.sourceCount} kaynak tarafından doğrulandı",
+                                text = "${story.sourceCount} farklı kaynak",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = CizgiColor.Blue,
                             )
@@ -1212,51 +1332,59 @@ fun BistWatchlistCard(
             .testTag("bist_watchlist_widget"),
     ) {
         Column(modifier = Modifier.padding(14.dp)) {
+            val hasMarketData = financialAssets.isNotEmpty() || stocks.isNotEmpty()
+            val statusColor = if (hasMarketData) Color(0xFF15803D) else MaterialTheme.colorScheme.onSurfaceVariant
             // Header Row
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Row(
+                    modifier = Modifier.weight(1f),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
                     Box(
                         modifier = Modifier
-                            .size(10.dp)
+                            .size(8.dp)
                             .clip(CircleShape)
-                            .background(Color(0xFF16A34A)),
+                            .background(statusColor),
                     )
                     Text(
-                        text = "BORSA İSTANBUL & PİYASA TAKİBİ",
+                        text = "PİYASA TAKİBİ",
                         style = MaterialTheme.typography.labelSmall.copy(
                             fontWeight = FontWeight.Bold,
                             letterSpacing = 0.8.sp,
                         ),
                         color = MaterialTheme.colorScheme.primary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
                     )
                     Surface(
                         shape = RoundedCornerShape(4.dp),
-                        color = Color(0xFF16A34A).copy(alpha = 0.15f),
+                        color = statusColor.copy(alpha = 0.12f),
                     ) {
                         Text(
-                            text = "CANLI RETROFIT",
+                            text = if (hasMarketData) "GÜNCEL" else "BEKLENİYOR",
                             fontSize = 9.sp,
                             fontWeight = FontWeight.Bold,
-                            color = Color(0xFF16A34A),
-                            modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp),
+                            color = statusColor,
+                            maxLines = 1,
+                            modifier = Modifier.padding(horizontal = 5.dp, vertical = 3.dp),
                         )
                     }
                 }
 
                 Text(
-                    text = "Tüm Piyasalar ›",
-                    style = MaterialTheme.typography.labelMedium.copy(
+                    text = "Tüm piyasalar ›",
+                    style = MaterialTheme.typography.labelSmall.copy(
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.primary,
                     ),
-                    modifier = Modifier.clickable(onClick = onViewMarketsClick),
+                    maxLines = 1,
+                    softWrap = false,
+                    modifier = Modifier.padding(start = 8.dp).clickable(onClick = onViewMarketsClick),
                 )
             }
 
@@ -1402,3 +1530,4 @@ private fun BistMiniItem(
         }
     }
 }
+

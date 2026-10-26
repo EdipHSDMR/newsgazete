@@ -8,6 +8,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -15,6 +17,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Density
+import com.example.NotificationNavigation
 import com.example.data.CizgiRepository
 import com.example.ui.components.CizgiBottomBar
 import com.example.ui.components.CizgiScreen
@@ -44,7 +49,11 @@ private sealed interface SubScreen {
 }
 
 @Composable
-fun CizgiApp(modifier: Modifier = Modifier) {
+fun CizgiApp(
+    modifier: Modifier = Modifier,
+    notificationNavigation: NotificationNavigation? = null,
+    onNotificationNavigationHandled: (Long) -> Unit = {},
+) {
     val context = LocalContext.current
     val repository = remember { CizgiRepository.getInstance(context) }
     val preferences by repository.preferences.collectAsState()
@@ -57,9 +66,28 @@ fun CizgiApp(modifier: Modifier = Modifier) {
         else -> isSystemInDarkTheme()
     }
 
+    val systemDensity = LocalDensity.current
+    val fontScale = systemDensity.fontScale * if (preferences.fontSize == "large") 1.125f else 1f
+    CompositionLocalProvider(LocalDensity provides Density(systemDensity.density, fontScale)) {
     CizgiTheme(darkTheme = isDark) {
         var currentTab by remember { mutableStateOf(CizgiScreen.AKIS) }
         var subScreen by remember { mutableStateOf<SubScreen>(SubScreen.None) }
+
+        LaunchedEffect(notificationNavigation?.requestToken) {
+            val request = notificationNavigation ?: return@LaunchedEffect
+            when {
+                request.storyId != null -> subScreen = SubScreen.StoryDetail(request.storyId)
+                request.screen == "spor" -> {
+                    currentTab = CizgiScreen.SPOR
+                    subScreen = SubScreen.None
+                }
+                request.screen == "piyasa" -> {
+                    currentTab = CizgiScreen.PIYASA
+                    subScreen = SubScreen.None
+                }
+            }
+            onNotificationNavigationHandled(request.requestToken)
+        }
 
         // BackHandler for smooth hierarchical backstack
         BackHandler(enabled = subScreen != SubScreen.None || currentTab != CizgiScreen.AKIS) {
@@ -104,7 +132,7 @@ fun CizgiApp(modifier: Modifier = Modifier) {
                     topBar = {
                         if (subScreen == SubScreen.None) {
                             CizgiTopBar(
-                                weatherTemp = "${weather.currentTempC}°",
+                                weatherTemp = "${weather.currentTempC?.let { "$it°" } ?: "--°"}",
                                 weatherCity = weather.cityName,
                                 unreadNotificationCount = unreadCount,
                                 onWeatherClick = { subScreen = SubScreen.Weather },
@@ -210,5 +238,7 @@ fun CizgiApp(modifier: Modifier = Modifier) {
             }
         }
     }
+    }
 }
+
 

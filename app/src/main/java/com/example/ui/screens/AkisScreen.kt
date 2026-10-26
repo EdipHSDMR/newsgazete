@@ -62,12 +62,13 @@ import com.example.model.Story
 import com.example.ui.components.CityDistrictPickerDialog
 import com.example.ui.components.GununOzetiCard
 import com.example.ui.components.KompaktHavaKarti
-import com.example.ui.components.MansetHeroCard
+import com.example.ui.components.MansetCompactCard
 import com.example.ui.components.MiniMatchCard
 import com.example.ui.components.ModernNewsCard
 import com.example.ui.components.NewsFeedCard
 import com.example.ui.components.SkeletonCard
 import com.example.ui.theme.CizgiColor
+import com.example.util.NewsDiscoveryInsights
 
 @Composable
 fun AkisScreen(
@@ -85,6 +86,7 @@ fun AkisScreen(
     val matches by repository.matches.collectAsState()
     val prefs by repository.preferences.collectAsState()
     val isRefreshing by repository.isRefreshing.collectAsState()
+    val dailyDigestPoints by repository.dailyDigest.collectAsState()
     val bistStocks by repository.bistStocks.collectAsState()
     val financialAssets by repository.financialAssets.collectAsState()
 
@@ -95,31 +97,22 @@ fun AkisScreen(
     // City & District Dialog state
     var showCityPicker by remember { mutableStateOf(false) }
     // Visual card mode vs compact list
-    var isVisualCardMode by remember { mutableStateOf(true) }
+    var isVisualCardMode by remember { mutableStateOf(false) }
 
-    val categories = listOf(
-        "Tümü" to "⚡",
-        "Siyaset" to "🏛️",
-        "Ekonomi" to "📈",
-        "Teknoloji" to "💻",
-        "Gündem" to "🔥",
-        "Dünya" to "🌍",
-        "Spor" to "⚽",
-        "Kültür-Sanat" to "🎭",
-        "Sağlık" to "🩺",
-    )
+    val categories = remember(stories) {
+        buildList {
+            add("Tümü" to "⚡")
+            stories.asSequence()
+                .map { it.topic.trim() }
+                .filter(String::isNotBlank)
+                .distinct()
+                .forEach { topic -> add(topic to "📰") }
+        }
+    }
 
-    val hashtags = listOf(
-        "#TBMM",
-        "#MerkezBankası",
-        "#YapayZeka",
-        "#SüperLig",
-        "#Enflasyon",
-        "#BIST100",
-        "#AsgariÜcret",
-        "#Kabine",
-        "#Olimpiyat",
-    )
+    val hashtags = remember(stories) {
+        NewsDiscoveryInsights.trendingTerms(stories, limit = 12).map { "#$it" }
+    }
 
     // Filter stories dynamically
     val filteredStories = remember(stories, selectedTopic, selectedHashtag) {
@@ -148,16 +141,6 @@ fun AkisScreen(
         if (mansetStory != null) filteredStories.filter { it.id != mansetStory.id } else filteredStories
     }
 
-    val dailyDigestPoints = remember {
-        listOf(
-            "TCMB Para Politikası Kurulu politika faizini yüzde 50'de sabit tuttu.",
-            "TÜBİTAK öncülüğünde Türkiye'nin ilk açık kaynak yapay zeka çip mimarisi tanıtıldı.",
-            "Trendyol Süper Lig'de lider Galatasaray ve Fenerbahçe haftayı galibiyetle kapattı.",
-            "Birleşmiş Milletler İklim Zirvesi'nde yenilenebilir enerji mutabakatı imzalandı.",
-            "Milli okçumuz Mete Gazoz Dünya Kupası finallerinde altın madalyanın sahibi oldu.",
-        )
-    }
-
     val nextMatch = remember(matches) {
         matches.firstOrNull { it.status == com.example.model.MatchStatus.LIVE }
             ?: matches.firstOrNull { it.status == com.example.model.MatchStatus.UPCOMING }
@@ -165,12 +148,10 @@ fun AkisScreen(
     }
 
     fun shareStory(story: Story) {
+        val sourceUrl = story.canonicalUrl.takeIf { it.startsWith("https://", ignoreCase = true) }
         val sendIntent = Intent().apply {
             action = Intent.ACTION_SEND
-            putExtra(
-                Intent.EXTRA_TEXT,
-                "${story.title}\n\n${story.summary}\n\nÇizgi üzerinden okundu: ${story.canonicalUrl.ifBlank { "https://cizgi.app" }}"
-            )
+            putExtra(Intent.EXTRA_TEXT, listOfNotNull(story.title, story.summary, sourceUrl).joinToString("\n\n"))
             type = "text/plain"
         }
         context.startActivity(Intent.createChooser(sendIntent, "Haberi Paylaş"))
@@ -264,58 +245,60 @@ fun AkisScreen(
                 }
 
                 // Trending Hashtag Quick Filter Row
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState())
-                        .padding(start = 16.dp, end = 16.dp, bottom = 8.dp),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        text = "Etiketler:",
-                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                        color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.padding(end = 2.dp)
-                    )
+                if (hashtags.isNotEmpty()) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState())
+                            .padding(start = 16.dp, end = 16.dp, bottom = 8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = "Gündemde:",
+                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.padding(end = 2.dp)
+                        )
 
-                    hashtags.forEach { tag ->
-                        val isTagSelected = selectedHashtag == tag
-                        Surface(
-                            shape = RoundedCornerShape(12.dp),
-                            color = if (isTagSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(12.dp))
-                                .clickable {
-                                    selectedHashtag = if (isTagSelected) null else tag
-                                }
-                        ) {
-                            Text(
-                                text = tag,
-                                fontSize = 11.5.sp,
-                                fontWeight = if (isTagSelected) FontWeight.Bold else FontWeight.Normal,
-                                color = if (isTagSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                            )
-                        }
-                    }
-
-                    if (selectedHashtag != null) {
-                        Surface(
-                            shape = CircleShape,
-                            color = MaterialTheme.colorScheme.errorContainer,
-                            modifier = Modifier
-                                .clip(CircleShape)
-                                .clickable { selectedHashtag = null }
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Clear,
-                                contentDescription = "Filtreyi Temizle",
-                                tint = MaterialTheme.colorScheme.error,
+                        hashtags.forEach { tag ->
+                            val isTagSelected = selectedHashtag == tag
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = if (isTagSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
                                 modifier = Modifier
-                                    .size(20.dp)
-                                    .padding(3.dp)
-                            )
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .clickable {
+                                        selectedHashtag = if (isTagSelected) null else tag
+                                    }
+                            ) {
+                                Text(
+                                    text = tag,
+                                    fontSize = 11.5.sp,
+                                    fontWeight = if (isTagSelected) FontWeight.Bold else FontWeight.Normal,
+                                    color = if (isTagSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                )
+                            }
+                        }
+
+                        if (selectedHashtag != null) {
+                            Surface(
+                                shape = CircleShape,
+                                color = MaterialTheme.colorScheme.errorContainer,
+                                modifier = Modifier
+                                    .clip(CircleShape)
+                                    .clickable { selectedHashtag = null }
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Clear,
+                                    contentDescription = "Filtreyi Temizle",
+                                    tint = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier
+                                        .size(20.dp)
+                                        .padding(3.dp)
+                                )
+                            }
                         }
                     }
                 }
@@ -377,7 +360,7 @@ fun AkisScreen(
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             // Loading Skeletons
-            if (isRefreshing) {
+            if (isRefreshing && filteredStories.isEmpty()) {
                 items(3) { SkeletonCard() }
             } else {
                 // Canlı BIST 100 ve Emtia Takip Listesi Widget'ı (Retrofit Servisli)
@@ -389,7 +372,7 @@ fun AkisScreen(
                     )
                 }
 
-                // Haber akışının üst kısmında kullanıcının konumuna göre canlı hava durumu kartı
+                // Akışta hızlı hava özeti; ayrıntılar haftalık tahmin ekranında.
                 item(key = "top_compact_weather") {
                     val displayName = if (!prefs.selectedDistrict.isNullOrBlank()) {
                         "${prefs.selectedDistrict}, ${prefs.selectedCity}"
@@ -397,130 +380,58 @@ fun AkisScreen(
                         prefs.selectedCity
                     }
 
+                    val emoji = when {
+                        weather.currentTempC == null -> "⏳"
+                        weather.condition.contains("Güneş", ignoreCase = true) -> "☀️"
+                        weather.condition.contains("Yağmur", ignoreCase = true) -> "🌧️"
+                        weather.condition.contains("Kar", ignoreCase = true) -> "❄️"
+                        weather.condition.contains("Bulut", ignoreCase = true) -> "⛅"
+                        else -> "🌤️"
+                    }
                     Card(
-                        shape = RoundedCornerShape(16.dp),
+                        shape = RoundedCornerShape(14.dp),
                         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(16.dp))
-                            .clickable(onClick = onWeatherClick)
-                            .testTag("kompakt_hava_karti"),
+                        modifier = Modifier.fillMaxWidth().clickable(onClick = onWeatherClick).testTag("kompakt_hava_karti"),
                     ) {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(14.dp),
-                            verticalArrangement = Arrangement.spacedBy(10.dp),
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
                         ) {
-                            // Top Row: Location with Pin + District Picker Button
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceBetween,
+                            Surface(
+                                shape = RoundedCornerShape(18.dp),
+                                color = MaterialTheme.colorScheme.primaryContainer,
+                                modifier = Modifier.clickable { showCityPicker = true },
                             ) {
-                                Surface(
-                                    shape = RoundedCornerShape(20.dp),
-                                    color = MaterialTheme.colorScheme.primaryContainer,
-                                    modifier = Modifier.clickable { showCityPicker = true }
-                                ) {
-                                    Row(
-                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(5.dp),
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Default.LocationOn,
-                                            contentDescription = "Şehir ve İlçe Değiştir",
-                                            tint = MaterialTheme.colorScheme.primary,
-                                            modifier = Modifier.size(16.dp),
-                                        )
-                                        Text(
-                                            text = displayName,
-                                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
-                                            color = MaterialTheme.colorScheme.primary,
-                                        )
-                                        Text(
-                                            text = "▾",
-                                            fontSize = 12.sp,
-                                            color = MaterialTheme.colorScheme.primary,
-                                        )
-                                    }
-                                }
-
                                 Row(
+                                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 7.dp),
                                     verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp),
                                 ) {
-                                    Box(
-                                        modifier = Modifier
-                                            .size(8.dp)
-                                            .clip(CircleShape)
-                                            .background(Color(0xFF2E7D32)),
-                                    )
+                                    Icon(Icons.Default.LocationOn, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(15.dp))
                                     Text(
-                                        text = "CANLI HAVA",
-                                        style = MaterialTheme.typography.labelSmall.copy(
-                                            fontWeight = FontWeight.Bold,
-                                            fontSize = 10.5.sp,
-                                        ),
-                                        color = Color(0xFF2E7D32),
+                                        text = displayName,
+                                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
+                                        color = MaterialTheme.colorScheme.primary,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
                                     )
                                 }
                             }
-
-                            // Temperature and Summary Row
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                            ) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                                ) {
-                                    val emoji = when {
-                                        weather.condition.contains("Güneş", ignoreCase = true) -> "☀️"
-                                        weather.condition.contains("Yağmur", ignoreCase = true) -> "🌧️"
-                                        weather.condition.contains("Kar", ignoreCase = true) -> "❄️"
-                                        weather.condition.contains("Bulut", ignoreCase = true) -> "⛅"
-                                        else -> "🌤️"
-                                    }
-                                    Text(emoji, fontSize = 32.sp)
-
-                                    Column {
-                                        Text(
-                                            text = "${weather.currentTempC}°",
-                                            fontSize = 28.sp,
-                                            fontWeight = FontWeight.Black,
-                                            color = MaterialTheme.colorScheme.onSurface,
-                                        )
-                                        Text(
-                                            text = weather.condition,
-                                            style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        )
-                                    }
-                                }
-
-                                Column(horizontalAlignment = Alignment.End) {
-                                    Text(
-                                        text = "Hissedilen: ${weather.feelsLikeC}°",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
-                                    Text(
-                                        text = "Nem: %${weather.humidityPct} · Rüzgar: ${weather.windKmh} km/s",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
-                                    Text(
-                                        text = "Haftalık Tahmin ›",
-                                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                                        color = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.padding(top = 2.dp)
-                                    )
-                                }
+                            Spacer(Modifier.weight(1f))
+                            Text(emoji, fontSize = 22.sp)
+                            Column(horizontalAlignment = Alignment.End) {
+                                Text(
+                                    text = weather.currentTempC?.let { "$it°" } ?: "--°",
+                                    style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                )
+                                Text(
+                                    text = weather.condition.takeIf(String::isNotBlank) ?: "Yükleniyor",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                )
                             }
                         }
                     }
@@ -528,8 +439,10 @@ fun AkisScreen(
 
                 // Yalnızca "Tümü" veya "Gündem" sekmesindeyken Günün Özeti ve Canlı Spor Maçı Hızlı Bakışı
                 if (selectedTopic == "Tümü" || selectedTopic == "Gündem") {
+                    if (dailyDigestPoints.isNotEmpty()) {
                     item(key = "daily_digest") {
                         GununOzetiCard(points = dailyDigestPoints)
+                    }
                     }
 
                     if (nextMatch != null) {
@@ -637,7 +550,7 @@ fun AkisScreen(
                 // Manşet Kartı (ilk haber)
                 if (mansetStory != null) {
                     item(key = "manset_${mansetStory.id}") {
-                        MansetHeroCard(
+                        MansetCompactCard(
                             story = mansetStory,
                             onClick = { onStoryClick(mansetStory.id) },
                             onSaveToggle = { repository.toggleSaveStory(mansetStory) },
@@ -663,57 +576,25 @@ fun AkisScreen(
                     }
                 }
 
-                if (stories.size < newsArchiveCount) {
+                if (stories.size < newsArchiveCount || repository.hasMorePressArchivePages) {
                     item(key = "load_older_news") {
                         TextButton(
                             onClick = { repository.loadOlderNews() },
                             modifier = Modifier.fillMaxWidth(),
                         ) {
-                            Text("Daha eski haberleri yükle · ${stories.size}/$newsArchiveCount")
-                        }
-                    }
-                }
-
-                // Kesintisiz Canlı Akış & Arşiv Bilgilendirme Rozeti
-                item(key = "continuous_stream_info") {
-                    Card(
-                        shape = RoundedCornerShape(14.dp),
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(top = 10.dp),
-                    ) {
-                        Column(
-                            modifier = Modifier.padding(16.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.spacedBy(6.dp),
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                            ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(8.dp)
-                                        .clip(CircleShape)
-                                        .background(Color(0xFF16A34A)),
-                                )
-                                Text(
-                                    text = "BU CİHAZDAKİ HABER ARŞİVİ · $newsArchiveCount HABER",
-                                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, letterSpacing = 0.8.sp),
-                                    color = Color(0xFF16A34A),
-                                )
-                            }
                             Text(
-                                text = "Kaynak RSS akışları otomatik güncellenir. Haber başlığı ve kısa özeti cihazında saklanır; kaynak makaleyi okumak için haber bağlantısını aç.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                                if (stories.size < newsArchiveCount) {
+                                    "Daha eski haberleri yükle · ${stories.size}/$newsArchiveCount"
+                                } else {
+                                    "Daha eski haberleri yükle"
+                                }
                             )
                         }
                     }
                 }
+
             }
         }
     }
 }
+

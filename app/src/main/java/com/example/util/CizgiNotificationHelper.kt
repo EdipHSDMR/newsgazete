@@ -14,9 +14,9 @@ import com.example.MainActivity
 
 object CizgiNotificationHelper {
 
-    const val CHANNEL_BREAKING = "cizgi_breaking_news"
-    const val CHANNEL_SPORTS = "cizgi_sports_goals"
-    const val CHANNEL_MARKETS = "cizgi_market_alerts"
+    const val CHANNEL_BREAKING = "cizgi_breaking_news_v2"
+    const val CHANNEL_SPORTS = "cizgi_sports_goals_v2"
+    const val CHANNEL_MARKETS = "cizgi_market_alerts_v2"
 
     fun createNotificationChannels(context: Context) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -27,33 +27,33 @@ object CizgiNotificationHelper {
             val breakingChannel = NotificationChannel(
                 CHANNEL_BREAKING,
                 "Son Dakika Haberleri",
-                NotificationManager.IMPORTANCE_HIGH
+                NotificationManager.IMPORTANCE_LOW
             ).apply {
-                description = "Kritik son dakika gelişmeleri ve manşet bildirimleri"
-                enableVibration(true)
-                setShowBadge(true)
+                description = "Açtığında önemli son dakika haberlerini gösterir"
+                enableVibration(false)
+                setShowBadge(false)
             }
 
             // 2. Canlı Spor & Gol Kanalı
             val sportsChannel = NotificationChannel(
                 CHANNEL_SPORTS,
                 "Canlı Gol ve Skor Bildirimleri",
-                NotificationManager.IMPORTANCE_HIGH
+                NotificationManager.IMPORTANCE_LOW
             ).apply {
-                description = "Takip ettiğiniz maçlardaki goller, düdükler ve canlı sonuçlar"
-                enableVibration(true)
-                setShowBadge(true)
+                description = "Takip ettiğin maçların başlangıç ve gol bildirimleri"
+                enableVibration(false)
+                setShowBadge(false)
             }
 
             // 3. Piyasa ve Gündem Özeti Kanalı
             val marketsChannel = NotificationChannel(
                 CHANNEL_MARKETS,
                 "Piyasa ve Günün Özeti",
-                NotificationManager.IMPORTANCE_DEFAULT
+                NotificationManager.IMPORTANCE_LOW
             ).apply {
-                description = "Döviz, altın, borsa kapanışları ve günün 5 maddelik özeti"
+                description = "Piyasa ve gündem bildirimleri"
                 enableVibration(false)
-                setShowBadge(true)
+                setShowBadge(false)
             }
 
             notificationManager.createNotificationChannels(listOf(breakingChannel, sportsChannel, marketsChannel))
@@ -87,7 +87,7 @@ object CizgiNotificationHelper {
 
         val pendingIntent = PendingIntent.getActivity(
             context,
-            (System.currentTimeMillis() % 10000).toInt(),
+            storyId?.hashCode() ?: 1001,
             intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
@@ -97,9 +97,10 @@ object CizgiNotificationHelper {
             .setContentTitle("⚡ SON DAKİKA · $title")
             .setContentText(body)
             .setStyle(NotificationCompat.BigTextStyle().bigText(body))
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
             .setCategory(NotificationCompat.CATEGORY_EVENT)
             .setAutoCancel(true)
+            .setOnlyAlertOnce(true)
             .setContentIntent(pendingIntent)
             .build()
 
@@ -124,7 +125,7 @@ object CizgiNotificationHelper {
 
         val pendingIntent = PendingIntent.getActivity(
             context,
-            (System.currentTimeMillis() % 10000).toInt() + 1,
+            ("goal:$matchTitle:$minute:$player".hashCode()),
             intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
@@ -137,14 +138,50 @@ object CizgiNotificationHelper {
             .setContentTitle(notifTitle)
             .setContentText(notifBody)
             .setStyle(NotificationCompat.BigTextStyle().bigText(notifBody))
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
             .setCategory(NotificationCompat.CATEGORY_STATUS)
             .setAutoCancel(true)
+            .setOnlyAlertOnce(true)
             .setContentIntent(pendingIntent)
             .build()
 
         try {
             NotificationManagerCompat.from(context).notify(2001, notification)
+        } catch (_: SecurityException) {}
+    }
+
+    fun sendMatchStartNotification(context: Context, matchTitle: String, competition: String, sportType: String) {
+        if (!hasNotificationPermission(context)) return
+        val intent = Intent(context, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            putExtra("extra_screen", "spor")
+        }
+        val pendingIntent = PendingIntent.getActivity(
+            context,
+            ("start:$matchTitle".hashCode()),
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        val icon = when (sportType) {
+            "BASKETBOL" -> "🏀"
+            "VOLEYBOL" -> "🏐"
+            else -> "⚽"
+        }
+        val title = "$icon Maç başladı"
+        val body = "$competition · $matchTitle"
+        val notification = NotificationCompat.Builder(context, CHANNEL_SPORTS)
+            .setSmallIcon(android.R.drawable.ic_media_play)
+            .setContentTitle(title)
+            .setContentText(body)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(body))
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setCategory(NotificationCompat.CATEGORY_EVENT)
+            .setAutoCancel(true)
+            .setOnlyAlertOnce(true)
+            .setContentIntent(pendingIntent)
+            .build()
+        try {
+            NotificationManagerCompat.from(context).notify(2100 + (matchTitle.hashCode() and 0x7fff), notification)
         } catch (_: SecurityException) {}
     }
 
@@ -162,7 +199,7 @@ object CizgiNotificationHelper {
 
         val pendingIntent = PendingIntent.getActivity(
             context,
-            (System.currentTimeMillis() % 10000).toInt() + 2,
+            3001,
             intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
@@ -172,8 +209,9 @@ object CizgiNotificationHelper {
             .setContentTitle("📈 $title")
             .setContentText(body)
             .setStyle(NotificationCompat.BigTextStyle().bigText(body))
-            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
             .setAutoCancel(true)
+            .setOnlyAlertOnce(true)
             .setContentIntent(pendingIntent)
             .build()
 
@@ -182,3 +220,4 @@ object CizgiNotificationHelper {
         } catch (_: SecurityException) {}
     }
 }
+
