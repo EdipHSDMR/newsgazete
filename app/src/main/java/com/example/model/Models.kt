@@ -94,6 +94,9 @@ data class LineupPlayer(
     val jerseyNumber: String = "",
     val position: String = "",
     val starter: Boolean = false,
+    val imageUrl: String = "",
+    val formationRow: Int? = null,
+    val formationColumn: Int? = null,
 )
 
 data class TeamLineup(

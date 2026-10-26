@@ -10,9 +10,11 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -21,6 +23,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -36,8 +39,6 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.outlined.Notifications
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
@@ -65,14 +66,20 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.zIndex
 import com.example.data.CizgiRepository
 import com.example.model.LeagueStanding
+import com.example.model.LineupPlayer
 import com.example.model.MatchLineups
 import com.example.model.MatchEvent
 import com.example.model.MatchStatus
@@ -81,6 +88,7 @@ import com.example.model.TopScorer
 import com.example.ui.theme.CizgiColor
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
+import coil.compose.AsyncImage
 import java.time.LocalDate
 
 @Composable
@@ -147,10 +155,6 @@ fun SporScreen(
             else -> today.year - 1
         }
     }
-    var selectedSeasonYear by remember(selectedSport, selectedCompetition) { mutableIntStateOf(currentSeasonYear) }
-    var seasonMenuExpanded by remember { mutableStateOf(false) }
-    val hasSeasonArchive = selectedSport == "FUTBOL" || selectedCompetition in setOf("EuroLeague", "NBA", "WNBA", "NBA G League")
-    val availableSeasons = if (hasSeasonArchive) (currentSeasonYear downTo (currentSeasonYear - 8)).toList() else listOf(currentSeasonYear)
     var selectedTab by remember { mutableIntStateOf(0) }
     val tabs = if (selectedSport == "BASKETBOL") {
         listOf("Canlı Skorlar", "Puan Durumu", "Sayı Liderleri", "Tüm Maçlar", "Canlı Aksiyonlar")
@@ -163,31 +167,30 @@ fun SporScreen(
     val matchAlertIds by repository.matchAlertIds.collectAsState()
     val matchAlerts = remember(matchAlertIds) { matchAlertIds.associateWith { true } }
 
-    LaunchedEffect(selectedCompetition, selectedSport, selectedSeasonYear) {
+    LaunchedEffect(selectedCompetition, selectedSport, currentSeasonYear) {
         while (isActive) {
-            repository.fetchLiveSports(selectedCompetition, selectedSport, selectedSeasonYear)
-            if (selectedSeasonYear != currentSeasonYear) break
+            repository.fetchLiveSports(selectedCompetition, selectedSport, currentSeasonYear)
             delay(60_000L)
         }
     }
 
-    val snapshotMatches = if (sportsSnapshot.competition == selectedCompetition && sportsSnapshot.sportType == selectedSport && sportsSnapshot.seasonYear == selectedSeasonYear) {
+    val snapshotMatches = if (sportsSnapshot.competition == selectedCompetition && sportsSnapshot.sportType == selectedSport && sportsSnapshot.seasonYear == currentSeasonYear) {
         sportsSnapshot.matches
     } else emptyList()
-    val standings = if (sportsSnapshot.competition == selectedCompetition && sportsSnapshot.sportType == selectedSport && sportsSnapshot.seasonYear == selectedSeasonYear) {
+    val standings = if (sportsSnapshot.competition == selectedCompetition && sportsSnapshot.sportType == selectedSport && sportsSnapshot.seasonYear == currentSeasonYear) {
         sportsSnapshot.standings
     } else emptyList()
-    val topScorers = if (sportsSnapshot.competition == selectedCompetition && sportsSnapshot.sportType == selectedSport && sportsSnapshot.seasonYear == selectedSeasonYear) {
+    val topScorers = if (sportsSnapshot.competition == selectedCompetition && sportsSnapshot.sportType == selectedSport && sportsSnapshot.seasonYear == currentSeasonYear) {
         sportsSnapshot.topScorers
     } else emptyList()
     val sportsLoading = sportsSnapshot.competition == selectedCompetition &&
-        sportsSnapshot.sportType == selectedSport && sportsSnapshot.seasonYear == selectedSeasonYear && sportsSnapshot.isLoading
-    val sportsError = if (sportsSnapshot.competition == selectedCompetition && sportsSnapshot.sportType == selectedSport && sportsSnapshot.seasonYear == selectedSeasonYear) {
+        sportsSnapshot.sportType == selectedSport && sportsSnapshot.seasonYear == currentSeasonYear && sportsSnapshot.isLoading
+    val sportsError = if (sportsSnapshot.competition == selectedCompetition && sportsSnapshot.sportType == selectedSport && sportsSnapshot.seasonYear == currentSeasonYear) {
         sportsSnapshot.errorMessage
     } else ""
     val leaderLoadingMessage = if (selectedSport == "BASKETBOL") "Sayı liderleri yükleniyor." else "Gol krallığı verisi yükleniyor."
     val scorerMessage = when {
-        sportsSnapshot.competition != selectedCompetition || sportsSnapshot.sportType != selectedSport || sportsSnapshot.seasonYear != selectedSeasonYear -> leaderLoadingMessage
+        sportsSnapshot.competition != selectedCompetition || sportsSnapshot.sportType != selectedSport || sportsSnapshot.seasonYear != currentSeasonYear -> leaderLoadingMessage
         sportsSnapshot.isLoading && topScorers.isEmpty() -> leaderLoadingMessage
         topScorers.isNotEmpty() -> ""
         else -> sportsSnapshot.scorerMessage.ifBlank {
@@ -233,7 +236,7 @@ fun SporScreen(
 
                     // Refresh Button
                     IconButton(
-                        onClick = { repository.fetchLiveSports(selectedCompetition, selectedSport, selectedSeasonYear) },
+                        onClick = { repository.fetchLiveSports(selectedCompetition, selectedSport, currentSeasonYear) },
                         modifier = Modifier.size(36.dp),
                     ) {
                         Icon(
@@ -302,32 +305,6 @@ fun SporScreen(
                             ),
                             shape = RoundedCornerShape(16.dp),
                         )
-                    }
-                }
-
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 2.dp),
-                    horizontalArrangement = Arrangement.End,
-                ) {
-                    Box {
-                        FilterChip(
-                            selected = selectedSeasonYear != currentSeasonYear,
-                            onClick = { seasonMenuExpanded = true },
-                            label = {
-                                val seasonLabel = if (selectedSport == "BASKETBOL" && selectedCompetition == "WNBA") {
-                                    "$selectedSeasonYear sezonu"
-                                } else "$selectedSeasonYear/${(selectedSeasonYear + 1) % 100}"
-                                Text("Sezon $seasonLabel", fontSize = 12.sp)
-                            },
-                        )
-                        DropdownMenu(expanded = seasonMenuExpanded, onDismissRequest = { seasonMenuExpanded = false }) {
-                            availableSeasons.forEach { year ->
-                                DropdownMenuItem(
-                                    text = { Text(if (selectedSport == "BASKETBOL" && selectedCompetition == "WNBA") "$year sezonu" else "$year/${(year + 1) % 100}") },
-                                    onClick = { selectedSeasonYear = year; seasonMenuExpanded = false },
-                                )
-                            }
-                        }
                     }
                 }
 
@@ -904,6 +881,7 @@ fun GlowingMatchCard(
                                 LinearProgressIndicator(modifier = Modifier.width(28.dp))
                                 Text("Takım kadroları yükleniyor…", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
+                            lineups != null && match.sportType != "BASKETBOL" -> FootballLineupView(lineups!!)
                             lineups != null -> listOf(lineups!!.home, lineups!!.away).forEach { team ->
                                 Column(
                                     modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp))
@@ -911,14 +889,11 @@ fun GlowingMatchCard(
                                     verticalArrangement = Arrangement.spacedBy(4.dp),
                                 ) {
                                     Text(team.team, style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold))
-                                    val starters = team.players.filter { it.starter }
-                                    val reserves = team.players.filterNot { it.starter }
-                                    (starters + reserves).forEach { player ->
+                                    team.players.forEach { player ->
                                         Text(
                                             text = buildString {
                                                 if (player.jerseyNumber.isNotBlank()) append("#${player.jerseyNumber}  ")
                                                 append(player.name)
-                                                if (player.position.isNotBlank()) append(" · ${player.position}")
                                             },
                                             style = MaterialTheme.typography.bodySmall,
                                             color = MaterialTheme.colorScheme.onSurface,
@@ -1046,6 +1021,137 @@ fun GlowingMatchCard(
                     tint = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.size(16.dp),
                 )
+            }
+        }
+    }
+}
+
+@Composable
+private fun FootballLineupView(lineups: MatchLineups) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text(lineups.home.team, style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(lineups.away.team, style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold), maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.End)
+        }
+
+        BoxWithConstraints(
+            modifier = Modifier.fillMaxWidth().height(340.dp).clip(RoundedCornerShape(12.dp)),
+        ) {
+            Canvas(Modifier.fillMaxSize()) {
+                val lineColor = Color.White.copy(alpha = 0.7f)
+                drawRect(brush = Brush.verticalGradient(listOf(Color(0xFF287A43), Color(0xFF21683A))))
+                drawRect(lineColor, topLeft = Offset(7.dp.toPx(), 7.dp.toPx()), size = Size(size.width - 14.dp.toPx(), size.height - 14.dp.toPx()), style = Stroke(1.5.dp.toPx()))
+                drawLine(lineColor, Offset(7.dp.toPx(), size.height / 2f), Offset(size.width - 7.dp.toPx(), size.height / 2f), strokeWidth = 1.dp.toPx())
+                drawCircle(lineColor, radius = 32.dp.toPx(), center = Offset(size.width / 2f, size.height / 2f), style = Stroke(1.dp.toPx()))
+                val boxWidth = size.width * 0.56f
+                val boxHeight = size.height * 0.12f
+                drawRect(lineColor, Offset((size.width - boxWidth) / 2f, 7.dp.toPx()), Size(boxWidth, boxHeight), style = Stroke(1.dp.toPx()))
+                drawRect(lineColor, Offset((size.width - boxWidth) / 2f, size.height - 7.dp.toPx() - boxHeight), Size(boxWidth, boxHeight), style = Stroke(1.dp.toPx()))
+                val goalWidth = size.width * 0.24f
+                val goalHeight = size.height * 0.035f
+                drawRect(lineColor, Offset((size.width - goalWidth) / 2f, 7.dp.toPx()), Size(goalWidth, goalHeight), style = Stroke(1.dp.toPx()))
+                drawRect(lineColor, Offset((size.width - goalWidth) / 2f, size.height - 7.dp.toPx() - goalHeight), Size(goalWidth, goalHeight), style = Stroke(1.dp.toPx()))
+            }
+
+            val homePlayers = lineups.home.players.filter { it.starter }
+            val awayPlayers = lineups.away.players.filter { it.starter }
+            if (homePlayers.isEmpty() && awayPlayers.isEmpty()) {
+                Text(
+                    "İlk 11 saha dizilişi sağlayıcıdan henüz gelmedi.",
+                    modifier = Modifier.align(Alignment.Center).padding(16.dp),
+                    color = Color.White,
+                    style = MaterialTheme.typography.bodySmall,
+                    textAlign = TextAlign.Center,
+                )
+            } else {
+                PitchPlayers(homePlayers, isHome = true, fieldWidth = maxWidth, fieldHeight = maxHeight)
+                PitchPlayers(awayPlayers, isHome = false, fieldWidth = maxWidth, fieldHeight = maxHeight)
+            }
+        }
+
+        val homeReserves = lineups.home.players.filterNot { it.starter }
+        val awayReserves = lineups.away.players.filterNot { it.starter }
+        if (homeReserves.isNotEmpty()) BenchPlayers("${lineups.home.team} · Yedekler", homeReserves)
+        if (awayReserves.isNotEmpty()) BenchPlayers("${lineups.away.team} · Yedekler", awayReserves)
+    }
+}
+
+@Composable
+private fun PitchPlayers(players: List<LineupPlayer>, isHome: Boolean, fieldWidth: androidx.compose.ui.unit.Dp, fieldHeight: androidx.compose.ui.unit.Dp) {
+    val roleRows = if (isHome) listOf(0.08f, 0.20f, 0.32f, 0.42f) else listOf(0.92f, 0.80f, 0.68f, 0.58f)
+    val groups = players.groupBy(::footballRole)
+    groups.forEach { (role, group) ->
+        group.forEachIndexed { index, player ->
+            val x = if (group.size == 1) 0.5f else 0.12f + index * (0.76f / (group.size - 1))
+            Column(
+                modifier = Modifier
+                    .offset(x = fieldWidth * x - 28.dp, y = fieldHeight * roleRows[role] - 34.dp)
+                    .width(56.dp)
+                    .zIndex(1f),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(1.dp),
+            ) {
+                Box(
+                    modifier = Modifier.size(27.dp).clip(CircleShape)
+                        .background(Color(0xFF18324B)).border(1.5.dp, Color.White, CircleShape),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    if (player.imageUrl.startsWith("https://")) {
+                        AsyncImage(
+                            model = player.imageUrl,
+                            contentDescription = "${player.name} fotoğrafı",
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.fillMaxSize().clip(CircleShape),
+                        )
+                    } else {
+                        Text(player.jerseyNumber.ifBlank { player.name.take(1).uppercase() }, color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+                Text(
+                    text = player.name,
+                    modifier = Modifier.clip(RoundedCornerShape(4.dp)).background(Color(0xD9000000)).padding(horizontal = 3.dp, vertical = 1.dp),
+                    color = Color.White,
+                    fontSize = 8.sp,
+                    lineHeight = 9.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    textAlign = TextAlign.Center,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+    }
+}
+
+private fun footballRole(player: LineupPlayer): Int {
+    val position = player.position.uppercase()
+    return when {
+        position in setOf("GK", "G") || position.contains("KEEPER") -> 0
+        position.startsWith("D") || position in setOf("CB", "LB", "RB", "WB", "SW") -> 1
+        position.startsWith("F") || position in setOf("ST", "CF", "LW", "RW", "FW") -> 3
+        else -> 2
+    }
+}
+
+@Composable
+private fun BenchPlayers(title: String, players: List<LineupPlayer>) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(title, style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold), color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Row(modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            players.forEach { player ->
+                Column(modifier = Modifier.width(54.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Box(
+                        modifier = Modifier.size(30.dp).clip(CircleShape).background(MaterialTheme.colorScheme.surfaceVariant),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        if (player.imageUrl.startsWith("https://")) {
+                            AsyncImage(player.imageUrl, contentDescription = "${player.name} fotoğrafı", contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize().clip(CircleShape))
+                        } else {
+                            Text(player.jerseyNumber.ifBlank { player.name.take(1).uppercase() }, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                    Text(player.name, fontSize = 8.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
+                }
             }
         }
     }

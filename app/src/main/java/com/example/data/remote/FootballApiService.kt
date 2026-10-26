@@ -329,7 +329,16 @@ class FootballApiService(
                             "${player.optString("firstname")} ${player.optString("lastname")}".trim()
                         }
                         if (name.isBlank()) continue
-                        players += LineupPlayer(name, player.optString("number"), player.optString("pos"), starter)
+                        val grid = player.optString("grid").split(':').mapNotNull(String::toIntOrNull)
+                        players += LineupPlayer(
+                            name = name,
+                            jerseyNumber = player.optString("number"),
+                            position = player.optString("pos"),
+                            starter = starter,
+                            imageUrl = player.optString("photo"),
+                            formationRow = grid.getOrNull(0),
+                            formationColumn = grid.getOrNull(1),
+                        )
                     }
                 }
                 TeamLineup(team, players)
@@ -354,7 +363,13 @@ class FootballApiService(
                     val athlete = entry.optJSONObject("athlete") ?: return@mapNotNull null
                     val name = athlete.optString("displayName").ifBlank { athlete.optString("fullName") }
                     if (name.isBlank()) return@mapNotNull null
-                    LineupPlayer(name, athlete.optString("jersey"), athlete.optJSONObject("position")?.optString("abbreviation").orEmpty(), entry.optBoolean("starter"))
+                    LineupPlayer(
+                        name = name,
+                        jerseyNumber = athlete.optString("jersey"),
+                        position = athlete.optJSONObject("position")?.optString("abbreviation").orEmpty(),
+                        starter = entry.optBoolean("starter"),
+                        imageUrl = lineupAthleteImage(athlete),
+                    )
                 }
                 if (team.isBlank()) null else TeamLineup(team, players)
             }
@@ -369,12 +384,25 @@ class FootballApiService(
                     val athlete = entry.optJSONObject("athlete") ?: return@mapNotNull null
                     val name = athlete.optString("displayName").ifBlank { athlete.optString("fullName") }
                     if (name.isBlank()) return@mapNotNull null
-                    LineupPlayer(name, entry.optString("jersey"), entry.optJSONObject("position")?.optString("abbreviation").orEmpty(), entry.optBoolean("starter"))
+                    LineupPlayer(
+                        name = name,
+                        jerseyNumber = entry.optString("jersey"),
+                        position = entry.optJSONObject("position")?.optString("abbreviation").orEmpty(),
+                        starter = entry.optBoolean("starter"),
+                        imageUrl = lineupAthleteImage(athlete),
+                        formationRow = entry.optString("formationPlace").toIntOrNull(),
+                    )
                 }
                 if (team.isBlank()) null else TeamLineup(team, players)
             }
         }
         buildMatchLineups(match, teams)
+    }
+
+    private fun lineupAthleteImage(athlete: JSONObject): String {
+        val headshot = athlete.optJSONObject("headshot")?.optString("href").orEmpty()
+        val direct = athlete.optString("headshot")
+        return headshot.ifBlank { direct.takeIf { it.startsWith("https://") } ?: "" }
     }
 
     private fun buildMatchLineups(match: SportsMatch, teams: List<TeamLineup>): MatchLineups? {
