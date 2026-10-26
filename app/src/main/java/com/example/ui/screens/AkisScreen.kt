@@ -68,7 +68,6 @@ import com.example.ui.components.ModernNewsCard
 import com.example.ui.components.NewsFeedCard
 import com.example.ui.components.SkeletonCard
 import com.example.ui.theme.CizgiColor
-import com.example.util.NewsDiscoveryInsights
 
 @Composable
 fun AkisScreen(
@@ -86,7 +85,6 @@ fun AkisScreen(
     val matches by repository.matches.collectAsState()
     val prefs by repository.preferences.collectAsState()
     val isRefreshing by repository.isRefreshing.collectAsState()
-    val dailyDigestPoints by repository.dailyDigest.collectAsState()
     val bistStocks by repository.bistStocks.collectAsState()
     val financialAssets by repository.financialAssets.collectAsState()
 
@@ -99,20 +97,29 @@ fun AkisScreen(
     // Visual card mode vs compact list
     var isVisualCardMode by remember { mutableStateOf(true) }
 
-    val categories = remember(stories) {
-        buildList {
-            add("Tümü" to "⚡")
-            stories.asSequence()
-                .map { it.topic.trim() }
-                .filter(String::isNotBlank)
-                .distinct()
-                .forEach { topic -> add(topic to "📰") }
-        }
-    }
+    val categories = listOf(
+        "Tümü" to "⚡",
+        "Siyaset" to "🏛️",
+        "Ekonomi" to "📈",
+        "Teknoloji" to "💻",
+        "Gündem" to "🔥",
+        "Dünya" to "🌍",
+        "Spor" to "⚽",
+        "Kültür-Sanat" to "🎭",
+        "Sağlık" to "🩺",
+    )
 
-    val hashtags = remember(stories) {
-        NewsDiscoveryInsights.trendingTerms(stories, limit = 12).map { "#$it" }
-    }
+    val hashtags = listOf(
+        "#TBMM",
+        "#MerkezBankası",
+        "#YapayZeka",
+        "#SüperLig",
+        "#Enflasyon",
+        "#BIST100",
+        "#AsgariÜcret",
+        "#Kabine",
+        "#Olimpiyat",
+    )
 
     // Filter stories dynamically
     val filteredStories = remember(stories, selectedTopic, selectedHashtag) {
@@ -141,6 +148,16 @@ fun AkisScreen(
         if (mansetStory != null) filteredStories.filter { it.id != mansetStory.id } else filteredStories
     }
 
+    val dailyDigestPoints = remember {
+        listOf(
+            "TCMB Para Politikası Kurulu politika faizini yüzde 50'de sabit tuttu.",
+            "TÜBİTAK öncülüğünde Türkiye'nin ilk açık kaynak yapay zeka çip mimarisi tanıtıldı.",
+            "Trendyol Süper Lig'de lider Galatasaray ve Fenerbahçe haftayı galibiyetle kapattı.",
+            "Birleşmiş Milletler İklim Zirvesi'nde yenilenebilir enerji mutabakatı imzalandı.",
+            "Milli okçumuz Mete Gazoz Dünya Kupası finallerinde altın madalyanın sahibi oldu.",
+        )
+    }
+
     val nextMatch = remember(matches) {
         matches.firstOrNull { it.status == com.example.model.MatchStatus.LIVE }
             ?: matches.firstOrNull { it.status == com.example.model.MatchStatus.UPCOMING }
@@ -148,10 +165,12 @@ fun AkisScreen(
     }
 
     fun shareStory(story: Story) {
-        val sourceUrl = story.canonicalUrl.takeIf { it.startsWith("https://", ignoreCase = true) }
         val sendIntent = Intent().apply {
             action = Intent.ACTION_SEND
-            putExtra(Intent.EXTRA_TEXT, listOfNotNull(story.title, story.summary, sourceUrl).joinToString("\n\n"))
+            putExtra(
+                Intent.EXTRA_TEXT,
+                "${story.title}\n\n${story.summary}\n\nÇizgi üzerinden okundu: ${story.canonicalUrl.ifBlank { "https://cizgi.app" }}"
+            )
             type = "text/plain"
         }
         context.startActivity(Intent.createChooser(sendIntent, "Haberi Paylaş"))
@@ -245,60 +264,58 @@ fun AkisScreen(
                 }
 
                 // Trending Hashtag Quick Filter Row
-                if (hashtags.isNotEmpty()) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .horizontalScroll(rememberScrollState())
-                            .padding(start = 16.dp, end = 16.dp, bottom = 8.dp),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Text(
-                            text = "Gündemde:",
-                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                            color = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.padding(end = 2.dp)
-                        )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState())
+                        .padding(start = 16.dp, end = 16.dp, bottom = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = "Etiketler:",
+                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(end = 2.dp)
+                    )
 
-                        hashtags.forEach { tag ->
-                            val isTagSelected = selectedHashtag == tag
-                            Surface(
-                                shape = RoundedCornerShape(12.dp),
-                                color = if (isTagSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .clickable {
-                                        selectedHashtag = if (isTagSelected) null else tag
-                                    }
-                            ) {
-                                Text(
-                                    text = tag,
-                                    fontSize = 11.5.sp,
-                                    fontWeight = if (isTagSelected) FontWeight.Bold else FontWeight.Normal,
-                                    color = if (isTagSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                                )
-                            }
+                    hashtags.forEach { tag ->
+                        val isTagSelected = selectedHashtag == tag
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = if (isTagSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(12.dp))
+                                .clickable {
+                                    selectedHashtag = if (isTagSelected) null else tag
+                                }
+                        ) {
+                            Text(
+                                text = tag,
+                                fontSize = 11.5.sp,
+                                fontWeight = if (isTagSelected) FontWeight.Bold else FontWeight.Normal,
+                                color = if (isTagSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                            )
                         }
+                    }
 
-                        if (selectedHashtag != null) {
-                            Surface(
-                                shape = CircleShape,
-                                color = MaterialTheme.colorScheme.errorContainer,
+                    if (selectedHashtag != null) {
+                        Surface(
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.errorContainer,
+                            modifier = Modifier
+                                .clip(CircleShape)
+                                .clickable { selectedHashtag = null }
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Clear,
+                                contentDescription = "Filtreyi Temizle",
+                                tint = MaterialTheme.colorScheme.error,
                                 modifier = Modifier
-                                    .clip(CircleShape)
-                                    .clickable { selectedHashtag = null }
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Clear,
-                                    contentDescription = "Filtreyi Temizle",
-                                    tint = MaterialTheme.colorScheme.error,
-                                    modifier = Modifier
-                                        .size(20.dp)
-                                        .padding(3.dp)
-                                )
-                            }
+                                    .size(20.dp)
+                                    .padding(3.dp)
+                            )
                         }
                     }
                 }
@@ -360,7 +377,7 @@ fun AkisScreen(
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             // Loading Skeletons
-            if (isRefreshing && filteredStories.isEmpty()) {
+            if (isRefreshing) {
                 items(3) { SkeletonCard() }
             } else {
                 // Canlı BIST 100 ve Emtia Takip Listesi Widget'ı (Retrofit Servisli)
@@ -439,15 +456,15 @@ fun AkisScreen(
                                         modifier = Modifier
                                             .size(8.dp)
                                             .clip(CircleShape)
-                                            .background(if (weather.currentTempC == null) MaterialTheme.colorScheme.outline else Color(0xFF2E7D32)),
+                                            .background(Color(0xFF2E7D32)),
                                     )
                                     Text(
-                                        text = if (weather.currentTempC == null) "HAVA VERİSİ BEKLENİYOR" else "CANLI HAVA",
+                                        text = "CANLI HAVA",
                                         style = MaterialTheme.typography.labelSmall.copy(
                                             fontWeight = FontWeight.Bold,
                                             fontSize = 10.5.sp,
                                         ),
-                                        color = if (weather.currentTempC == null) MaterialTheme.colorScheme.onSurfaceVariant else Color(0xFF2E7D32),
+                                        color = Color(0xFF2E7D32),
                                     )
                                 }
                             }
@@ -463,7 +480,6 @@ fun AkisScreen(
                                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                                 ) {
                                     val emoji = when {
-                                        weather.currentTempC == null -> "⏳"
                                         weather.condition.contains("Güneş", ignoreCase = true) -> "☀️"
                                         weather.condition.contains("Yağmur", ignoreCase = true) -> "🌧️"
                                         weather.condition.contains("Kar", ignoreCase = true) -> "❄️"
@@ -474,7 +490,7 @@ fun AkisScreen(
 
                                     Column {
                                         Text(
-                                            text = weather.currentTempC?.let { "$it°" } ?: "--°",
+                                            text = "${weather.currentTempC}°",
                                             fontSize = 28.sp,
                                             fontWeight = FontWeight.Black,
                                             color = MaterialTheme.colorScheme.onSurface,
@@ -489,12 +505,12 @@ fun AkisScreen(
 
                                 Column(horizontalAlignment = Alignment.End) {
                                     Text(
-                                        text = "Hissedilen: ${weather.feelsLikeC?.let { "$it°" } ?: "—"}",
+                                        text = "Hissedilen: ${weather.feelsLikeC}°",
                                         style = MaterialTheme.typography.labelSmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
                                     Text(
-                                        text = "Nem: ${weather.humidityPct?.let { "%$it" } ?: "—"} · Rüzgar: ${weather.windKmh?.let { "$it km/s" } ?: "—"}",
+                                        text = "Nem: %${weather.humidityPct} · Rüzgar: ${weather.windKmh} km/s",
                                         style = MaterialTheme.typography.labelSmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
@@ -512,10 +528,8 @@ fun AkisScreen(
 
                 // Yalnızca "Tümü" veya "Gündem" sekmesindeyken Günün Özeti ve Canlı Spor Maçı Hızlı Bakışı
                 if (selectedTopic == "Tümü" || selectedTopic == "Gündem") {
-                    if (dailyDigestPoints.isNotEmpty()) {
                     item(key = "daily_digest") {
                         GununOzetiCard(points = dailyDigestPoints)
-                    }
                     }
 
                     if (nextMatch != null) {
@@ -649,19 +663,13 @@ fun AkisScreen(
                     }
                 }
 
-                if (stories.size < newsArchiveCount || repository.hasMorePressArchivePages) {
+                if (stories.size < newsArchiveCount) {
                     item(key = "load_older_news") {
                         TextButton(
                             onClick = { repository.loadOlderNews() },
                             modifier = Modifier.fillMaxWidth(),
                         ) {
-                            Text(
-                                if (stories.size < newsArchiveCount) {
-                                    "Daha eski haberleri yükle · ${stories.size}/$newsArchiveCount"
-                                } else {
-                                    "Daha eski haberleri yükle"
-                                }
-                            )
+                            Text("Daha eski haberleri yükle · ${stories.size}/$newsArchiveCount")
                         }
                     }
                 }
@@ -709,4 +717,3 @@ fun AkisScreen(
         }
     }
 }
-

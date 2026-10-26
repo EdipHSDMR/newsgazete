@@ -51,34 +51,19 @@ fun KaynakKarsilastirmaScreen(
     val context = LocalContext.current
     val stories by repository.stories.collectAsState()
     val story = remember(stories, storyId) {
-        stories.firstOrNull { it.id == storyId }
-    }
-
-    if (story == null) {
-        Column(
-            modifier = modifier.fillMaxSize().padding(24.dp),
-            verticalArrangement = Arrangement.Center,
-        ) {
-            Text(
-                text = "Bu haber artık arşivde bulunmuyor.",
-                style = MaterialTheme.typography.titleMedium,
-            )
-            TextButton(onClick = onBack) { Text("Geri dön") }
-        }
-        return
+        stories.firstOrNull { it.id == storyId } ?: stories.first()
     }
 
     val allSources = remember(story) {
-        val primary = SourceComparison(
-            publisher = story.publisher,
-            headline = story.title,
-            angle = "Haber bağlantısı",
-            publishedTime = story.publishedAt,
-            url = story.canonicalUrl,
-        )
-        (listOf(primary) + story.comparisons).distinctBy { source ->
-            source.url.ifBlank { "${source.publisher}:${source.headline}" }.trim().lowercase()
-        }
+        listOf(
+            SourceComparison(
+                publisher = story.publisher,
+                headline = story.title,
+                angle = "Birincil / Ana bülten haberi",
+                publishedTime = story.publishedAt,
+                url = story.canonicalUrl,
+            )
+        ) + story.comparisons
     }
 
     LazyColumn(

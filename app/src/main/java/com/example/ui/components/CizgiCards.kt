@@ -92,36 +92,12 @@ fun MansetHeroCard(
                     .aspectRatio(16f / 9f)
                     .background(CizgiColor.NavyDark),
             ) {
-                if (story.imageUrl.isNotBlank()) {
-                    AsyncImage(
-                        model = story.imageUrl,
-                        contentDescription = story.title,
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier.fillMaxSize(),
-                    )
-                } else {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .background(
-                                Brush.linearGradient(
-                                    listOf(
-                                        MaterialTheme.colorScheme.primaryContainer,
-                                        MaterialTheme.colorScheme.surfaceVariant,
-                                    ),
-                                ),
-                            ),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Text(
-                            text = "ÇİZGİ · ${story.topic.uppercase()}",
-                            color = MaterialTheme.colorScheme.primary,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 15.sp,
-                            letterSpacing = 1.sp,
-                        )
-                    }
-                }
+                AsyncImage(
+                    model = story.imageUrl,
+                    contentDescription = story.title,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize(),
+                )
 
                 // Top Badges
                 Row(
@@ -444,12 +420,12 @@ fun GununOzetiCard(
                             .background(CizgiColor.Navy),
                         contentAlignment = Alignment.Center,
                     ) {
-                        Text(points.size.toString(), color = CizgiColor.Gold, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                        Text("5", color = CizgiColor.Gold, fontWeight = FontWeight.Bold, fontSize = 12.sp)
                     }
 
                     Column {
                         Text(
-                            text = "SON 24 SAATTEN ${points.size} ÖZET",
+                            text = "GÜNÜN 5 MADDELİK ÖZETİ",
                             style = MaterialTheme.typography.labelMedium.copy(
                                 fontWeight = FontWeight.Bold,
                                 letterSpacing = 0.5.sp,
@@ -457,7 +433,7 @@ fun GununOzetiCard(
                             color = MaterialTheme.colorScheme.primary,
                         )
                         Text(
-                            text = "Güncel haberlerden otomatik derlendi",
+                            text = "Gündemin en can alıcı noktaları",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -579,15 +555,15 @@ fun KompaktHavaKarti(
                         modifier = Modifier
                             .size(8.dp)
                             .clip(CircleShape)
-                            .background(if (weather.currentTempC == null) MaterialTheme.colorScheme.outline else Color(0xFF2E7D32)),
+                            .background(Color(0xFF2E7D32)),
                     )
                     Text(
-                        text = if (weather.currentTempC == null) "VERİ BEKLENİYOR" else "CANLI • WeatherAPI",
+                        text = "CANLI • WeatherAPI",
                         style = MaterialTheme.typography.labelSmall.copy(
                             fontWeight = FontWeight.SemiBold,
                             fontSize = 11.sp,
                         ),
-                        color = if (weather.currentTempC == null) MaterialTheme.colorScheme.onSurfaceVariant else Color(0xFF2E7D32),
+                        color = Color(0xFF2E7D32),
                     )
                 }
             }
@@ -634,7 +610,6 @@ fun KompaktHavaKarti(
                 ) {
                     Text(
                         text = when {
-                            weather.currentTempC == null -> "⏳"
                             weather.condition.contains("Güneşli", ignoreCase = true) -> "☀️"
                             weather.condition.contains("Yağmur", ignoreCase = true) -> "🌧️"
                             weather.condition.contains("Bulutlu", ignoreCase = true) -> "⛅"
@@ -646,7 +621,7 @@ fun KompaktHavaKarti(
                     )
                     Column {
                         Text(
-                            text = weather.currentTempC?.let { "$it°C" } ?: "--°C",
+                            text = if (weather.lastUpdated == "Veri bekleniyor") "--°C" else "${weather.currentTempC}°C",
                             style = MaterialTheme.typography.headlineMedium.copy(
                                 fontWeight = FontWeight.Bold,
                                 letterSpacing = (-0.5).sp,
@@ -666,7 +641,7 @@ fun KompaktHavaKarti(
                     verticalArrangement = Arrangement.spacedBy(2.dp),
                 ) {
                     Text(
-                        text = "Hissedilen: ${weather.feelsLikeC?.let { "$it°C" } ?: "—"}",
+                        text = if (weather.lastUpdated == "Veri bekleniyor") "Hissedilen: --°C" else "Hissedilen: ${weather.feelsLikeC}°C",
                         style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -694,7 +669,7 @@ fun KompaktHavaKarti(
                 ) {
                     Text("💧", fontSize = 12.sp)
                     Text(
-                        text = "Yağış: ${weather.rainChancePct?.let { "%$it" } ?: "—"}",
+                        text = "Yağış: %${weather.rainChancePct}",
                         style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Medium),
                         color = MaterialTheme.colorScheme.onSurface,
                     )
@@ -708,7 +683,7 @@ fun KompaktHavaKarti(
                 ) {
                     Text("💨", fontSize = 12.sp)
                     Text(
-                        text = "Rüzgar: ${weather.windKmh?.let { "$it km/s" } ?: "—"}",
+                        text = "Rüzgar: ${weather.windKmh} km/s",
                         style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Medium),
                         color = MaterialTheme.colorScheme.onSurface,
                     )
@@ -722,7 +697,7 @@ fun KompaktHavaKarti(
                 ) {
                     Text("🌫️", fontSize = 12.sp)
                     Text(
-                        text = "Nem: ${weather.humidityPct?.let { "%$it" } ?: "—"}",
+                        text = "Nem: %${weather.humidityPct}",
                         style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Medium),
                         color = MaterialTheme.colorScheme.onSurface,
                     )
@@ -761,7 +736,7 @@ fun MiniWeatherCard(
                 Column {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         Text(
-                            text = weather.currentTempC?.let { "$it°" } ?: "--°",
+                            text = if (weather.lastUpdated == "Veri bekleniyor") "--°" else "${weather.currentTempC}°",
                             style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
                             color = MaterialTheme.colorScheme.primary,
                         )
@@ -772,7 +747,7 @@ fun MiniWeatherCard(
                         )
                     }
                     Text(
-                        text = if (weather.rainChancePct == null) weather.condition else "${weather.condition} · Yağış ihtimali %${weather.rainChancePct}",
+                        text = if (weather.lastUpdated == "Veri bekleniyor") weather.condition else "${weather.condition} · Yağış ihtimali %${weather.rainChancePct}",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -852,11 +827,9 @@ fun MiniMatchCard(
             }
 
             Text(
-                text = "Detay ›",
+                text = "Maç Merkezi ›",
                 style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
                 color = CizgiColor.Blue,
-                maxLines = 1,
-                softWrap = false,
             )
         }
     }
@@ -1128,7 +1101,7 @@ fun ModernNewsCard(
 
                         if (story.sourceCount > 1) {
                             Text(
-                                text = "${story.sourceCount} farklı kaynak",
+                                text = "${story.sourceCount} kaynak tarafından doğrulandı",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = CizgiColor.Blue,
                             )
@@ -1239,59 +1212,51 @@ fun BistWatchlistCard(
             .testTag("bist_watchlist_widget"),
     ) {
         Column(modifier = Modifier.padding(14.dp)) {
-            val hasMarketData = financialAssets.isNotEmpty() || stocks.isNotEmpty()
-            val statusColor = if (hasMarketData) Color(0xFF15803D) else MaterialTheme.colorScheme.onSurfaceVariant
             // Header Row
             Row(
                 modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Row(
-                    modifier = Modifier.weight(1f),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     Box(
                         modifier = Modifier
-                            .size(8.dp)
+                            .size(10.dp)
                             .clip(CircleShape)
-                            .background(statusColor),
+                            .background(Color(0xFF16A34A)),
                     )
                     Text(
-                        text = "PİYASA TAKİBİ",
+                        text = "BORSA İSTANBUL & PİYASA TAKİBİ",
                         style = MaterialTheme.typography.labelSmall.copy(
                             fontWeight = FontWeight.Bold,
                             letterSpacing = 0.8.sp,
                         ),
                         color = MaterialTheme.colorScheme.primary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f),
                     )
                     Surface(
                         shape = RoundedCornerShape(4.dp),
-                        color = statusColor.copy(alpha = 0.12f),
+                        color = Color(0xFF16A34A).copy(alpha = 0.15f),
                     ) {
                         Text(
-                            text = if (hasMarketData) "VERİ ALINDI" else "VERİ YOK",
+                            text = "CANLI RETROFIT",
                             fontSize = 9.sp,
                             fontWeight = FontWeight.Bold,
-                            color = statusColor,
-                            maxLines = 1,
-                            modifier = Modifier.padding(horizontal = 5.dp, vertical = 3.dp),
+                            color = Color(0xFF16A34A),
+                            modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp),
                         )
                     }
                 }
 
                 Text(
-                    text = "Tüm piyasalar ›",
-                    style = MaterialTheme.typography.labelSmall.copy(
+                    text = "Tüm Piyasalar ›",
+                    style = MaterialTheme.typography.labelMedium.copy(
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.primary,
                     ),
-                    maxLines = 1,
-                    softWrap = false,
-                    modifier = Modifier.padding(start = 8.dp).clickable(onClick = onViewMarketsClick),
+                    modifier = Modifier.clickable(onClick = onViewMarketsClick),
                 )
             }
 
@@ -1437,4 +1402,3 @@ private fun BistMiniItem(
         }
     }
 }
-

@@ -26,12 +26,6 @@ interface NewsArticleDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertAll(articles: List<NewsArticleEntity>)
 
-    @Query("DELETE FROM news_articles WHERE id IN (:ids)")
-    suspend fun deleteByIds(ids: List<String>)
-
-    @Query("DELETE FROM news_articles")
-    suspend fun clearAll()
-
     @Query(
         """DELETE FROM news_articles
            WHERE id NOT IN (
@@ -42,4 +36,3 @@ interface NewsArticleDao {
     )
     suspend fun pruneOldest(keepLimit: Int)
 }
-

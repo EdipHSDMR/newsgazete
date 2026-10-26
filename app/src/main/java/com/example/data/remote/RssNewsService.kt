@@ -2,8 +2,6 @@ package com.example.data.remote
 
 import com.example.model.SourceComparison
 import com.example.model.Story
-import com.example.util.NewsSummary
-import com.example.util.NewsStoryDeduplicator
 import android.text.Html
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -14,25 +12,13 @@ import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import java.net.URI
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-import java.util.concurrent.TimeUnit
 import java.util.UUID
 import java.util.regex.Pattern
 
-data class SourcePageMetadata(
-    val description: String?,
-    val imageUrl: String?,
-)
-
 class RssNewsService(private val httpClient: OkHttpClient) {
-    private val quickClient = httpClient.newBuilder()
-        .connectTimeout(3, TimeUnit.SECONDS)
-        .readTimeout(5, TimeUnit.SECONDS)
-        .callTimeout(6, TimeUnit.SECONDS)
-        .build()
 
     // Açık, telif dostu kamu & haber RSS akışları
     private val rssSources = listOf(
@@ -41,17 +27,11 @@ class RssNewsService(private val httpClient: OkHttpClient) {
         Triple("https://www.ntv.com.tr/gundem.rss", "NTV", "Gündem"),
         Triple("https://www.ntv.com.tr/ekonomi.rss", "NTV", "Ekonomi"),
         Triple("https://www.ntv.com.tr/teknoloji.rss", "NTV", "Teknoloji"),
-        Triple("https://www.ntv.com.tr/spor.rss", "NTV", "Spor"),
         Triple("https://www.trthaber.com/sondakika.rss", "TRT Haber", "Gündem"),
         Triple("https://www.trthaber.com/ekonomi_articles.rss", "TRT Haber", "Ekonomi"),
         Triple("https://www.trthaber.com/bilim_teknoloji_articles.rss", "TRT Haber", "Teknoloji"),
         Triple("https://www.trthaber.com/spor_articles.rss", "TRT Spor", "Spor"),
         Triple("https://www.haberturk.com/rss", "Habertürk", "Gündem"),
-        Triple("https://www.haberturk.com/rss/ekonomi.xml", "Habertürk", "Ekonomi"),
-        Triple("https://www.haberturk.com/rss/spor.xml", "Habertürk", "Spor"),
-        Triple("https://www.aa.com.tr/tr/rss/default?cat=guncel", "Anadolu Ajansı", "Gündem"),
-        Triple("https://www.aa.com.tr/tr/rss/default?cat=ekonomi", "Anadolu Ajansı", "Ekonomi"),
-        Triple("https://www.aa.com.tr/tr/rss/default?cat=spor", "Anadolu Ajansı", "Spor"),
         Triple("https://www.cnnturk.com/feed/rss/all/news", "CNN Türk", "Gündem"),
         Triple("https://www.cnnturk.com/feed/rss/ekonomi/news", "CNN Türk", "Ekonomi"),
         Triple("https://www.cnnturk.com/feed/rss/spor/news", "CNN Türk", "Spor"),
@@ -59,41 +39,55 @@ class RssNewsService(private val httpClient: OkHttpClient) {
         Triple("https://www.sozcu.com.tr/rss/sondakika.xml", "Sözcü", "Gündem"),
         Triple("https://www.hurriyet.com.tr/rss/gundem", "Hürriyet", "Gündem"),
         Triple("https://www.milliyet.com.tr/rss/rssnew/gundem.xml", "Milliyet", "Gündem"),
-        Triple("https://www.press.org.tr/ajans/rss.xml", "Press Haber Ajansı (PHA)", "Gündem"),
     )
     private val feedSemaphore = Semaphore(4)
-    private val quickSources = rssSources
-        .filter { (_, publisher, _) -> publisher in setOf("Ensonhaber", "BBC Türkçe", "NTV", "TRT Haber", "Habertürk", "Anadolu Ajansı") }
-        .distinctBy { it.second }
 
-    /** A small real-news batch for cold starts; remaining feeds are fetched immediately afterward. */
-    suspend fun fetchQuickNews(): List<Story> = withContext(Dispatchers.IO) {
-        val stories = coroutineScope {
-            quickSources.map { (feedUrl, publisherName, defaultTopic) ->
-                async {
-                    try {
-                        val request = Request.Builder()
-                            .url(feedUrl)
-                            .header("User-Agent", "Newsgazete/1.0 (RSS reader)")
-                            .header("Accept", "application/rss+xml, application/atom+xml, application/xml, text/xml;q=0.9, */*;q=0.8")
-                            .build()
-                        quickClient.newCall(request).execute().use { response ->
-                            if (!response.isSuccessful) emptyList()
-                            else parseRssFeedRobust(response.body?.string().orEmpty(), publisherName, defaultTopic)
-                                .take(MAX_ITEMS_PER_FEED)
-                        }
-                    } catch (_: Exception) {
-                        emptyList()
-                    }
-                }
-            }.awaitAll().flatten()
-        }
-        NewsStoryDeduplicator.merge(stories)
-            .sortedWith(compareByDescending<Story> { it.publishedAtEpochMs }.thenByDescending { it.id })
-            .take(NEWS_QUICK_START_LIMIT)
-            .toMutableList()
-            .also { if (it.isNotEmpty()) it[0] = it[0].copy(isManset = true) }
-    }
+    // Unsplash curated editorial fallback news imagery (high resolution, CDN backed)
+    private val topicFallbackImages = mapOf(
+        "Siyaset" to listOf(
+            "https://images.unsplash.com/photo-1541872703-74c5e44368f9?auto=format&fit=crop&w=800&q=80",
+            "https://images.unsplash.com/photo-1529107386315-e1a2ed48a620?auto=format&fit=crop&w=800&q=80",
+            "https://images.unsplash.com/photo-1585829365295-ab7cd400c167?auto=format&fit=crop&w=800&q=80",
+        ),
+        "Ekonomi" to listOf(
+            "https://images.unsplash.com/photo-1611974789855-9c2a0a7236a3?auto=format&fit=crop&w=800&q=80",
+            "https://images.unsplash.com/photo-1590283603385-17ffb3a7f29f?auto=format&fit=crop&w=800&q=80",
+            "https://images.unsplash.com/photo-1526304640581-d334cdbbf45e?auto=format&fit=crop&w=800&q=80",
+        ),
+        "Teknoloji" to listOf(
+            "https://images.unsplash.com/photo-1518770660439-4636190af475?auto=format&fit=crop&w=800&q=80",
+            "https://images.unsplash.com/photo-1550751827-4bd374c3f58b?auto=format&fit=crop&w=800&q=80",
+            "https://images.unsplash.com/photo-1485827404703-89b55fcc595e?auto=format&fit=crop&w=800&q=80",
+        ),
+        "Spor" to listOf(
+            "https://images.unsplash.com/photo-1508098682722-e99c43a406b2?auto=format&fit=crop&w=800&q=80",
+            "https://images.unsplash.com/photo-1574629810360-7efbbe195018?auto=format&fit=crop&w=800&q=80",
+            "https://images.unsplash.com/photo-1546519638-68e109498ffc?auto=format&fit=crop&w=800&q=80",
+            "https://images.unsplash.com/photo-1612872087720-bb876e2e67d1?auto=format&fit=crop&w=800&q=80",
+        ),
+        "Dünya" to listOf(
+            "https://images.unsplash.com/photo-1451187580459-43490279c0fa?auto=format&fit=crop&w=800&q=80",
+            "https://images.unsplash.com/photo-1529107386315-e1a2ed48a620?auto=format&fit=crop&w=800&q=80",
+            "https://images.unsplash.com/photo-1534447677768-be436bb09401?auto=format&fit=crop&w=800&q=80",
+        ),
+        "Gündem" to listOf(
+            "https://images.unsplash.com/photo-1585829365295-ab7cd400c167?auto=format&fit=crop&w=800&q=80",
+            "https://images.unsplash.com/photo-1504711434969-e33886168f5c?auto=format&fit=crop&w=800&q=80",
+            "https://images.unsplash.com/photo-1495020689067-958852a7765e?auto=format&fit=crop&w=800&q=80",
+        ),
+        "Kültür-Sanat" to listOf(
+            "https://images.unsplash.com/photo-1507676184212-d03ab07a01bf?auto=format&fit=crop&w=800&q=80",
+            "https://images.unsplash.com/photo-1460723237483-7a6dc9d0b212?auto=format&fit=crop&w=800&q=80",
+        ),
+        "Sağlık" to listOf(
+            "https://images.unsplash.com/photo-1505751172876-fa1923c5c528?auto=format&fit=crop&w=800&q=80",
+            "https://images.unsplash.com/photo-1576091160399-112ba8d25d1d?auto=format&fit=crop&w=800&q=80",
+        ),
+        "Türkiye" to listOf(
+            "https://images.unsplash.com/photo-1541432901042-2d8bd64b4a9b?auto=format&fit=crop&w=800&q=80",
+            "https://images.unsplash.com/photo-1524231757912-21f4fe3a7200?auto=format&fit=crop&w=800&q=80",
+        )
+    )
 
     suspend fun fetchRealNews(): List<Story> = withContext(Dispatchers.IO) {
         val semaphore = feedSemaphore
@@ -122,7 +116,7 @@ class RssNewsService(private val httpClient: OkHttpClient) {
             }.awaitAll().flatten()
         }
 
-        val uniqueStories = NewsStoryDeduplicator.merge(allStories)
+        val uniqueStories = mergeDuplicateStories(allStories)
             .sortedWith(compareByDescending<Story> { it.publishedAtEpochMs }.thenByDescending { it.id })
             .take(MAX_STORIES_PER_REFRESH)
             .toMutableList()
@@ -131,67 +125,60 @@ class RssNewsService(private val httpClient: OkHttpClient) {
         uniqueStories
     }
 
-    /** Reads only publisher-provided metadata. It never invents or copies article body text. */
-    suspend fun fetchSourceMetadata(url: String): SourcePageMetadata? = withContext(Dispatchers.IO) {
-        val uri = runCatching { URI(url) }.getOrNull() ?: return@withContext null
-        if (uri.scheme !in setOf("http", "https") || uri.host.isNullOrBlank()) return@withContext null
+    private fun mergeDuplicateStories(stories: List<Story>): List<Story> {
+        val mergedById = LinkedHashMap<String, Story>()
+        val idByUrl = mutableMapOf<String, String>()
+        val idByTitle = mutableMapOf<String, String>()
 
-        try {
-            val request = Request.Builder()
-                .url(url)
-                .header("User-Agent", "Newsgazete/1.0 (RSS reader)")
-                .header("Accept", "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8")
-                .build()
-            httpClient.newCall(request).execute().use { response ->
-                if (!response.isSuccessful || response.body == null) return@withContext null
-                val html = response.peekBody(MAX_SOURCE_PAGE_BYTES).string()
-                SourcePageMetadata(
-                    description = extractMetaDescription(html),
-                    imageUrl = extractMetaImage(html, url),
-                ).takeIf { it.description != null || it.imageUrl != null }
+        for (story in stories.sortedByDescending { it.publishedAtEpochMs }) {
+            val urlKey = normalizeUrl(story.canonicalUrl)
+            val titleKey = normalizeTitle(story.title)
+            val existingId = (urlKey.takeIf(String::isNotBlank)?.let(idByUrl::get))
+                ?: titleKey.takeIf(String::isNotBlank)?.let(idByTitle::get)
+            val existing = existingId?.let(mergedById::get)
+            if (existing == null) {
+                mergedById[story.id] = story
+                if (urlKey.isNotBlank()) idByUrl[urlKey] = story.id
+                if (titleKey.isNotBlank()) idByTitle[titleKey] = story.id
+                continue
             }
+
+            val comparisons = (existing.comparisons + story.comparisons)
+                .distinctBy { it.publisher.lowercase(Locale.ROOT) to normalizeUrl(it.url) }
+                .take(8)
+            mergedById[existing.id] = existing.copy(
+                sourceCount = comparisons.size.coerceAtLeast(existing.sourceCount),
+                comparisons = comparisons,
+                canonicalUrl = existing.canonicalUrl.ifBlank { story.canonicalUrl },
+            )
+            if (urlKey.isNotBlank()) idByUrl[urlKey] = existing.id
+            if (titleKey.isNotBlank()) idByTitle[titleKey] = existing.id
+        }
+
+        return mergedById.values.toList()
+    }
+
+    private fun normalizeTitle(title: String): String = title
+        .lowercase(Locale.forLanguageTag("tr-TR"))
+        .replace("[^a-z0-9çğıöşü]".toRegex(), " ")
+        .trim()
+        .replace("\\s+".toRegex(), " ")
+
+    private fun normalizeUrl(url: String): String {
+        if (url.isBlank()) return ""
+        return try {
+            val uri = java.net.URI(url.trim())
+            val host = uri.host?.lowercase(Locale.ROOT).orEmpty()
+            if (host.isBlank()) return url.trim().substringBefore('#').trimEnd('/')
+            val path = uri.rawPath.orEmpty().trimEnd('/').ifBlank { "/" }
+            val query = uri.rawQuery.orEmpty().split('&')
+                .filterNot { it.substringBefore('=').lowercase(Locale.ROOT).startsWith("utm_") ||
+                    it.substringBefore('=').lowercase(Locale.ROOT) in setOf("fbclid", "gclid") }
+                .joinToString("&")
+            "https://$host$path" + if (query.isBlank()) "" else "?$query"
         } catch (_: Exception) {
-            null
+            url.trim().substringBefore('#').trimEnd('/')
         }
-    }
-
-    fun sourceSummary(description: String, maxCharacters: Int = 380, title: String = ""): String =
-        NewsSummary.concise(description, title, maxCharacters)
-
-    fun sourceParagraphs(description: String): List<String> =
-        SENTENCE_BOUNDARY.split(description.trim())
-            .map(String::trim)
-            .filter(String::isNotBlank)
-            .chunked(3)
-            .map { it.joinToString(" ") }
-
-    private fun extractMetaDescription(html: String): String? {
-        val acceptedNames = setOf("og:description", "twitter:description", "description")
-        val metaTags = META_TAG.findAll(html)
-        for (match in metaTags) {
-            val tag = match.value
-            val name = META_NAME.find(tag)?.groupValues?.getOrNull(1)?.lowercase(Locale.ROOT) ?: continue
-            if (name !in acceptedNames) continue
-            val content = META_CONTENT.find(tag)?.groupValues?.getOrNull(1).orEmpty()
-            val clean = cleanHtml(content)
-            if (clean.length >= 40) return clean.take(MAX_SOURCE_DESCRIPTION_CHARS)
-        }
-        return null
-    }
-
-    private fun extractMetaImage(html: String, pageUrl: String): String? {
-        val acceptedNames = setOf("og:image", "og:image:url", "twitter:image", "twitter:image:src", "image")
-        for (match in META_TAG.findAll(html)) {
-            val tag = match.value
-            val name = META_NAME.find(tag)?.groupValues?.getOrNull(1)?.lowercase(Locale.ROOT)
-            if (name in acceptedNames) {
-                val content = META_CONTENT.find(tag)?.groupValues?.getOrNull(1).orEmpty()
-                normalizeImageUrl(content, pageUrl).takeIf(String::isNotBlank)?.let { return it }
-            }
-        }
-
-        val imageSource = IMAGE_SOURCE_HREF.find(html)?.groupValues?.getOrNull(1).orEmpty()
-        return normalizeImageUrl(imageSource, pageUrl).takeIf(String::isNotBlank)
     }
 
     /**
@@ -204,6 +191,7 @@ class RssNewsService(private val httpClient: OkHttpClient) {
         val itemPattern = Pattern.compile("<(?:[\\w.-]+:)?(?:item|entry)\\b[^>]*>(.*?)</(?:[\\w.-]+:)?(?:item|entry)\\s*>", Pattern.DOTALL or Pattern.CASE_INSENSITIVE)
         val matcher = itemPattern.matcher(xml)
 
+        var counter = 0
         while (matcher.find()) {
             val itemBlock = matcher.group(1) ?: continue
 
@@ -225,22 +213,34 @@ class RssNewsService(private val httpClient: OkHttpClient) {
                 // Classify topic intelligently by content and category
                 val classifiedTopic = classifyTopic(cleanTitle, cleanDesc, rawCategory, defaultTopic)
 
-                // Keep only an image explicitly supplied by the publisher's feed.
-                val imageUrl = extractImageUrl(itemBlock, rawLink)
+                // Extract image
+                var imageUrl = extractImageUrl(itemBlock)
+                if (imageUrl.isBlank()) {
+                    val fallbacks = topicFallbackImages[classifiedTopic] ?: topicFallbackImages["Gündem"] ?: emptyList()
+                    if (fallbacks.isNotEmpty()) {
+                        imageUrl = fallbacks[counter % fallbacks.size]
+                    }
+                }
 
                 val timeAgo = formatPubDate(rawPubDate)
                 val readMin = maxOf(2, cleanDesc.length / 220)
-                val publishedAtEpochMs = parsePubDateEpochMs(rawPubDate)
-                // Keep the existing title-based ID so refreshes update the user's old cache
-                // instead of duplicating every story after the app upgrade.
                 val id = UUID.nameUUIDFromBytes(cleanTitle.toByteArray(Charsets.UTF_8)).toString()
-                val sourceText = cleanDesc.take(MAX_SOURCE_DESCRIPTION_CHARS)
+                val publishedAtEpochMs = parsePubDateEpochMs(rawPubDate).takeIf { it > 0 }
+                    ?: System.currentTimeMillis()
+
+                val paragraphs = if (cleanDesc.isNotBlank() && cleanDesc.contains(". ")) {
+                    cleanDesc.split(". ")
+                        .filter { it.isNotBlank() }
+                        .map { it.trim().removeSuffix(".") + "." }
+                } else {
+                    listOf(cleanTitle, cleanDesc).filter { it.isNotBlank() }
+                }
 
                 list.add(
                     Story(
                         id = id,
                         title = cleanTitle,
-                        summary = sourceSummary(sourceText, title = cleanTitle),
+                        summary = cleanDesc.take(190) + if (cleanDesc.length > 190) "..." else "",
                         topic = classifiedTopic,
                         publisher = publisher,
                         publishedAt = timeAgo,
@@ -249,11 +249,11 @@ class RssNewsService(private val httpClient: OkHttpClient) {
                         imageUrl = imageUrl,
                         isBreaking = cleanTitle.contains("son dakika", ignoreCase = true),
                         isManset = false,
-                        whatHappened = "",
-                        whyItMatters = "",
+                        whatHappened = cleanTitle,
+                        whyItMatters = cleanDesc.take(140),
                         whatIsUnknown = "",
-                        fullText = sourceText,
-                        paragraphs = sourceParagraphs(sourceText),
+                        fullText = cleanDesc.ifBlank { cleanTitle },
+                        paragraphs = paragraphs,
                         comparisons = listOf(
                             SourceComparison(
                                 publisher = publisher,
@@ -267,6 +267,7 @@ class RssNewsService(private val httpClient: OkHttpClient) {
                         isSaved = false,
                     )
                 )
+                counter++
             }
         }
         return list
@@ -340,86 +341,54 @@ class RssNewsService(private val httpClient: OkHttpClient) {
         return if (textMatcher.find()) cleanHtml(textMatcher.group(1) ?: "") else ""
     }
 
-    private fun extractImageUrl(block: String, articleUrl: String): String {
-        // Publisher media:content is usually the highest resolution image.
-        val mediaContent = Regex("<media:content\\b[^>]*>", RegexOption.IGNORE_CASE)
-        for (tag in mediaContent.findAll(block)) {
-            val url = URL_ATTRIBUTE.find(tag.value)?.groupValues?.getOrNull(1).orEmpty()
-            if (url.isNotBlank()) normalizeImageUrl(url, articleUrl).takeIf(String::isNotBlank)?.let { return it }
+    private fun extractImageUrl(block: String): String {
+        // 1. Check enclosure tag
+        val encPattern = Pattern.compile("<enclosure[^>]+url=[\"'](https?://[^\"']+)[\"']", Pattern.CASE_INSENSITIVE)
+        val encMatcher = encPattern.matcher(block)
+        if (encMatcher.find()) {
+            val u = encMatcher.group(1)
+            if (!u.isNullOrBlank() && isLikelyImageUrl(u)) return u
         }
 
-        // Some feeds publish images only as an enclosure, thumbnail, or inline HTML image.
-        val enclosure = Regex("<enclosure\\b[^>]*>", RegexOption.IGNORE_CASE)
-        for (tag in enclosure.findAll(block)) {
-            val value = tag.value
-            val url = URL_ATTRIBUTE.find(value)?.groupValues?.getOrNull(1).orEmpty()
-            val type = TYPE_ATTRIBUTE.find(value)?.groupValues?.getOrNull(1).orEmpty()
-            if (url.isNotBlank() && (type.startsWith("image/", ignoreCase = true) || isLikelyImageUrl(url))) {
-                normalizeImageUrl(url, articleUrl).takeIf(String::isNotBlank)?.let { return it }
-            }
+        // 2. Check media:content or media:thumbnail
+        val mediaPattern = Pattern.compile("<media:(?:content|thumbnail)[^>]+url=[\"'](https?://[^\"']+)[\"']", Pattern.CASE_INSENSITIVE)
+        val mediaMatcher = mediaPattern.matcher(block)
+        if (mediaMatcher.find()) {
+            val u = mediaMatcher.group(1)
+            if (!u.isNullOrBlank()) return u
         }
 
-        val thumbnail = Regex("<media:thumbnail\\b[^>]*>", RegexOption.IGNORE_CASE)
-        for (tag in thumbnail.findAll(block)) {
-            val url = URL_ATTRIBUTE.find(tag.value)?.groupValues?.getOrNull(1).orEmpty()
-            if (url.isNotBlank()) normalizeImageUrl(url, articleUrl).takeIf(String::isNotBlank)?.let { return it }
+        // 3. Check <img> tag inside description or content:encoded
+        val imgPattern = Pattern.compile("<img[^>]+src=[\"'](https?://[^\"']+\\.(?:jpg|jpeg|png|webp)[^\"']*)[\"']", Pattern.CASE_INSENSITIVE)
+        val imgMatcher = imgPattern.matcher(block)
+        if (imgMatcher.find()) {
+            val u = imgMatcher.group(1)
+            if (!u.isNullOrBlank()) return u
         }
 
-        val imageTag = Regex("<img\\b[^>]*>", RegexOption.IGNORE_CASE)
-        val preferredAttributes = listOf("data-src", "data-original", "data-lazy-src", "data-image", "src", "srcset")
-        for (tag in imageTag.findAll(block)) {
-            for (attribute in preferredAttributes) {
-                val value = attributeValue(tag.value, attribute)
-                val candidate = if (attribute == "srcset") value.substringBefore(',').trim().substringBefore(' ') else value
-                if (candidate.isNotBlank()) normalizeImageUrl(candidate, articleUrl).takeIf(String::isNotBlank)?.let { return it }
-            }
-        }
         return ""
     }
 
-    private fun attributeValue(tag: String, attribute: String): String =
-        Regex("\\b${Regex.escape(attribute)}\\s*=\\s*[\"']([^\"']+)[\"']", RegexOption.IGNORE_CASE)
-            .find(tag)?.groupValues?.getOrNull(1).orEmpty()
-
-    private fun normalizeImageUrl(rawUrl: String, baseUrl: String): String {
-        val decoded = Html.fromHtml(rawUrl.trim(), Html.FROM_HTML_MODE_LEGACY).toString().trim()
-            .trim('"', '\'', ' ', '\t', '\r', '\n')
-        if (decoded.isBlank() || decoded.startsWith("data:", ignoreCase = true)) return ""
-        return try {
-            val rawUri = URI(decoded)
-            val baseUri = URI(baseUrl)
-            val resolved = if (rawUri.isAbsolute) rawUri else baseUri.resolve(rawUri)
-            if (resolved.scheme !in setOf("http", "https") || resolved.host.isNullOrBlank()) ""
-            else resolved.toASCIIString()
-        } catch (_: Exception) {
-            ""
-        }
-    }
-
     private fun isLikelyImageUrl(url: String): Boolean {
-        val lower = url.substringBefore('?').substringBefore('#').lowercase(Locale.ROOT)
+        val lower = url.lowercase()
         return lower.endsWith(".jpg") || lower.endsWith(".jpeg") || lower.endsWith(".png") ||
-            lower.endsWith(".webp") || lower.endsWith(".gif") || lower.endsWith(".avif") ||
-            lower.contains("/jpg/") || lower.contains("/image") || lower.contains("/resim/") ||
-            lower.contains("/images/") || lower.contains("trthaber.com")
+                lower.endsWith(".webp") || lower.contains("image") || lower.contains("/resim/") ||
+                lower.contains("/images/") || lower.contains("trthaber.com")
     }
 
     private fun cleanHtml(text: String): String {
         val withoutCdata = text.replace("<!\\[CDATA\\[".toRegex(), "")
             .replace("\\]\\]>".toRegex(), "")
-            .replace("<script\\b[^>]*>.*?</script>".toRegex(RegexOption.IGNORE_CASE), " ")
-            .replace("<style\\b[^>]*>.*?</style>".toRegex(RegexOption.IGNORE_CASE), " ")
         return Html.fromHtml(withoutCdata, Html.FROM_HTML_MODE_LEGACY)
             .toString()
-            .replace('\u00a0', ' ')
-            .replace("[\\s\\u200B]+".toRegex(), " ")
+            .replace("\\s+".toRegex(), " ")
             .trim()
     }
 
     private fun formatPubDate(pubDate: String): String {
-        if (pubDate.isBlank()) return "Tarih bilgisi yok"
+        if (pubDate.isBlank()) return "Az önce"
         val timestamp = parsePubDateEpochMs(pubDate)
-        if (timestamp <= 0) return "Tarih bilgisi yok"
+        if (timestamp <= 0) return "Bugün"
         val diffMs = (System.currentTimeMillis() - timestamp).coerceAtLeast(0)
         val minutes = (diffMs / 60_000L).toInt()
         val hours = (diffMs / 3_600_000L).toInt()
@@ -456,20 +425,9 @@ class RssNewsService(private val httpClient: OkHttpClient) {
     }
 
     private companion object {
-        const val NEWS_QUICK_START_LIMIT = 80
         const val MAX_ITEMS_PER_FEED = 300
         const val MAX_STORIES_PER_REFRESH = 3_000
-        const val MAX_SOURCE_PAGE_BYTES = 512L * 1024L
-        const val MAX_SOURCE_DESCRIPTION_CHARS = 6_000
-        val SENTENCE_BOUNDARY = Regex("(?<=[.!?])\\s+")
-        val META_TAG = Regex("<meta\\b[^>]*>", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
-        val META_NAME = Regex("(?:property|name)\\s*=\\s*[\"']([^\"']+)[\"']", RegexOption.IGNORE_CASE)
-        val META_CONTENT = Regex("\\bcontent\\s*=\\s*[\"']([^\"']*)[\"']", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
-        val IMAGE_SOURCE_HREF = Regex("<link\\b(?=[^>]*\\brel=[\"'][^\"']*image_src[^\"']*[\"'])[^>]*\\bhref=[\"']([^\"']+)[\"'][^>]*>", RegexOption.IGNORE_CASE)
-        val URL_ATTRIBUTE = Regex("\\burl\\s*=\\s*[\"']([^\"']+)[\"']", RegexOption.IGNORE_CASE)
-        val TYPE_ATTRIBUTE = Regex("\\btype\\s*=\\s*[\"']([^\"']+)[\"']", RegexOption.IGNORE_CASE)
     }
 
 
 }
-

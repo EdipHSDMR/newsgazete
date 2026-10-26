@@ -148,40 +148,6 @@ object CizgiNotificationHelper {
         } catch (_: SecurityException) {}
     }
 
-    fun sendMatchStartNotification(context: Context, matchTitle: String, competition: String, sportType: String) {
-        if (!hasNotificationPermission(context)) return
-        val intent = Intent(context, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-            putExtra("extra_screen", "spor")
-        }
-        val pendingIntent = PendingIntent.getActivity(
-            context,
-            (System.currentTimeMillis() % 10000).toInt() + 3,
-            intent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-        )
-        val icon = when (sportType) {
-            "BASKETBOL" -> "🏀"
-            "VOLEYBOL" -> "🏐"
-            else -> "⚽"
-        }
-        val title = "$icon Maç başladı"
-        val body = "$competition · $matchTitle"
-        val notification = NotificationCompat.Builder(context, CHANNEL_SPORTS)
-            .setSmallIcon(android.R.drawable.ic_media_play)
-            .setContentTitle(title)
-            .setContentText(body)
-            .setStyle(NotificationCompat.BigTextStyle().bigText(body))
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
-            .setCategory(NotificationCompat.CATEGORY_EVENT)
-            .setAutoCancel(true)
-            .setContentIntent(pendingIntent)
-            .build()
-        try {
-            NotificationManagerCompat.from(context).notify(2100 + (matchTitle.hashCode() and 0x7fff), notification)
-        } catch (_: SecurityException) {}
-    }
-
     fun sendMarketNotification(
         context: Context,
         title: String,
@@ -216,4 +182,3 @@ object CizgiNotificationHelper {
         } catch (_: SecurityException) {}
     }
 }
-

@@ -34,6 +34,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.CizgiRepository
+import com.example.data.CizgiSeedData
 import com.example.ui.theme.CizgiColor
 
 @Composable
@@ -43,9 +44,7 @@ fun TopicsScreen(
     modifier: Modifier = Modifier,
 ) {
     val prefs by repository.preferences.collectAsState()
-    val stories by repository.stories.collectAsState()
-    val availableTopics = stories.asSequence().map { it.topic.trim() }
-        .filter(String::isNotBlank).distinct().toList()
+    val availableTopics = CizgiSeedData.topics.filter { it != "Tümü" }
 
     LazyColumn(
         modifier = modifier

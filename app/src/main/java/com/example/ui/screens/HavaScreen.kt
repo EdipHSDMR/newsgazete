@@ -59,6 +59,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.CizgiRepository
+import com.example.data.CizgiSeedData
 import com.example.ui.theme.CizgiColor
 
 @Composable
@@ -102,7 +103,6 @@ fun HavaScreen(
     fun getWeatherEmoji(condition: String): String {
         val lower = condition.lowercase()
         return when {
-            lower.contains("bekleniyor") || lower.contains("veri yok") || lower.contains("alınamadı") -> "⏳"
             lower.contains("kar") || lower.contains("blizzard") || lower.contains("buz") -> "❄️"
             lower.contains("fırtına") || lower.contains("şimşek") || lower.contains("gök gürültü") -> "⛈️"
             lower.contains("sağanak") || lower.contains("yağmur") || lower.contains("çise") -> "🌧️"
@@ -386,14 +386,13 @@ fun HavaScreen(
                                         color = Color.White,
                                     ),
                                 )
-                                val hasWeatherData = weather.currentTempC != null
                                 Surface(
                                     shape = RoundedCornerShape(4.dp),
-                                    color = (if (hasWeatherData) Color(0xFF16A34A) else Color.White).copy(alpha = if (hasWeatherData) 0.25f else 0.12f),
+                                    color = Color(0xFF16A34A).copy(alpha = 0.25f),
                                 ) {
                                     Text(
-                                        text = if (hasWeatherData) "CANLI" else "BEKLENİYOR",
-                                        color = if (hasWeatherData) Color(0xFF4ADE80) else Color(0xFFCBD5E1),
+                                        text = "CANLI",
+                                        color = Color(0xFF4ADE80),
                                         fontSize = 10.sp,
                                         fontWeight = FontWeight.Bold,
                                         modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
@@ -412,7 +411,7 @@ fun HavaScreen(
 
                     Row(verticalAlignment = Alignment.Bottom) {
                         Text(
-                            text = weather.currentTempC?.let { "$it°" } ?: "--°",
+                            text = if (weather.lastUpdated == "Veri bekleniyor") "--°" else "${weather.currentTempC}°",
                             fontSize = 68.sp,
                             fontWeight = FontWeight.Black,
                             color = Color.White,
@@ -421,11 +420,11 @@ fun HavaScreen(
                         Spacer(Modifier.width(12.dp))
                         Column(modifier = Modifier.padding(bottom = 6.dp)) {
                             Text(
-                                text = "Hissedilen: ${weather.feelsLikeC?.let { "$it°C" } ?: "—"}",
+                                text = "Hissedilen: ${weather.feelsLikeC}°C",
                                 style = MaterialTheme.typography.bodySmall.copy(color = CizgiColor.Gold, fontWeight = FontWeight.Bold),
                             )
                             Text(
-                                text = "Yağış İhtimali: ${weather.rainChancePct?.let { "%$it" } ?: "—"}",
+                                text = "Yağış İhtimali: %${weather.rainChancePct}",
                                 style = MaterialTheme.typography.bodySmall.copy(color = Color(0xFFE2E8F0)),
                             )
                         }
@@ -449,10 +448,10 @@ fun HavaScreen(
                             .padding(vertical = 10.dp, horizontal = 12.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
                     ) {
-                        MetricItem("Nem", weather.humidityPct?.let { "%$it" } ?: "—")
-                        MetricItem("Rüzgar", weather.windKmh?.let { "$it km/s" } ?: "—")
-                        MetricItem("UV İndeks", weather.uvIndex?.toString() ?: "—")
-                        MetricItem("Kaynak", if (weather.currentTempC == null) "Bekleniyor" else "WeatherAPI")
+                        MetricItem("Nem", "%${weather.humidityPct}")
+                        MetricItem("Rüzgar", "${weather.windKmh} km/s")
+                        MetricItem("UV İndeks", "${weather.uvIndex}")
+                        MetricItem("Kaynak", "WeatherAPI")
                     }
                 }
             }
@@ -614,4 +613,3 @@ private fun MetricItem(label: String, value: String) {
         Text(text = value, fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color.White)
     }
 }
-

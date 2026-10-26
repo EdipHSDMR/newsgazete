@@ -80,7 +80,7 @@ data class NewsArticleEntity(
                 topic = story.topic,
                 publisher = story.publisher,
                 publishedAt = story.publishedAt,
-                publishedAtEpochMs = story.publishedAtEpochMs,
+                publishedAtEpochMs = story.publishedAtEpochMs.takeIf { it > 0 } ?: System.currentTimeMillis(),
                 readTimeMin = story.readTimeMin,
                 imageUrl = story.imageUrl,
                 isBreaking = story.isBreaking,
