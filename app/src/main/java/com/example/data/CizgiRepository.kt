@@ -581,11 +581,17 @@ class CizgiRepository private constructor(private val context: Context) {
             // every slow feed or the press archive. The complete refresh follows in the same job.
             val quickStories = withTimeoutOrNull(7_000L) { rssNewsService.fetchQuickNews() }.orEmpty()
             val quickPublished = if (quickStories.isNotEmpty()) publishLiveNews(quickStories) else false
+            var pressPublished = false
             val (rssStories, pressPage, gatewayHealth) = coroutineScope {
                 val rss = async { rssNewsService.fetchRealNews() }
                 val press = async { pressNewsApiService.fetchPage(page = 1) }
                 val gateway = async { gatewayHealthService.check() }
-                Triple(rss.await(), press.await(), gateway.await())
+                // Publish the fast API page as soon as it is ready. Waiting for every slower RSS
+                // publisher before updating the UI made a cold launch look empty for too long.
+                val page = press.await()
+                if (!page?.stories.isNullOrEmpty()) pressPublished = publishLiveNews(page!!.stories)
+                val health = gateway.await()
+                Triple(rss.await(), page, health)
             }
             val reachableFeeds = rssNewsService.lastSuccessfulFeedCount
             recordSourceDiagnostic(
@@ -602,11 +608,11 @@ class CizgiRepository private constructor(private val context: Context) {
             val gatewayMessage = when {
                 !gatewayHealth.available && gatewayHealth.httpCode == 0 -> "Servis geçidine bağlanılamadı."
                 !gatewayHealth.available -> "Servis geçidi HTTP ${gatewayHealth.httpCode} yanıtı verdi."
-                !gatewayHealth.pressConfigured -> "Servis çalışıyor ancak PHA anahtarı ayarlı değil."
+                !gatewayHealth.pressConfigured -> "Servis çalışıyor; haberler yayıncı RSS yedeğinden geliyor."
                 else -> "Servis ve PHA bağlantısı hazır."
             }
-            recordSourceDiagnostic("Haber servis geçidi", gatewayHealth.available && gatewayHealth.pressConfigured, gatewayMessage)
-            if (rssStories.isEmpty() && pressPage == null) return@withLock quickPublished
+            recordSourceDiagnostic("Haber servis geçidi", gatewayHealth.available, gatewayMessage)
+            if (rssStories.isEmpty() && pressPage == null) return@withLock (quickPublished || pressPublished)
             pressPage?.let { page ->
                 pressArchiveTotalPages = page.totalPages.coerceAtLeast(page.page)
                 if (pressArchiveNextPage > pressArchiveTotalPages && pressArchiveTotalPages > 1) {
@@ -617,8 +623,8 @@ class CizgiRepository private constructor(private val context: Context) {
             val liveFeed = withContext(Dispatchers.Default) {
                 mergePressAndRss(pressPage?.stories.orEmpty(), rssStories)
             }
-            if (liveFeed.isEmpty()) return@withLock true
-            publishLiveNews(liveFeed) || quickPublished
+            if (liveFeed.isEmpty()) return@withLock (quickPublished || pressPublished)
+            publishLiveNews(liveFeed) || quickPublished || pressPublished
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (_: Exception) {
