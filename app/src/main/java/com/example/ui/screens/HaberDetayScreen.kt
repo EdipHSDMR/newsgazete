@@ -258,6 +258,7 @@ fun HaberDetayScreen(
                             }
                             Text(summary, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
                             if (!fetching) assessment.missingAnswer?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                            if (!fetching && assessment.limitedSource) Text("Kaynağın sağladığı metin kısa; özet bu bilgilerle sınırlı.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                                 Text("${displayed.publisher} metninden derlendi", style = MaterialTheme.typography.labelSmall, modifier = Modifier.weight(1f), color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 Box {

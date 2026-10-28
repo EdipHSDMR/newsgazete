@@ -10,6 +10,7 @@ import android.text.Html
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
@@ -37,7 +38,13 @@ data class SourceArticleContent(
     val imageUrl: String?,
 )
 
+private data class FeedFetchResult(val reachable: Boolean, val stories: List<Story>)
+
 class RssNewsService(private val httpClient: OkHttpClient) {
+    @Volatile var lastSuccessfulFeedCount: Int = 0
+        private set
+    val feedCount: Int get() = rssSources.size
+
     private val quickClient = httpClient.newBuilder()
         .connectTimeout(3, TimeUnit.SECONDS)
         .readTimeout(5, TimeUnit.SECONDS)
@@ -92,6 +99,8 @@ class RssNewsService(private val httpClient: OkHttpClient) {
                             else parseRssFeedRobust(response.body?.string().orEmpty(), publisherName, defaultTopic)
                                 .take(MAX_ITEMS_PER_FEED)
                         }
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
                     } catch (_: Exception) {
                         emptyList()
                     }
@@ -107,10 +116,11 @@ class RssNewsService(private val httpClient: OkHttpClient) {
 
     suspend fun fetchRealNews(): List<Story> = withContext(Dispatchers.IO) {
         val semaphore = feedSemaphore
-        val allStories = coroutineScope {
+        val reports = coroutineScope {
             rssSources.map { (feedUrl, publisherName, defaultTopic) ->
                 async {
                     semaphore.withPermit {
+                        var reachable = false
                         try {
                             val request = Request.Builder()
                                 .url(feedUrl)
@@ -119,18 +129,24 @@ class RssNewsService(private val httpClient: OkHttpClient) {
                                 .build()
 
                             httpClient.newCall(request).execute().use { response ->
-                                if (!response.isSuccessful) return@withPermit emptyList()
+                                if (!response.isSuccessful) return@withPermit FeedFetchResult(false, emptyList())
+                                reachable = true
                                 val xmlData = response.body?.string().orEmpty()
-                                if (xmlData.isBlank()) emptyList()
+                                val items = if (xmlData.isBlank()) emptyList()
                                 else parseRssFeedRobust(xmlData, publisherName, defaultTopic).take(MAX_ITEMS_PER_FEED)
+                                FeedFetchResult(reachable, items)
                             }
+                        } catch (cancelled: CancellationException) {
+                            throw cancelled
                         } catch (_: Exception) {
-                            emptyList()
+                            FeedFetchResult(reachable, emptyList())
                         }
                     }
                 }
-            }.awaitAll().flatten()
+            }.awaitAll()
         }
+        lastSuccessfulFeedCount = reports.count { it.reachable }
+        val allStories = reports.flatMap { it.stories }
 
         val uniqueStories = NewsStoryDeduplicator.merge(allStories)
             .sortedWith(compareByDescending<Story> { it.publishedAtEpochMs }.thenByDescending { it.id })
@@ -160,6 +176,8 @@ class RssNewsService(private val httpClient: OkHttpClient) {
                     imageUrl = extractMetaImage(html, url),
                 ).takeIf { it.description != null || it.imageUrl != null }
             }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
         } catch (_: Exception) {
             null
         }
@@ -197,6 +215,8 @@ class RssNewsService(private val httpClient: OkHttpClient) {
                     imageUrl = extractMetaImage(html, url),
                 )
             }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
         } catch (_: Exception) {
             null
         }

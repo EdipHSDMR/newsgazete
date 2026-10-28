@@ -35,6 +35,7 @@ import androidx.lifecycle.repeatOnLifecycle
 import com.example.data.CizgiRepository
 import com.example.data.remote.BISTStock
 import com.example.model.FinancialAsset
+import com.example.model.MarketAlert
 import com.example.model.MarketCategory
 import com.example.ui.theme.CizgiColor
 import java.time.*
@@ -49,6 +50,7 @@ private val MARKET_LOCALE = Locale.forLanguageTag("tr-TR")
 fun PiyasaScreen(repository: CizgiRepository, modifier: Modifier = Modifier) {
     val assets by repository.financialAssets.collectAsState()
     val stocks by repository.bistStocks.collectAsState()
+    val alerts by repository.marketAlerts.collectAsState()
     val error by repository.marketStatusMessage.collectAsState()
     val context = LocalContext.current
     val store = remember { context.getSharedPreferences("market_watchlist", 0) }
@@ -58,6 +60,10 @@ fun PiyasaScreen(repository: CizgiRepository, modifier: Modifier = Modifier) {
     var info by remember { mutableStateOf(false) }
     var converter by remember { mutableStateOf(false) }
     var amount by rememberSaveable { mutableStateOf("") }
+    var showAlertDialog by remember { mutableStateOf(false) }
+    var alertCode by rememberSaveable { mutableStateOf("") }
+    var alertThreshold by rememberSaveable { mutableStateOf("") }
+    var alertDirection by rememberSaveable { mutableStateOf("above") }
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     LaunchedEffect(lifecycle) {
         lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
@@ -88,6 +94,33 @@ fun PiyasaScreen(repository: CizgiRepository, modifier: Modifier = Modifier) {
         text = { Text("TCMB kurları günlük gösterge değeridir. BIST ve diğer varlıkların kotasyonları sağlayıcının gecikmesine tabidir. Kaynak ile veri tarihi her satırda görünür; hesaplanan değerler ayrıca belirtilir.") },
         confirmButton = { TextButton({ info = false }) { Text("Tamam") } },
     )
+    if (showAlertDialog) AlertDialog(
+        onDismissRequest = { showAlertDialog = false },
+        title = { Text("Piyasa alarmı") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("Kaynak yeni veri verdiğinde seçtiğin seviyeyi geçerse bildirim gönderilir.", style = MaterialTheme.typography.bodySmall)
+                OutlinedTextField(alertCode, { alertCode = it }, label = { Text("Kod (ör. USD/TRY veya BIST:THYAO)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(alertThreshold, { next -> if (next.all { it.isDigit() || it in ".," }) alertThreshold = next }, label = { Text("Seviye") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.fillMaxWidth())
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text("Koşul:", style = MaterialTheme.typography.labelLarge)
+                    TextButton(onClick = { alertDirection = if (alertDirection == "above") "below" else "above" }) {
+                        Text(if (alertDirection == "above") "üzerine çıkınca" else "altına inince")
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                alertThreshold.replace(',', '.').toDoubleOrNull()?.let { threshold ->
+                    repository.addMarketAlert(alertCode, threshold, alertDirection)
+                    showAlertDialog = false
+                    alertThreshold = ""
+                }
+            }) { Text("Alarmı kaydet") }
+        },
+        dismissButton = { TextButton(onClick = { showAlertDialog = false }) { Text("Vazgeç") } },
+    )
     LazyColumn(
         modifier.fillMaxSize().testTag("piyasa_screen"), contentPadding = PaddingValues(18.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -95,6 +128,7 @@ fun PiyasaScreen(repository: CizgiRepository, modifier: Modifier = Modifier) {
         item {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text("Piyasalar", style = MaterialTheme.typography.headlineMedium, modifier = Modifier.weight(1f))
+                IconButton({ showAlertDialog = true }, Modifier.size(32.dp)) { Icon(Icons.Outlined.NotificationsNone, "Piyasa alarmı", modifier = Modifier.size(19.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant) }
                 IconButton({ info = true }, Modifier.size(32.dp)) { Icon(Icons.Outlined.Info, "Veri kaynakları", modifier = Modifier.size(19.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant) }
                 IconButton({ repository.refreshMarkets(force = true) }, Modifier.size(32.dp)) { Icon(Icons.Outlined.Refresh, "Piyasayı yenile", modifier = Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant) }
             }
@@ -121,6 +155,19 @@ fun PiyasaScreen(repository: CizgiRepository, modifier: Modifier = Modifier) {
         if (error.isNotBlank()) item {
             Surface(color = MaterialTheme.colorScheme.errorContainer, shape = RoundedCornerShape(14.dp)) {
                 Text(error, Modifier.padding(12.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onErrorContainer)
+            }
+        }
+        if (alerts.isNotEmpty()) item {
+            Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                Text("Aktif alarmlar", style = MaterialTheme.typography.titleSmall)
+                alerts.forEach { alert ->
+                    Surface(color = MaterialTheme.colorScheme.secondaryContainer, shape = RoundedCornerShape(13.dp), modifier = Modifier.fillMaxWidth()) {
+                        Row(Modifier.padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Text("${alert.code} · ${if (alert.direction == "below") "≤" else "≥"} ${alert.threshold}", style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
+                            IconButton({ repository.removeMarketAlert(alert.code) }, Modifier.size(30.dp)) { Icon(Icons.Outlined.Close, "Alarmı sil", modifier = Modifier.size(17.dp)) }
+                        }
+                    }
+                }
             }
         }
         if (tab == "Genel" && assets.any { it.code == "USD/TRY" }) item {

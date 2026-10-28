@@ -96,7 +96,10 @@ object NewsStoryDeduplicator {
 
         val publishedA = a.story.publishedAtEpochMs
         val publishedB = b.story.publishedAtEpochMs
-        val withinWindow = publishedA <= 0 || publishedB <= 0 || abs(publishedA - publishedB) <= DUPLICATE_WINDOW_MS
+        // Unknown publication dates are not evidence that two reports are related. Treating a
+        // missing timestamp as "within the window" can collapse unrelated archive stories that
+        // happen to share a short or recurring headline.
+        val withinWindow = publishedA > 0 && publishedB > 0 && abs(publishedA - publishedB) <= DUPLICATE_WINDOW_MS
         if (withinWindow && a.headlineKey.isNotBlank() && a.headlineKey == b.headlineKey) return true
 
         val common = a.headlineTerms intersect b.headlineTerms

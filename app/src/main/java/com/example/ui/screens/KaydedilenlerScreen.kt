@@ -71,8 +71,17 @@ fun KaydedilenlerScreen(repository: CizgiRepository, onStoryClick: (String) -> U
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         if (story.id in downloading) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
                         else Icon(if (row.offlineReady) Icons.Outlined.OfflinePin else Icons.AutoMirrored.Outlined.Article, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary)
-                        Text(when { story.id in downloading -> "Tam metin indiriliyor"; row.offlineReady -> "Metin çevrimdışı hazır"; else -> "Kısa içerik kayıtlı" }, style = MaterialTheme.typography.labelSmall, modifier = Modifier.weight(1f))
-                        if (!row.offlineReady && story.id !in downloading) TextButton({ repository.downloadForOffline(story.id) }) { Text("İndir") }
+                        val hasRemoteImage = row.imageUrl.startsWith("https://")
+                        val needsDownload = !row.offlineReady || (hasRemoteImage && !row.hasOfflineImage)
+                        val state = when {
+                            story.id in downloading -> "Metin ve görsel hazırlanıyor"
+                            row.offlineReady && row.hasOfflineImage -> "Metin ve görsel çevrimdışı hazır"
+                            row.offlineReady && hasRemoteImage -> "Metin hazır · Görsel indirilebilir"
+                            row.offlineReady -> "Metin çevrimdışı hazır"
+                            else -> "Kısa içerik kayıtlı"
+                        }
+                        Text(state, style = MaterialTheme.typography.labelSmall, modifier = Modifier.weight(1f))
+                        if (needsDownload && story.id !in downloading) TextButton({ repository.downloadForOffline(story.id) }) { Text(if (row.offlineReady) "Görseli indir" else "İndir") }
                     }
                     errors[story.id]?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                 }

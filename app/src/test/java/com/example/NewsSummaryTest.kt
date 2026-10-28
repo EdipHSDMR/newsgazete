@@ -66,4 +66,29 @@ class NewsSummaryTest {
         assertTrue(paragraphs.any { it.contains(opening) })
         assertFalse(paragraphs.any { it.startsWith("dakikasında") })
     }
+
+    @Test fun questionSummariesChooseAConcreteOutcomeAndRemainSourceGrounded() {
+        val source = "Karşılaşma öncesi iki takım da hazırlıklarını tamamladı. Beşiktaş, 78. dakikada attığı golle maçı 2-1 kazandı. Bu sonuçla puanını 40'a yükseltti."
+        val result = NewsSummary.assess("", source, "Maçta ne oldu?")
+        assertTrue(result.text.contains("78. dakikada"))
+        assertTrue(result.text.contains("2-1 kazandı"))
+        assertTrue(result.sourceCoverage > 0.9f)
+        assertTrue(result.includesConcreteFact)
+        assertNull(result.missingAnswer)
+    }
+
+    @Test fun missingOutcomeIsCalledOutInsteadOfFilledIn() {
+        val result = NewsSummary.assess("", "Takımlar karşılaşma öncesi son antrenmanını yaptı.", "Maçta ne oldu?")
+        assertNotNull(result.missingAnswer)
+        assertTrue(result.missingAnswer!!.contains("olayın sonucu"))
+        assertFalse(result.text.contains("kazandı"))
+    }
+
+    @Test fun percentagesAndFullDatesCountAsDirectAnswers() {
+        val date = NewsSummary.assess("", "Etkinliğin 22 Ekim 2026 tarihinde başlayacağı açıklandı.", "Etkinlik ne zaman?")
+        assertTrue(date.text.contains("22 Ekim 2026"))
+        assertNull(date.missingAnswer)
+        val rate = NewsSummary.assess("", "Yeni düzenleme ile aidatlara yüzde 12 zam yapılacak.", "Aidat ne kadar artacak?")
+        assertTrue(rate.text.contains("yüzde 12"))
+    }
 }

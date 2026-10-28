@@ -9,6 +9,7 @@ import com.example.model.SportsMatch
 import com.example.model.TeamLineup
 import com.example.model.TopScorer
 import com.example.util.MatchClock
+import com.example.util.TeamNameMatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
@@ -26,7 +27,6 @@ import java.time.Instant
 import java.time.OffsetDateTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
-import java.text.Normalizer
 import java.util.Locale
 
 class FootballApiService(
@@ -40,6 +40,7 @@ class FootballApiService(
     private val espnLiveEventCache = java.util.concurrent.ConcurrentHashMap<String, List<MatchEvent>>()
     private val basketballLeadersCache = java.util.concurrent.ConcurrentHashMap<String, Pair<Long, List<TopScorer>>>()
     private val euroLeagueGamesCache = java.util.concurrent.ConcurrentHashMap<String, Pair<Long, List<SportsMatch>>>()
+    private val matchLineupsCache = java.util.concurrent.ConcurrentHashMap<String, Pair<Long, MatchLineups>>()
     @Volatile private var apiFootballUnavailableReason: String? = null
 
     fun resetApiFootballState() {
@@ -320,7 +321,18 @@ class FootballApiService(
         }
     }
 
-    suspend fun fetchMatchLineups(match: SportsMatch): MatchLineups? = withContext(Dispatchers.IO) {
+    suspend fun fetchMatchLineups(match: SportsMatch): MatchLineups? {
+        val cacheKey = "${match.sportType}|${match.competition}|${match.id}"
+        matchLineupsCache[cacheKey]?.let { (fetchedAt, lineups) ->
+            if (System.currentTimeMillis() - fetchedAt < LINEUPS_CACHE_MS) return lineups
+        }
+        val lineups = fetchMatchLineupsUncached(match) ?: return null
+        if (matchLineupsCache.size >= MAX_LINEUP_CACHE_ENTRIES) matchLineupsCache.clear()
+        matchLineupsCache[cacheKey] = System.currentTimeMillis() to lineups
+        return lineups
+    }
+
+    private suspend fun fetchMatchLineupsUncached(match: SportsMatch): MatchLineups? = withContext(Dispatchers.IO) {
         var eventId = match.id
         if (match.dataProvider == "API_FOOTBALL" && match.sportType == "FUTBOL") {
             val root = fetchEspnJson("$baseUrl/fixtures/lineups?fixture=${match.id}")
@@ -417,9 +429,8 @@ class FootballApiService(
 
     private fun buildMatchLineups(match: SportsMatch, teams: List<TeamLineup>): MatchLineups? {
         if (teams.size < 2 || teams.sumOf { it.players.size } == 0) return null
-        val home = teams.firstOrNull { it.team.equals(match.homeTeam, ignoreCase = true) } ?: teams[0]
-        val away = teams.firstOrNull { it.team.equals(match.awayTeam, ignoreCase = true) && it != home }
-            ?: teams.firstOrNull { it != home } ?: return null
+        val home = teams.firstOrNull { TeamNameMatcher.matches(it.team, match.homeTeam) } ?: return null
+        val away = teams.firstOrNull { it != home && TeamNameMatcher.matches(it.team, match.awayTeam) } ?: return null
         return MatchLineups(home, away)
     }
 
@@ -447,15 +458,7 @@ class FootballApiService(
     }
 
     private fun sameTeamName(first: String, second: String): Boolean {
-        fun normalized(value: String): String = Normalizer.normalize(value.lowercase(Locale.ROOT), Normalizer.Form.NFD)
-            .replace(Regex("\\p{M}+"), "")
-            .replace(Regex("[^a-z0-9 ]"), " ")
-            .split(Regex("\\s+"))
-            .filter { it.isNotBlank() && it !in setOf("fc", "cf", "afc", "fk", "sk", "club", "de", "the") }
-            .joinToString(" ")
-        val a = normalized(first)
-        val b = normalized(second)
-        return a == b || a.startsWith(b) || b.startsWith(a) || (a.split(" ").firstOrNull()?.length ?: 0) >= 5 && a.split(" ").first() == b.split(" ").firstOrNull()
+        return TeamNameMatcher.matches(first, second)
     }
 
     private fun sortMatches(matches: List<SportsMatch>): List<SportsMatch> = matches
@@ -1404,6 +1407,8 @@ class FootballApiService(
     }
 
     private companion object {
+        const val LINEUPS_CACHE_MS = 15 * 60_000L
+        const val MAX_LINEUP_CACHE_ENTRIES = 80
         const val STANDINGS_CACHE_MS = 60 * 60_000L
         const val ESPN_SCHEDULE_REFRESH_MS = 30 * 60_000L
         const val ESPN_LIVE_REFRESH_MS = 10_000L

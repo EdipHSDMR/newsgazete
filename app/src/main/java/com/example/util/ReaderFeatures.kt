@@ -24,11 +24,33 @@ object PersonalizedNews {
                 name.isNotBlank() && ArchiveSearch.normalize(story.title + " " + story.summary).contains(name)
             }
 
-    fun rank(stories: List<Story>, preferences: UserPreferences, now: Long = System.currentTimeMillis()): List<Story> =
-        stories.filter { matches(it, preferences) }.sortedWith(
-            compareByDescending<Story> { it.publishedAtEpochMs > now - 24 * 60 * 60_000L }
-                .thenByDescending { it.publishedAtEpochMs }
+    /** Ranks followed stories while spacing publishers so one feed cannot dominate the screen. */
+    fun rank(stories: List<Story>, preferences: UserPreferences, now: Long = System.currentTimeMillis()): List<Story> {
+        val candidates = stories.filter { matches(it, preferences) }.sortedWith(
+            compareByDescending<Story> { it.isBreaking }
+                .thenByDescending { it.publishedAtEpochMs > now - 24 * 60 * 60_000L }
+                .thenByDescending { it.sourceCount }
+                .thenByDescending { it.publishedAtEpochMs },
         )
+        if (candidates.size < 3) return candidates
+
+        val result = ArrayList<Story>(candidates.size)
+        val remaining = candidates.toMutableList()
+        val publisherUses = mutableMapOf<String, Int>()
+        while (remaining.isNotEmpty()) {
+            val nextIndex = remaining.indices.minWithOrNull(
+                compareBy<Int> { index ->
+                    val publisher = ArchiveSearch.normalize(remaining[index].publisher).ifBlank { "kaynak-bilinmiyor" }
+                    publisherUses[publisher] ?: 0
+                }.thenBy { it },
+            ) ?: break
+            val next = remaining.removeAt(nextIndex)
+            result += next
+            val publisher = ArchiveSearch.normalize(next.publisher).ifBlank { "kaynak-bilinmiyor" }
+            publisherUses[publisher] = (publisherUses[publisher] ?: 0) + 1
+        }
+        return result
+    }
 }
 
 object ReaderSettings {

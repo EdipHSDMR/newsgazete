@@ -27,8 +27,15 @@ data class PressNewsPage(
 
 /** Press.org.tr is accessed through the private service gateway; the provider key never reaches the APK. */
 class PressNewsApiService(private val httpClient: OkHttpClient) {
+    @Volatile var lastStatusCode: Int? = null
+        private set
+    @Volatile var lastError: String = ""
+        private set
+
     suspend fun fetchPage(page: Int, pageSize: Int = MAX_PAGE_SIZE): PressNewsPage? = withContext(Dispatchers.IO) {
         if (page < 1) return@withContext null
+        lastStatusCode = null
+        lastError = ""
 
         try {
             val url = "${ApiGatewayConfig.BASE_URL}/v1/news?page=$page&limit=${pageSize.coerceIn(1, MAX_PAGE_SIZE)}"
@@ -39,9 +46,16 @@ class PressNewsApiService(private val httpClient: OkHttpClient) {
                 .build()
 
             httpClient.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) return@withContext null
+                lastStatusCode = response.code
+                if (!response.isSuccessful) {
+                    lastError = "Haber servisi HTTP ${response.code} yanıtı verdi."
+                    return@withContext null
+                }
                 val body = response.body?.string().orEmpty()
-                if (body.isBlank()) return@withContext null
+                if (body.isBlank()) {
+                    lastError = "Haber servisi boş yanıt verdi."
+                    return@withContext null
+                }
                 val json = JSONObject(body)
                 val items = json.optJSONArray("items") ?: JSONArray()
                 val stories = buildList {
@@ -58,6 +72,7 @@ class PressNewsApiService(private val httpClient: OkHttpClient) {
                 )
             }
         } catch (_: Exception) {
+            lastError = "Haber servisine bağlanılamadı."
             null
         }
     }

@@ -2,6 +2,7 @@ package com.example.util
 
 import com.example.model.LineupPlayer
 import com.example.model.TeamLineup
+import java.text.Normalizer
 import java.util.Locale
 
 object MatchClock {
@@ -83,4 +84,29 @@ object FootballFormation {
             else -> 0
         }
     }
+}
+
+/** Conservative provider-name matching for lineup and fixture attribution. */
+object TeamNameMatcher {
+    private val ignored = setOf("fc", "cf", "afc", "fk", "sk", "club", "the", "de")
+
+    fun matches(first: String, second: String): Boolean {
+        val left = tokens(first)
+        val right = tokens(second)
+        if (left.isEmpty() || right.isEmpty()) return false
+        if (left == right) return true
+        // Allow a provider to append a club suffix, but do not match teams that merely share
+        // a city or first word (for example Manchester City and Manchester United).
+        if (minOf(left.size, right.size) < 2) return false
+        return left.containsAll(right) || right.containsAll(left)
+    }
+
+    private fun tokens(value: String): Set<String> = Normalizer.normalize(
+        value.lowercase(Locale.ROOT),
+        Normalizer.Form.NFD,
+    ).replace(Regex("\\p{M}+"), "")
+        .replace(Regex("[^a-z0-9]+"), " ")
+        .split(Regex("\\s+"))
+        .filter { it.isNotBlank() && it !in ignored }
+        .toSet()
 }

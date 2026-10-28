@@ -53,6 +53,7 @@ fun CizgiApp(modifier: Modifier = Modifier, notificationNavigation: Notification
             request.storyId != null -> subScreen = SubScreen.StoryDetail(request.storyId)
             request.screen == "spor" -> { currentTab = CizgiScreen.SPOR; close() }
             request.screen == "piyasa" -> { currentTab = CizgiScreen.PIYASA; close() }
+            request.screen == "hava" -> subScreen = SubScreen.Weather
         }
         onNotificationNavigationHandled(request.requestToken)
     }

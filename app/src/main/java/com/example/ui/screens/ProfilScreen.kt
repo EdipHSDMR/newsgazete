@@ -1,7 +1,10 @@
 package com.example.ui.screens
 
 import android.app.TimePickerDialog
+import android.content.Intent
+import android.net.Uri
 import android.os.Build
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -15,6 +18,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -52,6 +56,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -63,6 +68,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.CizgiRepository
+import com.example.model.DataSourceDiagnostic
 import com.example.ui.theme.CizgiColor
 import com.example.util.CizgiNotificationHelper
 import com.example.util.ReaderSettings
@@ -72,6 +78,11 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.rememberScrollState
 import java.time.LocalTime
 import java.util.Locale
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+
+private const val PRIVACY_POLICY_URL = "https://github.com/EdipHSDMR/newsgazete/blob/main/docs/privacy-policy.md"
 
 @Composable
 fun ProfilScreen(
@@ -85,12 +96,15 @@ fun ProfilScreen(
     onNavigatePersonalize: () -> Unit = {},
 ) {
     val prefs by repository.preferences.collectAsState()
+    val diagnostics by repository.sourceDiagnostics.collectAsState()
     var showThemeDialog by remember { mutableStateOf(false) }
     var showFontSizeDialog by remember { mutableStateOf(false) }
     var showClearDataDialog by remember { mutableStateOf(false) }
     var showAboutDialog by remember { mutableStateOf(false) }
+    var showPrivacyDialog by remember { mutableStateOf(false) }
     var showQuietHoursDialog by remember { mutableStateOf(false) }
     val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
     var pendingNotificationToggle by remember { mutableStateOf<String?>(null) }
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission(),
@@ -103,6 +117,36 @@ fun ProfilScreen(
             "digest" -> repository.setDailyDigest(true)
         }
         pendingNotificationToggle = null
+    }
+    val exportLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/json"),
+    ) { uri: Uri? ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        coroutineScope.launch(Dispatchers.IO) {
+            val success = runCatching {
+                context.contentResolver.openOutputStream(uri)?.use { output ->
+                    output.write(repository.exportBackupJson().toByteArray(Charsets.UTF_8))
+                } != null
+            }.getOrDefault(false)
+            withContext(Dispatchers.Main) {
+                Toast.makeText(context, if (success) "Yedek kaydedildi." else "Yedek kaydedilemedi.", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+    val importLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument(),
+    ) { uri: Uri? ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        coroutineScope.launch(Dispatchers.IO) {
+            val imported = runCatching {
+                context.contentResolver.openInputStream(uri)?.bufferedReader(Charsets.UTF_8)?.use { reader ->
+                    repository.importBackupJson(reader.readText())
+                } == true
+            }.getOrDefault(false)
+            withContext(Dispatchers.Main) {
+                Toast.makeText(context, if (imported) "Yedek geri yüklendi." else "Dosya tanınmadı.", Toast.LENGTH_SHORT).show()
+            }
+        }
     }
 
     fun applyNotificationToggle(name: String, enabled: Boolean) {
@@ -276,12 +320,49 @@ fun ProfilScreen(
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 SettingSwitchRow(title = "Günün kısa turu", subtitle = "Günde bir kez kaynaklardan derlenen gündem", checked = prefs.dailyDigest, onCheckedChange = { setNotificationToggle("digest", it) })
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                SettingSwitchRow(title = "Hava uyarıları", subtitle = "Yüksek yağış, don ve sıcak hava uyarıları", checked = prefs.weatherAlerts, onCheckedChange = repository::setWeatherAlerts)
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 SettingSwitchRow(
                     title = "Sessiz Saatler (${prefs.quietHoursStart} - ${prefs.quietHoursEnd})",
                     subtitle = "Başlığa dokunup saatleri düzenle; bu aralıkta telefon bildirimleri susar",
                     checked = prefs.quietHoursEnabled,
                     onCheckedChange = { repository.setQuietHours(it) },
                     onTitleClick = { showQuietHoursDialog = true },
+                )
+            }
+        }
+
+        item { SettingSectionHeader("VERİ KAYNAKLARI") }
+        item {
+            SettingCard {
+                if (diagnostics.isEmpty()) {
+                    Text("Kaynak durumu ilk yenilemeden sonra burada görünür.", modifier = Modifier.padding(16.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                } else {
+                    diagnostics.forEachIndexed { index, item ->
+                        if (index > 0) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                        DataSourceRow(item)
+                    }
+                }
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                TextButton(onClick = repository::refreshAll, modifier = Modifier.fillMaxWidth()) { Text("Kaynakları yenile") }
+            }
+        }
+
+        item { SettingSectionHeader("YEDEKLEME VE TAŞIMA") }
+        item {
+            SettingCard {
+                SettingNavigationRow(
+                    icon = Icons.Default.Security,
+                    title = "Ayarları ve kayıtları dışa aktar",
+                    subtitle = "Takipler, alarm seviyeleri ve kayıtlı haberler cihazda dosyalanır",
+                    onClick = { exportLauncher.launch("cizgi-yedek.json") },
+                )
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                SettingNavigationRow(
+                    icon = Icons.Default.Info,
+                    title = "Yedekten geri yükle",
+                    subtitle = "Daha önce dışa aktardığın JSON dosyasını seç",
+                    onClick = { importLauncher.launch(arrayOf("application/json", "text/plain")) },
                 )
             }
         }
@@ -293,6 +374,13 @@ fun ProfilScreen(
 
         item {
             SettingCard {
+                SettingNavigationRow(
+                    icon = Icons.Default.Security,
+                    title = "Gizlilik politikası",
+                    subtitle = "Verilerin nasıl işlendiğini görüntüle",
+                    onClick = { showPrivacyDialog = true },
+                )
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 SettingNavigationRow(
                     icon = Icons.Default.Delete,
                     title = "Verileri ve Önbelleği Temizle",
@@ -470,7 +558,74 @@ fun ProfilScreen(
         )
     }
 
+    if (showPrivacyDialog) {
+        AlertDialog(
+            onDismissRequest = { showPrivacyDialog = false },
+            title = { Text("Gizlilik Politikası") },
+            text = {
+                Column(
+                    modifier = Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    Text("Çizgi kullanıcı hesabı, reklam SDK'sı veya GPS izni kullanmaz.")
+                    Text("Takip tercihleri, kayıtlı haberler, okuma konumu ve alarm ayarları bu cihazda tutulur. İsteğe bağlı JSON yedeği yalnızca Android belge seçicisinde seçtiğiniz yere yazılır.")
+                    Text("Hava durumu için seçtiğiniz il/ilçe adı, hava durumu sağlayıcılarına gönderilir. GPS konumu alınmaz. Haber, spor ve piyasa verileri de ilgili yayıncı ve veri sağlayıcılarından yüklenir; bu hizmetler standart ağ bilgilerini kendi politikalarına göre işleyebilir.")
+                    Text("Uygulama kişisel tercihleri satmaz. Verileri ve Önbelleği Temizle seçeneği cihazdaki kayıtları siler. Dışa aktarılan yedek dosyalarını seçtiğiniz konumdan ayrıca silebilirsiniz.")
+                    Text("Güncel web politikası için GitHub sayfasını açabilirsiniz.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showPrivacyDialog = false }) { Text("Anladım") }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(PRIVACY_POLICY_URL))) }
+                }) { Text("Web sayfası") }
+            },
+        )
+    }
 
+
+}
+
+@Composable
+private fun DataSourceRow(item: DataSourceDiagnostic) {
+    val healthy = item.lastSuccessEpochMs > 0L && item.consecutiveFailures == 0
+    val recent = item.lastAttemptEpochMs > 0L && System.currentTimeMillis() - item.lastAttemptEpochMs < 2 * 60 * 60_000L
+    val stateColor = when {
+        healthy && recent -> MaterialTheme.colorScheme.primary
+        item.consecutiveFailures > 0 -> MaterialTheme.colorScheme.error
+        else -> MaterialTheme.colorScheme.onSurfaceVariant
+    }
+    val stateLabel = when {
+        item.consecutiveFailures > 0 && item.lastSuccessEpochMs > 0L -> "Son denemede sorun"
+        item.lastSuccessEpochMs == 0L -> "Henüz veri alınmadı"
+        !recent -> "Eski veri"
+        else -> "Çalışıyor"
+    }
+    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 11.dp), verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        Box(Modifier.padding(top = 5.dp).size(8.dp).clip(CircleShape).background(stateColor))
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Text(item.source, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                Text(stateLabel, style = MaterialTheme.typography.labelSmall, color = stateColor)
+            }
+            Text(item.message.ifBlank { "Son kontrol: ${diagnosticTime(item.lastAttemptEpochMs)}" }, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (item.lastSuccessEpochMs > 0L) Text("Son başarılı bağlantı: ${diagnosticTime(item.lastSuccessEpochMs)}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+private fun diagnosticTime(timestamp: Long): String {
+    if (timestamp <= 0L) return "—"
+    val minutes = ((System.currentTimeMillis() - timestamp) / 60_000L).coerceAtLeast(0L)
+    return when {
+        minutes < 1 -> "az önce"
+        minutes < 60 -> "$minutes dk önce"
+        minutes < 1_440 -> "${minutes / 60} sa önce"
+        else -> java.time.Instant.ofEpochMilli(timestamp).atZone(java.time.ZoneId.of("Europe/Istanbul"))
+            .format(java.time.format.DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"))
+    }
 }
 
 @Composable

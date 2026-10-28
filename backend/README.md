@@ -24,3 +24,9 @@ Volleyball fixture responses are cached for five minutes; league and standings r
 
 PHA currently exposes its archive through page-based requests. The function forwards pages up to 100 items, and the Android archive stores and loads up to 100,000 articles. A larger total is only available when the upstream provider actually has more records.
 
+## Operational boundaries
+
+The Android app can incrementally request one additional PHA page during an eligible background refresh, but this is a per-device archive and depends on Android scheduling, network access, and the configured gateway being reachable. It does not create a shared server-side archive or guarantee that hundreds of thousands of historical items exist upstream. The app also does not receive push notifications from this function; local WorkManager refreshes are periodic and may be delayed by Android. The read-only `/health` endpoint reports service availability and whether provider credentials are configured, without returning secret values.
+
+The Android client contains an optional Firebase Messaging receiver and subscribes to `cizgi-breaking`, `cizgi-sports`, and `cizgi-markets` only when Firebase is configured. A server-side sender is still required to publish messages to those topics; no Firebase project or sender credential is committed here.
+

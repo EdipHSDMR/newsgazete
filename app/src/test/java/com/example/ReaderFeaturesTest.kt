@@ -48,6 +48,28 @@ class ReaderFeaturesTest {
         assertEquals("https://b.example/haber", merged.canonicalUrl)
     }
 
+    @Test fun unknownDatesDoNotMergeUnrelatedArchiveStories() {
+        val first = story("Beşiktaş yeni karar aldı", time = 0).copy(id = "unknown-a", fullText = "Kulüp yönetimi yeni sezon planını açıkladı.")
+        val second = story("Beşiktaş yeni karar aldı", time = 0).copy(id = "unknown-b", fullText = "Belediye ulaşım tarifesini değiştireceğini bildirdi.")
+        assertEquals(2, NewsStoryDeduplicator.merge(listOf(first, second)).size)
+    }
+
+    @Test fun teamMatchingDoesNotConfuseSharedCityNames() {
+        assertTrue(TeamNameMatcher.matches("Fenerbahçe SK", "Fenerbahçe"))
+        assertTrue(TeamNameMatcher.matches("Bayern München", "Bayern Munchen"))
+        assertFalse(TeamNameMatcher.matches("Manchester City", "Manchester United"))
+        assertFalse(TeamNameMatcher.matches("Manchester", "Manchester United"))
+    }
+
+    @Test fun personalFeedSpreadsStoriesAcrossPublishersBeforeRepeatingOne() {
+        val prefs = UserPreferences(followedTopics = setOf("Spor"))
+        val first = story("Beşiktaş ilk haberi", time = 30).copy(id = "first", publisher = "Kaynak A")
+        val second = story("Beşiktaş ikinci haberi", time = 29).copy(id = "second", publisher = "Kaynak A")
+        val third = story("Beşiktaş üçüncü haberi", time = 28).copy(id = "third", publisher = "Kaynak B")
+        val ranked = PersonalizedNews.rank(listOf(first, second, third), prefs, 40)
+        assertEquals(listOf("Kaynak A", "Kaynak B", "Kaynak A"), ranked.map { it.publisher })
+    }
+
     @Test fun publisherSectionsPreventGoldAndEuroSportsMisclassification() {
         assertEquals("Spor", NewsTopics.classify("Altın Top ödülünü kim kazandı?", "Ödül töreni düzenlendi", "", "Ekonomi", "https://www.example.com/spor/altin-top"))
         assertEquals("Spor", NewsTopics.classify("EuroLeague sonuçları", "", "", "Gündem", ""))

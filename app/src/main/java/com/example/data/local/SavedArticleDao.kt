@@ -23,6 +23,9 @@ interface SavedArticleDao {
     @Query("UPDATE saved_articles SET storyJson = :snapshot, fullText = :body, summary = :summary, offlineReady = :ready WHERE id = :id")
     suspend fun updateOffline(id: String, snapshot: String, body: String, summary: String, ready: Boolean)
 
+    @Query("UPDATE saved_articles SET offlineImagePath = :path WHERE id = :id")
+    suspend fun updateOfflineImage(id: String, path: String)
+
     @Query("DELETE FROM saved_articles WHERE id = :id")
     suspend fun deleteArticleById(id: String)
 

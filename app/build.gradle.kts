@@ -17,8 +17,8 @@ android {
     applicationId = "com.aistudio.cizgi.haberver"
     minSdk = 26
     targetSdk = 36
-    versionCode = 1
-    versionName = "1.0"
+    versionCode = 2
+    versionName = "1.1.0"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
@@ -119,6 +119,7 @@ dependencies {
   implementation(libs.kotlinx.serialization.json)
   implementation(libs.retrofit.serialization.converter)
   implementation(libs.firebase.ai)
+  implementation("com.google.firebase:firebase-messaging")
   // Uncomment to use Firestore:
   // implementation(libs.firebase.firestore)
 

@@ -16,7 +16,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         ReadingHistoryEntity::class,
         NotificationEntity::class,
     ],
-    version = 4,
+    version = 5,
     exportSchema = false,
 )
 abstract class CizgiDatabase : RoomDatabase() {
@@ -38,7 +38,7 @@ abstract class CizgiDatabase : RoomDatabase() {
                     CizgiDatabase::class.java,
                     "cizgi_news_database",
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
                     .build()
                 INSTANCE = instance
                 instance
@@ -112,6 +112,12 @@ abstract class CizgiDatabase : RoomDatabase() {
                 db.execSQL("UPDATE saved_articles SET offlineReady = 1 WHERE LENGTH(fullText) >= 1200")
                 db.execSQL("CREATE TABLE IF NOT EXISTS reading_history (storyId TEXT NOT NULL PRIMARY KEY, storyJson TEXT NOT NULL, lastReadAt INTEGER NOT NULL, anchorKey TEXT NOT NULL, itemOffset INTEGER NOT NULL, progressPercent INTEGER NOT NULL)")
                 db.execSQL("CREATE TABLE IF NOT EXISTS notification_inbox (id TEXT NOT NULL PRIMARY KEY, category TEXT NOT NULL, title TEXT NOT NULL, body TEXT NOT NULL, storyId TEXT, createdAt INTEGER NOT NULL, isRead INTEGER NOT NULL)")
+            }
+        }
+
+        internal val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE saved_articles ADD COLUMN offlineImagePath TEXT NOT NULL DEFAULT ''")
             }
         }
 

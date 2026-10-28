@@ -14,6 +14,8 @@ import java.time.ZoneId
 import java.time.LocalDate
 import com.example.data.local.CizgiDatabase
 import com.example.data.local.CachedSportStatEntity
+import com.example.data.local.OfflineImageStore
+import com.example.data.remote.GatewayHealthService
 import com.example.data.local.NewsArticleEntity
 import com.example.data.local.SavedArticleEntity
 import com.example.data.remote.FootballApiService
@@ -21,6 +23,9 @@ import com.example.data.remote.PressNewsApiService
 import com.example.data.remote.RssNewsService
 import com.example.data.remote.WeatherApiService
 import com.example.model.FinancialAsset
+import com.example.model.DataSourceDiagnostic
+import com.example.model.BackupPayload
+import com.example.model.MarketAlert
 import com.example.model.LeagueStanding
 import com.example.model.NotificationItem
 import com.example.model.SportsMatch
@@ -29,6 +34,7 @@ import com.example.model.Story
 import com.example.model.UserPreferences
 import com.example.model.WeatherInfo
 import com.example.util.CizgiNotificationHelper
+import com.example.widget.CizgiWidgetProvider
 import com.example.util.NewsDiscoveryInsights
 import com.example.util.NewsStoryDeduplicator
 import com.example.util.NewsSummary
@@ -52,6 +58,9 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.json.Json
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
@@ -66,6 +75,7 @@ class CizgiRepository private constructor(private val context: Context) {
         .connectTimeout(8, TimeUnit.SECONDS)
         .readTimeout(10, TimeUnit.SECONDS)
         .build()
+    private val offlineImageStore = OfflineImageStore(context, httpClient)
 
     // Room Database
     private val database = CizgiDatabase.getDatabase(context)
@@ -73,6 +83,11 @@ class CizgiRepository private constructor(private val context: Context) {
     private val readerDao = database.readerDao()
     private val notificationDao = database.notificationDao()
     private val userPrefs = context.getSharedPreferences("cizgi_user_prefs", Context.MODE_PRIVATE)
+    private val diagnosticsCodec = Json { ignoreUnknownKeys = true; encodeDefaults = true }
+    private val backupCodec = Json { ignoreUnknownKeys = true; encodeDefaults = true; prettyPrint = true }
+    private val _sourceDiagnostics = MutableStateFlow(loadSourceDiagnostics())
+    val sourceDiagnostics: StateFlow<List<DataSourceDiagnostic>> = _sourceDiagnostics.asStateFlow()
+    private val diagnosticLock = Any()
     private val saveMutex = Mutex()
     private val sportsNotificationMutex = Mutex()
     private val inboxMutex = Mutex()
@@ -105,6 +120,7 @@ class CizgiRepository private constructor(private val context: Context) {
     // Remote Services
     private val rssNewsService = RssNewsService(httpClient)
     private val pressNewsApiService = PressNewsApiService(httpClient)
+    private val gatewayHealthService = GatewayHealthService(httpClient)
     private val weatherApiService = WeatherApiService(httpClient)
     private val footballApiService = FootballApiService(httpClient)
     private val marketApiService = com.example.data.remote.MarketApiService(httpClient)
@@ -168,6 +184,8 @@ class CizgiRepository private constructor(private val context: Context) {
     val bistStocks: StateFlow<List<com.example.data.remote.BISTStock>> = _bistStocks.asStateFlow()
     private val _marketStatusMessage = MutableStateFlow("")
     val marketStatusMessage: StateFlow<String> = _marketStatusMessage.asStateFlow()
+    private val _marketAlerts = MutableStateFlow<List<MarketAlert>>(emptyList())
+    val marketAlerts: StateFlow<List<MarketAlert>> = _marketAlerts.asStateFlow()
 
     private val _preferences = MutableStateFlow(UserPreferences())
     val preferences: StateFlow<UserPreferences> = _preferences.asStateFlow()
@@ -188,6 +206,7 @@ class CizgiRepository private constructor(private val context: Context) {
     private var sportsStatsJob: Job? = null
     private val newsPageMutex = Mutex()
     private val newsRefreshMutex = Mutex()
+    private val pressArchiveMutex = Mutex()
     private val marketRefreshMutex = Mutex()
     private val sourceDescriptionAttempts = mutableMapOf<String, Long>()
 
@@ -215,6 +234,9 @@ class CizgiRepository private constructor(private val context: Context) {
         val matchAlertIds = prefs.getStringSet("match_alert_ids", emptySet())?.toSet() ?: emptySet()
         val followedTopics = prefs.getStringSet("followed_topics", emptySet()) ?: emptySet()
         val followedTeams = prefs.getStringSet("followed_teams", emptySet()) ?: emptySet()
+        _marketAlerts.value = runCatching {
+            diagnosticsCodec.decodeFromString<List<MarketAlert>>(prefs.getString("market_alerts", "[]").orEmpty())
+        }.getOrDefault(emptyList())
         prefs.edit()
             .remove("football_api_key")
             .remove("weather_api_key")
@@ -238,6 +260,7 @@ class CizgiRepository private constructor(private val context: Context) {
                 dailyDigest = prefs.getBoolean("daily_digest", false),
                 matchStartAlerts = prefs.getBoolean("match_start_alerts", true),
                 matchScoreAlerts = prefs.getBoolean("match_score_alerts", true),
+                weatherAlerts = prefs.getBoolean("weather_alerts", false),
                 reduceMotion = prefs.getBoolean("reduce_motion", false),
                 highContrast = prefs.getBoolean("high_contrast", false),
                 quietHoursEnabled = quietHoursEnabled,
@@ -250,6 +273,32 @@ class CizgiRepository private constructor(private val context: Context) {
             val array = JSONArray(prefs.getString("recent_searches", "[]"))
             (0 until array.length()).map { array.getString(it) }
         }.getOrDefault(emptyList())
+    }
+
+    private fun loadSourceDiagnostics(): List<DataSourceDiagnostic> = runCatching {
+        diagnosticsCodec.decodeFromString<List<DataSourceDiagnostic>>(
+            userPrefs.getString("source_diagnostics", "[]").orEmpty(),
+        )
+    }.getOrDefault(emptyList())
+
+    private fun recordSourceDiagnostic(source: String, success: Boolean, message: String) {
+        synchronized(diagnosticLock) {
+            val now = System.currentTimeMillis()
+            val current = _sourceDiagnostics.value
+            val previous = current.firstOrNull { it.source == source }
+            val updated = DataSourceDiagnostic(
+                source = source,
+                lastAttemptEpochMs = now,
+                lastSuccessEpochMs = if (success) now else previous?.lastSuccessEpochMs ?: 0L,
+                consecutiveFailures = if (success) 0 else (previous?.consecutiveFailures ?: 0) + 1,
+                message = message.take(180),
+            )
+            val updatedList = (current.filterNot { it.source == source } + updated)
+                .sortedBy { it.source }
+                .take(MAX_DIAGNOSTIC_SOURCES)
+            _sourceDiagnostics.value = updatedList
+            userPrefs.edit().putString("source_diagnostics", diagnosticsCodec.encodeToString(updatedList)).apply()
+        }
     }
 
     private fun repairArchiveTopics() {
@@ -337,6 +386,7 @@ class CizgiRepository private constructor(private val context: Context) {
                         .take(MAX_IN_MEMORY_STORIES)
                 }
                 refreshDailyDigest(_stories.value)
+                CizgiWidgetProvider.update(context, _stories.value.firstOrNull())
             }
         }
     }
@@ -386,11 +436,13 @@ class CizgiRepository private constructor(private val context: Context) {
     fun toggleSaveStory(story: Story) {
         scope.launch {
             saveMutex.withLock {
-                if (savedArticleDao.getSavedArticleById(story.id) != null) {
+                val old = savedArticleDao.getSavedArticleById(story.id)
+                if (old != null) {
                     offlineJobs.remove(story.id)?.cancel()
                     _offlineDownloads.update { it - story.id }
                     _offlineErrors.update { it - story.id }
                     savedArticleDao.deleteArticleById(story.id)
+                    old.offlineImagePath.let(offlineImageStore::delete)
                 } else {
                     val ready = (completeArticleUntil[story.id] ?: 0) > System.currentTimeMillis()
                     savedArticleDao.insertArticle(SavedArticleEntity.fromStory(story, ready))
@@ -409,17 +461,21 @@ class CizgiRepository private constructor(private val context: Context) {
                 val saved = savedArticleDao.getSavedArticleById(storyId) ?: return@launch
                 loadStoryFromArchive(storyId)
                 val article = loadFullArticle(storyId)
+                val failures = mutableListOf<String>()
                 if (article != null) {
-                    savedArticleDao.updateOffline(storyId, StorySnapshot.encode(article), article.fullText, article.summary, true)
-                    if (article.imageUrl.isNotBlank()) {
-                        try {
-                            coil.Coil.imageLoader(context).execute(coil.request.ImageRequest.Builder(context)
-                                .data(article.imageUrl).size(1000).build())
-                        } catch (_: Exception) { /* The stored text remains readable if an image is unavailable. */ }
-                    }
+                    val stableSnapshot = article.copy(imageUrl = saved.imageUrl.ifBlank { article.imageUrl })
+                    savedArticleDao.updateOffline(storyId, StorySnapshot.encode(stableSnapshot), article.fullText, article.summary, true)
                 } else if (!saved.offlineReady) {
-                    _offlineErrors.update { it + (storyId to "Tam metin alınamadı. Kayıtlı kısa içeriği okuyabilir veya yeniden deneyebilirsin.") }
+                    failures += "Tam metin alınamadı."
                 }
+                val imageUrl = saved.imageUrl.ifBlank { article?.imageUrl.orEmpty() }
+                if (saved.offlineImagePath.isBlank() && imageUrl.isNotBlank()) {
+                    val path = offlineImageStore.download(storyId, imageUrl)
+                    if (path != null) savedArticleDao.updateOfflineImage(storyId, path)
+                    else failures += "Görsel çevrimdışı indirilemedi. Yeniden deneyebilirsin."
+                }
+                if (failures.isNotEmpty()) _offlineErrors.update { it + (storyId to failures.joinToString(" ")) }
+                else _offlineErrors.update { it - storyId }
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (_: Exception) { _offlineErrors.update { it + (storyId to "İndirme tamamlanamadı. Bağlantını kontrol edip yeniden dene.") } }
             finally { _offlineDownloads.update { it - storyId }; offlineJobs.remove(storyId) }
@@ -445,6 +501,7 @@ class CizgiRepository private constructor(private val context: Context) {
         _offlineErrors.value = emptyMap()
         scope.launch(Dispatchers.IO) {
             savedArticleDao.clearAll()
+            offlineImageStore.clear()
         }
     }
 
@@ -501,6 +558,9 @@ class CizgiRepository private constructor(private val context: Context) {
 
     suspend fun refreshNewsInBackground(): Boolean {
         val refreshed = refreshNewsData()
+        // Slowly fill the archive while Android grants background work. One provider page per
+        // run keeps quota and mobile data bounded; the next-page cursor survives app restarts.
+        if (refreshed && hasMorePressArchivePages) loadNextPressArchivePage(background = true)
         if (_preferences.value.matchAlerts) {
             val selections = userPrefs.getStringSet("followed_sports_selections", emptySet()).orEmpty().toList().sorted().take(6)
             for (selection in selections) {
@@ -521,11 +581,31 @@ class CizgiRepository private constructor(private val context: Context) {
             // every slow feed or the press archive. The complete refresh follows in the same job.
             val quickStories = withTimeoutOrNull(7_000L) { rssNewsService.fetchQuickNews() }.orEmpty()
             val quickPublished = if (quickStories.isNotEmpty()) publishLiveNews(quickStories) else false
-            val (rssStories, pressPage) = coroutineScope {
+            val (rssStories, pressPage, gatewayHealth) = coroutineScope {
                 val rss = async { rssNewsService.fetchRealNews() }
                 val press = async { pressNewsApiService.fetchPage(page = 1) }
-                rss.await() to press.await()
+                val gateway = async { gatewayHealthService.check() }
+                Triple(rss.await(), press.await(), gateway.await())
             }
+            val reachableFeeds = rssNewsService.lastSuccessfulFeedCount
+            recordSourceDiagnostic(
+                "RSS haber kaynakları",
+                reachableFeeds > 0,
+                "$reachableFeeds/${rssNewsService.feedCount} kaynak yanıt verdi · ${rssStories.size} haber",
+            )
+            recordSourceDiagnostic(
+                "PHA haber arşivi",
+                pressPage != null,
+                pressPage?.let { "${it.total} haber · ${it.page}/${it.totalPages} sayfa" }
+                    ?: pressNewsApiService.lastError.ifBlank { "Haber arşivi yanıt vermedi." },
+            )
+            val gatewayMessage = when {
+                !gatewayHealth.available && gatewayHealth.httpCode == 0 -> "Servis geçidine bağlanılamadı."
+                !gatewayHealth.available -> "Servis geçidi HTTP ${gatewayHealth.httpCode} yanıtı verdi."
+                !gatewayHealth.pressConfigured -> "Servis çalışıyor ancak PHA anahtarı ayarlı değil."
+                else -> "Servis ve PHA bağlantısı hazır."
+            }
+            recordSourceDiagnostic("Haber servis geçidi", gatewayHealth.available && gatewayHealth.pressConfigured, gatewayMessage)
             if (rssStories.isEmpty() && pressPage == null) return@withLock quickPublished
             pressPage?.let { page ->
                 pressArchiveTotalPages = page.totalPages.coerceAtLeast(page.page)
@@ -542,6 +622,8 @@ class CizgiRepository private constructor(private val context: Context) {
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (_: Exception) {
+            recordSourceDiagnostic("RSS haber kaynakları", false, "Haber kaynakları yenilenemedi.")
+            recordSourceDiagnostic("PHA haber arşivi", false, "Haber arşivi yenilenemedi.")
             false
         }
     }
@@ -570,6 +652,7 @@ class CizgiRepository private constructor(private val context: Context) {
         }
 
         enrichMissingStoryImages(_stories.value.take(NEWS_PAGE_SIZE))
+        CizgiWidgetProvider.update(context, _stories.value.firstOrNull())
         prefetchReadingContent()
         processNewsNotifications(_stories.value.take(MAX_STORIES_PER_REFRESH))
         return true
@@ -581,35 +664,45 @@ class CizgiRepository private constructor(private val context: Context) {
             .take(MAX_STORIES_PER_REFRESH)
     }
 
-    private suspend fun loadNextPressArchivePage() {
-        if (pressArchiveNextPage > pressArchiveTotalPages) return
+    private suspend fun loadNextPressArchivePage(background: Boolean = false): Boolean = newsRefreshMutex.withLock {
+        pressArchiveMutex.withLock {
+        if (pressArchiveNextPage > pressArchiveTotalPages) return@withLock false
+        if (background && System.currentTimeMillis() - userPrefs.getLong("press_archive_last_backfill", 0L) < ARCHIVE_BACKFILL_INTERVAL_MS) {
+            return@withLock false
+        }
         val pageNumber = pressArchiveNextPage
-        val page = pressNewsApiService.fetchPage(page = pageNumber) ?: return
+        val page = pressNewsApiService.fetchPage(page = pageNumber)
+        if (page == null) {
+            recordSourceDiagnostic("PHA arşiv devamı", false, pressNewsApiService.lastError.ifBlank { "Arşiv sayfası alınamadı." })
+            return@withLock false
+        }
         pressArchiveTotalPages = maxOf(pressArchiveTotalPages, page.totalPages)
         val savedIds = savedArticles.value.map { it.id }.toSet()
         val incoming = page.stories.map { it.copy(isSaved = it.id in savedIds) }
 
         if (incoming.isNotEmpty()) {
-            newsRefreshMutex.withLock {
-                val current = _stories.value
-                val merged = withContext(Dispatchers.Default) {
-                    NewsStoryDeduplicator.merge(current + incoming)
-                        .sortedWith(compareByDescending<Story> { it.publishedAtEpochMs }.thenByDescending { it.id })
-                        .take(MAX_IN_MEMORY_STORIES)
-                }
-                val currentById = current.associateBy { it.id }
-                val changed = merged.filter { currentById[it.id] != it }
-                if (changed.isNotEmpty()) {
-                    newsArticleDao.upsertAll(changed.map(NewsArticleEntity::fromStory))
-                    newsArticleDao.pruneOldest(MAX_ARCHIVE_ARTICLES)
-                }
-                _stories.value = merged
-                enrichMissingStoryImages(changed.filterNot { it.id in currentById })
+            val current = _stories.value
+            val merged = withContext(Dispatchers.Default) {
+                NewsStoryDeduplicator.merge(current + incoming)
+                    .sortedWith(compareByDescending<Story> { it.publishedAtEpochMs }.thenByDescending { it.id })
+                    .take(MAX_IN_MEMORY_STORIES)
             }
+            val currentById = current.associateBy { it.id }
+            val changed = merged.filter { currentById[it.id] != it }
+            if (changed.isNotEmpty()) {
+                newsArticleDao.upsertAll(changed.map(NewsArticleEntity::fromStory))
+                newsArticleDao.pruneOldest(MAX_ARCHIVE_ARTICLES)
+            }
+            _stories.value = merged
+            enrichMissingStoryImages(changed.filterNot { it.id in currentById })
         }
 
         pressArchiveNextPage = pageNumber + 1
         persistPressArchiveProgress()
+        if (background) userPrefs.edit().putLong("press_archive_last_backfill", System.currentTimeMillis()).apply()
+        recordSourceDiagnostic("PHA arşiv devamı", true, "${page.page}/${page.totalPages} sayfa · ${page.stories.size} haber alındı")
+        true
+        }
     }
 
     private fun persistPressArchiveProgress() {
@@ -626,9 +719,31 @@ class CizgiRepository private constructor(private val context: Context) {
 
     private suspend fun refreshWeatherData(city: String) {
         try {
-            val live = weatherApiService.fetchWeather(city) ?: return
+            val live = weatherApiService.fetchWeather(city)
+            if (live == null) {
+                recordSourceDiagnostic("Hava durumu", false, "Hava servisi yeni veri döndürmedi; önceki bilgi korunuyor.")
+                return
+            }
             _weather.value = live
-        } catch (_: Exception) {}
+            if (_preferences.value.weatherAlerts) {
+                val warning = when {
+                    (live.rainChancePct ?: 0) >= 80 -> "Yağış olasılığı bugün %${live.rainChancePct}; dışarı çıkmadan önce hazırlıklı ol."
+                    (live.currentTempC ?: 20) <= 0 -> "Sıcaklık ${live.currentTempC}°C seviyesinde; don uyarısı var."
+                    (live.currentTempC ?: 20) >= 35 -> "Sıcaklık ${live.currentTempC}°C seviyesinde; sıcak hava uyarısı var."
+                    else -> null
+                }
+                val alertKey = "${live.cityName}:${LocalDate.now(ZoneId.of("Europe/Istanbul"))}:${warning.orEmpty()}"
+                if (!warning.isNullOrBlank() && userPrefs.getString("weather_alert_last", "") != alertKey) {
+                    CizgiNotificationHelper.sendWeatherNotification(context, live.cityName, warning)
+                    userPrefs.edit().putString("weather_alert_last", alertKey).apply()
+                }
+            }
+            recordSourceDiagnostic("Hava durumu", true, "${live.cityName} · ${live.lastUpdated}")
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            recordSourceDiagnostic("Hava durumu", false, "Hava durumu yenilenemedi; önceki bilgi korunuyor.")
+        }
     }
 
     fun loadOlderNews() {
@@ -672,6 +787,8 @@ class CizgiRepository private constructor(private val context: Context) {
                     enrichMissingStoryImages(olderStories)
                 }
                 if (older.size < NEWS_PAGE_SIZE) loadNextPressArchivePage()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (_: Exception) {
             } finally {
                 newsPageMutex.unlock()
@@ -720,6 +837,8 @@ class CizgiRepository private constructor(private val context: Context) {
                 )
                 _stories.update { current -> current.map { if (it.id == storyId) updated else it } }
                 newsArticleDao.upsertAll(listOf(NewsArticleEntity.fromStory(updated)))
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (_: Exception) {
                 sourceDescriptionAttempts.remove(storyId)
             }
@@ -848,6 +967,8 @@ class CizgiRepository private constructor(private val context: Context) {
                         newsArticleDao.upsertAll(listOf(NewsArticleEntity.fromStory(updated)))
                     }
                 }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (_: Exception) {
                 // RSS articles remain readable even if a publisher blocks page metadata requests.
             }
@@ -881,23 +1002,38 @@ class CizgiRepository private constructor(private val context: Context) {
             sportsStatsJob = scope.launch { refreshSportsStats(competition, sportType, seasonYear, requestKey) }
         }
 
+        var responseReceived = false
         try {
             val fixtures = footballApiService.fetchFixtures(competition, sportType, seasonYear)
+            responseReceived = true
+            recordSourceDiagnostic(
+                "Spor · $competition",
+                fixtures.isNotEmpty(),
+                if (fixtures.isNotEmpty()) "${fixtures.size} maç alındı" else "Maç yok veya sağlayıcı boş yanıt verdi.",
+            )
             if (activeSportsKey != requestKey) return
             _sportsSnapshot.update {
-                it.copy(
-                    matches = fixtures,
-                    errorMessage = "",
-                )
+                when {
+                    fixtures.isNotEmpty() -> it.copy(matches = fixtures, errorMessage = "")
+                    it.matches.isNotEmpty() -> it.copy(errorMessage = "Yeni maç listesi boş geldi; son alınan maçlar korunuyor.")
+                    else -> it.copy(matches = emptyList(), errorMessage = "")
+                }
             }
             sportsFixtureSelectionsLoaded.add(requestKey)
 
             processSportsNotifications(fixtures)
         } catch (cancelled: CancellationException) {
             throw cancelled
-        } catch (_: Exception) {}
+        } catch (_: Exception) {
+            recordSourceDiagnostic("Spor · $competition", false, "Maç verisi alınamadı; son başarılı görünüm korunuyor.")
+            if (activeSportsKey == requestKey) _sportsSnapshot.update {
+                it.copy(errorMessage = "Maç verisi şu anda alınamıyor. Bağlantı gelince yeniden dene.")
+            }
+        }
 
-        if (activeSportsKey == requestKey) _sportsSnapshot.update { it.copy(isLoading = false, updatedAtEpochMs = System.currentTimeMillis()) }
+        if (activeSportsKey == requestKey) _sportsSnapshot.update {
+            it.copy(isLoading = false, updatedAtEpochMs = if (responseReceived) System.currentTimeMillis() else it.updatedAtEpochMs)
+        }
     }
 
     private suspend fun refreshSportsStats(competition: String, sportType: String, seasonYear: Int, requestKey: String) {
@@ -913,6 +1049,11 @@ class CizgiRepository private constructor(private val context: Context) {
         catch (_: Exception) { }
         try {
             val currentStandings = footballApiService.fetchStandings(competition, sportType, seasonYear)
+            recordSourceDiagnostic(
+                "Spor istatistikleri · $competition",
+                currentStandings.isNotEmpty(),
+                if (currentStandings.isNotEmpty()) "${currentStandings.size} takım sırası alındı" else "Puan tablosu yanıt vermedi veya boş.",
+            )
             if (activeSportsKey != requestKey) return
             _sportsSnapshot.update {
                 it.copy(
@@ -922,10 +1063,14 @@ class CizgiRepository private constructor(private val context: Context) {
             }
         } catch (cancelled: CancellationException) {
             throw cancelled
-        } catch (_: Exception) {}
+        } catch (_: Exception) {
+            recordSourceDiagnostic("Spor istatistikleri · $competition", false, "Puan tablosu alınamadı; varsa önceki tablo korunuyor.")
+        }
 
         try {
             val scorers = footballApiService.fetchTopScorers(competition, sportType, seasonYear)
+            if (scorers.isNotEmpty()) recordSourceDiagnostic("Oyuncu istatistikleri · $competition", true, "${scorers.size} oyuncu lideri alındı")
+            else recordSourceDiagnostic("Oyuncu istatistikleri · $competition", false, footballApiService.topScorersUnavailableMessage(sportType))
             if (activeSportsKey != requestKey) return
             sportsStatsRefreshAt[requestKey] = System.currentTimeMillis()
             if (scorers.isNotEmpty() && seasonYear == currentSportsSeasonYear(competition, sportType)) {
@@ -948,6 +1093,7 @@ class CizgiRepository private constructor(private val context: Context) {
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (_: Exception) {
+            recordSourceDiagnostic("Oyuncu istatistikleri · $competition", false, "Oyuncu istatistikleri alınamadı.")
             if (activeSportsKey == requestKey) {
                 _sportsSnapshot.update { it.copy(statsLoading = false) }
             }
@@ -994,6 +1140,19 @@ class CizgiRepository private constructor(private val context: Context) {
                 }
                 assets?.takeIf { it.isNotEmpty() }?.let { _financialAssets.value = it }
                 stocks?.takeIf { it.isNotEmpty() }?.let { _bistStocks.value = it }
+                evaluateMarketAlerts(assets ?: _financialAssets.value, stocks ?: _bistStocks.value)
+                recordSourceDiagnostic(
+                    "Döviz, altın ve kripto",
+                    !assets.isNullOrEmpty(),
+                    assets?.firstOrNull()?.let { "${assets.size} araç · ${it.source} · ${it.updatedAtEpochMs}" }
+                        ?: "Piyasa servisi veri vermedi; önceki fiyatlar korunuyor.",
+                )
+                recordSourceDiagnostic(
+                    "BIST",
+                    !stocks.isNullOrEmpty(),
+                    stocks?.firstOrNull()?.let { "${stocks.size} araç · ${it.source} · ${it.updatedAtEpochMs}" }
+                        ?: "BIST servisi veri vermedi; önceki fiyatlar korunuyor.",
+                )
                 _marketStatusMessage.value = (marketApiService.availabilityWarnings() + bistRetrofitApi.lastErrorMessage)
                     .filter(String::isNotBlank)
                     .distinct()
@@ -1002,10 +1161,112 @@ class CizgiRepository private constructor(private val context: Context) {
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (_: Exception) {
+            recordSourceDiagnostic("Döviz, altın ve kripto", false, "Piyasa verisi yenilenemedi; son fiyatlar korunuyor.")
+            recordSourceDiagnostic("BIST", false, "BIST verisi yenilenemedi; son fiyatlar korunuyor.")
             // Keep the last successful quotes visible and let the UI display their source timestamps.
         } finally {
             marketRefreshMutex.unlock()
         }
+    }
+
+    private fun evaluateMarketAlerts(assets: List<FinancialAsset>, stocks: List<com.example.data.remote.BISTStock>) {
+        if (_marketAlerts.value.none { it.enabled }) return
+        val quotes = buildMap {
+            assets.forEach { put(it.code, it.currentPrice to it.name) }
+            stocks.forEach { put("BIST:${it.symbol}", it.price to it.companyName) }
+        }
+        val now = System.currentTimeMillis()
+        var changed = false
+        val updated = _marketAlerts.value.map { alert ->
+            val quote = quotes[alert.code] ?: return@map alert
+            val hit = if (alert.direction == "below") quote.first <= alert.threshold else quote.first >= alert.threshold
+            if (!hit || now - alert.lastTriggeredEpochMs < 6 * 60 * 60_000L) return@map alert
+            changed = true
+            val direction = if (alert.direction == "below") "altına indi" else "üzerine çıktı"
+            CizgiNotificationHelper.sendMarketNotification(
+                context = context,
+                title = "${quote.second} alarmı",
+                body = "${quote.first} değeri ${alert.threshold} seviyesinin $direction.",
+            )
+            alert.copy(lastTriggeredEpochMs = now)
+        }
+        if (changed) persistMarketAlerts(updated)
+    }
+
+    private fun persistMarketAlerts(alerts: List<MarketAlert>) {
+        val normalized = alerts.distinctBy { it.code }.take(30)
+        _marketAlerts.value = normalized
+        userPrefs.edit().putString("market_alerts", diagnosticsCodec.encodeToString(normalized)).apply()
+    }
+
+    fun addMarketAlert(code: String, threshold: Double, direction: String = "above") {
+        if (code.isBlank() || !threshold.isFinite()) return
+        persistMarketAlerts(
+            _marketAlerts.value.filterNot { it.code == code } + MarketAlert(
+                code = code.trim(),
+                threshold = threshold,
+                direction = if (direction == "below") "below" else "above",
+            ),
+        )
+    }
+
+    fun removeMarketAlert(code: String) {
+        persistMarketAlerts(_marketAlerts.value.filterNot { it.code == code })
+    }
+
+    fun setMarketAlertEnabled(code: String, enabled: Boolean) {
+        persistMarketAlerts(_marketAlerts.value.map { if (it.code == code) it.copy(enabled = enabled) else it })
+    }
+
+    fun setWeatherAlerts(enabled: Boolean) {
+        _preferences.update { it.copy(weatherAlerts = enabled) }
+        userPrefs.edit().putBoolean("weather_alerts", enabled).apply()
+    }
+
+    fun exportBackupJson(): String = backupCodec.encodeToString(
+        BackupPayload(
+            preferences = _preferences.value,
+            savedStories = savedArticles.value,
+            marketAlerts = _marketAlerts.value,
+            marketFavoriteCodes = context.getSharedPreferences("market_watchlist", Context.MODE_PRIVATE)
+                .getStringSet("codes", emptySet()).orEmpty(),
+        ),
+    )
+
+    fun importBackupJson(raw: String): Boolean {
+        val payload = runCatching { backupCodec.decodeFromString<BackupPayload>(raw) }.getOrNull() ?: return false
+        val prefs = payload.preferences
+        _preferences.value = prefs
+        userPrefs.edit()
+            .putString("theme", prefs.themeMode)
+            .putString("city", prefs.selectedCity)
+            .putString("district", prefs.selectedDistrict)
+            .putString("font_size", prefs.fontSize)
+            .putStringSet("followed_topics", prefs.followedTopics)
+            .putStringSet("followed_teams", prefs.followedTeams)
+            .putBoolean("breaking_alerts", prefs.breakingAlerts)
+            .putBoolean("match_alerts", prefs.matchAlerts)
+            .putBoolean("topic_alerts", prefs.topicAlerts)
+            .putBoolean("daily_digest", prefs.dailyDigest)
+            .putBoolean("match_start_alerts", prefs.matchStartAlerts)
+            .putBoolean("match_score_alerts", prefs.matchScoreAlerts)
+            .putBoolean("weather_alerts", prefs.weatherAlerts)
+            .putBoolean("reduce_motion", prefs.reduceMotion)
+            .putBoolean("high_contrast", prefs.highContrast)
+            .putBoolean("quiet_hours_enabled", prefs.quietHoursEnabled)
+            .putString("quiet_hours_start", prefs.quietHoursStart)
+            .putString("quiet_hours_end", prefs.quietHoursEnd)
+            .putBoolean("onboarding_completed", prefs.onboardingCompleted)
+            .apply()
+        persistMarketAlerts(payload.marketAlerts)
+        context.getSharedPreferences("market_watchlist", Context.MODE_PRIVATE).edit()
+            .putStringSet("codes", payload.marketFavoriteCodes)
+            .apply()
+        scope.launch(Dispatchers.IO) {
+            payload.savedStories.forEach { savedArticleDao.insertArticle(SavedArticleEntity.fromStory(it)) }
+            refreshWeatherData(locationQuery())
+        }
+        return true
     }
 
     fun toggleFollowTopic(topic: String) {
@@ -1101,9 +1362,20 @@ class CizgiRepository private constructor(private val context: Context) {
 
     fun clearLocalNewsData() {
         scope.launch(Dispatchers.IO) {
-            newsArticleDao.clearAll()
-            database.cachedStoryDao().clearAll()
-            cachedSportStatDao.clearAll()
+            newsRefreshMutex.withLock {
+              pressArchiveMutex.withLock {
+                pressArchiveNextPage = 2
+                pressArchiveTotalPages = 0
+                userPrefs.edit()
+                    .remove("press_archive_next_page")
+                    .remove("press_archive_total_pages")
+                    .remove("press_archive_last_backfill")
+                    .apply()
+                newsArticleDao.clearAll()
+                database.cachedStoryDao().clearAll()
+                cachedSportStatDao.clearAll()
+              }
+            }
         }
     }
 
@@ -1284,6 +1556,8 @@ class CizgiRepository private constructor(private val context: Context) {
         private const val MAX_STORIES_PER_REFRESH = 3_000
         private const val MAX_IN_MEMORY_STORIES = 10_000
         private const val MAX_ARCHIVE_ARTICLES = 100_000
+        private const val MAX_DIAGNOSTIC_SOURCES = 20
+        private const val ARCHIVE_BACKFILL_INTERVAL_MS = 15 * 60_000L
         private const val MIN_SOURCE_DESCRIPTION_CHARS = 40
         private const val SOURCE_DESCRIPTION_RETRY_MS = 12 * 60 * 60 * 1_000L
         private const val MAX_IMAGES_PER_ENRICHMENT = 24

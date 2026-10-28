@@ -240,5 +240,29 @@ object CizgiNotificationHelper {
             NotificationManagerCompat.from(context).notify(3001, notification)
         } catch (_: SecurityException) {}
     }
+
+    fun sendWeatherNotification(context: Context, city: String, body: String) {
+        if (!hasNotificationPermission(context)) return
+        val intent = Intent(context, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            putExtra("extra_screen", "hava")
+        }
+        val pendingIntent = PendingIntent.getActivity(
+            context,
+            ("weather:$city".hashCode()),
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        val notification = NotificationCompat.Builder(context, CHANNEL_MARKETS)
+            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setContentTitle("🌦️ $city hava uyarısı")
+            .setContentText(body)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(body))
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setAutoCancel(true)
+            .setContentIntent(pendingIntent)
+            .build()
+        try { NotificationManagerCompat.from(context).notify(3101, notification) } catch (_: SecurityException) { }
+    }
 }
 

@@ -10,6 +10,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.example.ui.CizgiApp
 import com.example.util.CizgiNotificationHelper
+import com.example.util.CizgiMessagingBridge
 import com.example.data.NewsRefreshScheduler
 
 data class NotificationNavigation(
@@ -26,6 +27,7 @@ class MainActivity : ComponentActivity() {
         notificationNavigation = notificationNavigationFrom(intent)
         NewsRefreshScheduler.schedule(this)
         CizgiNotificationHelper.createNotificationChannels(this)
+        CizgiMessagingBridge.configure(this)
         enableEdgeToEdge()
         setContent {
             CizgiApp(
@@ -46,7 +48,7 @@ class MainActivity : ComponentActivity() {
     private fun notificationNavigationFrom(intent: Intent?): NotificationNavigation? {
         val storyId = intent?.getStringExtra("extra_story_id")?.takeIf(String::isNotBlank)
         val screen = intent?.getStringExtra("extra_screen")
-            ?.takeIf { it == "spor" || it == "piyasa" }
+            ?.takeIf { it == "spor" || it == "piyasa" || it == "hava" }
         return if (storyId != null || screen != null) NotificationNavigation(storyId, screen) else null
     }
 }

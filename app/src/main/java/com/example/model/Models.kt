@@ -94,6 +94,7 @@ data class SportsSnapshot(
     val errorMessage: String = "",
 )
 
+@Serializable
 data class LineupPlayer(
     val name: String,
     val jerseyNumber: String = "",
@@ -105,12 +106,14 @@ data class LineupPlayer(
     val formationSlot: Int? = null,
 )
 
+@Serializable
 data class TeamLineup(
     val team: String,
     val players: List<LineupPlayer>,
     val formation: String = "",
 )
 
+@Serializable
 data class MatchLineups(
     val home: TeamLineup,
     val away: TeamLineup,
@@ -215,6 +218,16 @@ data class NotificationItem(
     val createdAtEpochMs: Long = 0L,
 )
 
+@Serializable
+data class DataSourceDiagnostic(
+    val source: String,
+    val lastAttemptEpochMs: Long,
+    val lastSuccessEpochMs: Long = 0L,
+    val consecutiveFailures: Int = 0,
+    val message: String = "",
+)
+
+@Serializable
 data class UserPreferences(
     val themeMode: String = "light", // "light", "dark", "system"
     val fontSize: String = "normal",  // "normal", "large"
@@ -232,6 +245,26 @@ data class UserPreferences(
     val topicAlerts: Boolean = false,
     val matchStartAlerts: Boolean = true,
     val matchScoreAlerts: Boolean = true,
+    val weatherAlerts: Boolean = false,
     val reduceMotion: Boolean = false,
     val highContrast: Boolean = false,
+)
+
+@Serializable
+data class MarketAlert(
+    val code: String,
+    val threshold: Double,
+    val direction: String = "above", // above or below
+    val enabled: Boolean = true,
+    val lastTriggeredEpochMs: Long = 0L,
+)
+
+@Serializable
+data class BackupPayload(
+    val version: Int = 1,
+    val exportedAtEpochMs: Long = System.currentTimeMillis(),
+    val preferences: UserPreferences,
+    val savedStories: List<Story> = emptyList(),
+    val marketAlerts: List<MarketAlert> = emptyList(),
+    val marketFavoriteCodes: Set<String> = emptySet(),
 )

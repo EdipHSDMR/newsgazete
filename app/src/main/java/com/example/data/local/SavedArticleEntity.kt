@@ -26,10 +26,15 @@ data class SavedArticleEntity(
     val canonicalUrl: String = "",
     @ColumnInfo(defaultValue = "''") val storyJson: String = "",
     @ColumnInfo(defaultValue = "0") val offlineReady: Boolean = false,
+    @ColumnInfo(defaultValue = "''") val offlineImagePath: String = "",
     val savedAtTimestamp: Long = System.currentTimeMillis(),
 ) {
+    val hasOfflineImage: Boolean get() = offlineImagePath.isNotBlank() && java.io.File(offlineImagePath).isFile
+
     fun toStory(): Story {
-        StorySnapshot.decode(storyJson)?.let { return it.copy(isSaved = true) }
+        StorySnapshot.decode(storyJson)?.let {
+            return it.copy(isSaved = true, imageUrl = if (hasOfflineImage) localImageUri(offlineImagePath) ?: it.imageUrl else it.imageUrl)
+        }
         return Story(
             id = id,
             title = title,
@@ -38,7 +43,7 @@ data class SavedArticleEntity(
             publisher = publisher,
             publishedAt = publishedAt,
             readTimeMin = readTimeMin,
-            imageUrl = imageUrl,
+            imageUrl = if (hasOfflineImage) localImageUri(offlineImagePath) ?: imageUrl else imageUrl,
             isBreaking = isBreaking,
             isManset = isManset,
             sourceCount = sourceCount,
@@ -52,6 +57,11 @@ data class SavedArticleEntity(
     }
 
     companion object {
+        private fun localImageUri(path: String): String? = java.io.File(path)
+            .takeIf { it.isFile }
+            ?.toURI()
+            ?.toString()
+
         fun fromStory(story: Story, offlineReady: Boolean = false): SavedArticleEntity {
             return SavedArticleEntity(
                 id = story.id,

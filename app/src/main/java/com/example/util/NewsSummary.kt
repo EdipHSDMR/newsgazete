@@ -5,25 +5,38 @@ import java.util.Locale
 
 /** Selects complementary facts from the source; no remote model or invented information. */
 object NewsSummary {
-    data class Result(val text: String, val missingAnswer: String?, val limitedSource: Boolean)
+    data class Result(
+        val text: String,
+        val missingAnswer: String?,
+        val limitedSource: Boolean,
+        val sourceCoverage: Float = 0f,
+        val includesConcreteFact: Boolean = false,
+    )
 
     fun assess(summaryCandidate: String, sourceText: String, title: String, maxCharacters: Int = 420): Result {
-        val source = cleanText(sourceText).ifBlank { cleanText(summaryCandidate) }
+        val source = listOf(sourceText, summaryCandidate).map(::cleanText).filter(String::isNotBlank).distinct().joinToString(" ")
         val asked = title.lowercase(locale)
         val missing = mutableListOf<String>()
         if (Regex("ne zaman|saat kaç|hangi gün").containsMatchIn(asked) && !timeFact.containsMatchIn(source)) missing += "tarih/saat"
         if (Regex("hangi kanalda|nereden izlen").containsMatchIn(asked) && !channelFact.containsMatchIn(source)) missing += "yayın kanalı"
         if (Regex("neden|niçin|sebebi").containsMatchIn(asked) && !causeFact.containsMatchIn(source)) missing += "neden"
         if (Regex("kaç (?:tl|lira)|ne kadar|fiyatı ne").containsMatchIn(asked) && !priceFact.containsMatchIn(source)) missing += "tutar"
-        return Result(bestAvailableSummary(summaryCandidate, sourceText, title, maxCharacters),
-            missing.takeIf { it.isNotEmpty() }?.let { "Kaynak metninde ${it.joinToString(" ve ")} bilgisi açıkça belirtilmiyor." }, source.length < 180)
+        if (Regex("ne oldu|sonuç(?:u)? ne|nasıl sonuçlandı").containsMatchIn(asked) && !action.containsMatchIn(source)) missing += "olayın sonucu"
+        val text = bestAvailableSummary(summaryCandidate, sourceText, title, maxCharacters)
+        return Result(
+            text = text,
+            missingAnswer = missing.takeIf { it.isNotEmpty() }?.let { "Kaynak metninde ${it.joinToString(" ve ")} bilgisi açıkça belirtilmiyor." },
+            limitedSource = source.length < 180,
+            sourceCoverage = coverage(text, source),
+            includesConcreteFact = action.containsMatchIn(text) || Regex("\\d|[₺€$]").containsMatchIn(text),
+        )
     }
     private val locale = Locale.forLanguageTag("tr-TR")
     private val wordPattern = Regex("[\\p{L}\\p{N}]+")
     private val boundary = Regex("(?<=[.!?])(?<!\\d\\.)\\s+|\\n+")
     private val stopWords = setOf("ama", "ancak", "bir", "bu", "çok", "daha", "da", "de", "diye", "en", "gibi",
         "ile", "için", "kadar", "karşı", "ki", "olan", "olarak", "oldu", "sonra", "ve", "veya", "yeni", "üzere",
-        "haber", "son", "dakika", "nedir", "nasıl", "hangi", "zaman", "bugün")
+        "haber", "son", "dakika", "nedir", "nasıl", "hangi", "zaman", "bugün", "ne", "kaç", "saat", "kim", "mi", "mı", "mu", "mü", "neden", "niçin", "nerede")
     private val abbreviations = Regex("(?i)(?:\\b(?:Dr|Prof|Doç|Sn|Av|No|Mah|Cad|Sok|Ltd|Tic|AŞ|St)|\\b[A-ZÇĞİÖŞÜ])\\.$")
     private val boilerplate = Regex(
         "gündemindeki yerini aldı|meraklılarının gündeminde|gündeme geldi|merak konusu oldu|" +
@@ -36,10 +49,10 @@ object NewsSummary {
             "devam ediyor|karar ver|gözalt|hayatını kaybet|yaralan|tutuklan|yakalan|iptal|onaylan|" +
             "reddet|söyle|konuş|tepki|yanıt|savun|ifade et|vurgula|paylaş|imzala|ziyaret|yüzde|kapsıyor",
         RegexOption.IGNORE_CASE)
-    private val timeFact = Regex("\\b\\d{1,2}[.:/]\\d{2}(?:[./]\\d{2,4})?\\b|\\b\\d{1,2}\\s+(?:ocak|şubat|mart|nisan|mayıs|haziran|temmuz|ağustos|eylül|ekim|kasım|aralık)\\b|\\b(?:pazartesi|salı|çarşamba|perşembe|cuma|cumartesi|pazar)\\b", RegexOption.IGNORE_CASE)
+    private val timeFact = Regex("\\b\\d{1,2}[.:/]\\d{2}(?:[./]\\d{2,4})?\\b|\\b\\d{1,2}\\s+(?:ocak|şubat|mart|nisan|mayıs|haziran|temmuz|ağustos|eylül|ekim|kasım|aralık)(?:\\s+20\\d{2})?\\b|\\b(?:pazartesi|salı|çarşamba|perşembe|cuma|cumartesi|pazar|bugün|yarın|önümüzdeki hafta)\\b", RegexOption.IGNORE_CASE)
     private val causeFact = Regex("çünkü|nedeni|sebebi|bu nedenle|sonucunda|yüzünden|dolayı", RegexOption.IGNORE_CASE)
     private val channelFact = Regex("beIN|TRT|S Sport|A Spor|TV ?[0-9]|kanal|yayınlanacak|yayınlayacak|yayınlıyor", RegexOption.IGNORE_CASE)
-    private val priceFact = Regex("\\d[\\d.,]*\\s*(?:TL|lira|dolar|euro|avro|₺|€|\\$)", RegexOption.IGNORE_CASE)
+    private val priceFact = Regex("\\d[\\d.,]*\\s*(?:TL|lira|dolar|euro|avro|₺|€|\\$)|(?:yüzde|%\\s*)\\s*\\d{1,3}(?:[.,]\\d+)?", RegexOption.IGNORE_CASE)
 
     fun concise(sourceText: String, title: String = "", maxCharacters: Int = 380): String {
         val titleKey = normalize(title)
@@ -128,9 +141,11 @@ object NewsSummary {
         val answersWhy = Regex("neden|niçin|sebebi").containsMatchIn(asked) && causeFact.containsMatchIn(sentence)
         val answersChannel = Regex("hangi kanalda|nereden izlen").containsMatchIn(asked) && channelFact.containsMatchIn(sentence)
         val answersPrice = Regex("kaç (?:tl|lira)|ne kadar|fiyatı ne").containsMatchIn(asked) && priceFact.containsMatchIn(sentence)
+        val answersOutcome = Regex("ne oldu|sonuç(?:u)? ne|nasıl sonuçlandı").containsMatchIn(asked) && action.containsMatchIn(sentence)
         return overlap * 4 + (if (action.containsMatchIn(sentence)) 7 else 0) +
             (if (numeric) 4 else 0) + (if (answersTime) 24 else 0) +
-            (if (answersWhy) 20 else 0) + (if (answersChannel || answersPrice) 24 else 0) + (if (sentence.length in 45..260) 3 else 0) +
+            (if (answersWhy) 20 else 0) + (if (answersChannel || answersPrice) 24 else 0) +
+            (if (answersOutcome) 18 else 0) + (if (sentence.length in 45..260) 3 else 0) +
             (if (index in 1..5) 2 else 0) - (if (sentence.length > 440) 5 else 0)
     }
 
@@ -146,6 +161,13 @@ object NewsSummary {
 
     private fun tokens(value: String): Set<String> = wordPattern.findAll(normalize(value))
         .map { it.value }.filter { it.length > 2 && it !in stopWords }.toSet()
+
+    private fun coverage(summary: String, source: String): Float {
+        val summaryTerms = wordPattern.findAll(normalize(summary)).map { it.value }.filter { it.length > 2 }.toSet()
+        if (summaryTerms.isEmpty()) return 0f
+        val sourceTerms = wordPattern.findAll(normalize(source)).map { it.value }.toSet()
+        return summaryTerms.count { it in sourceTerms }.toFloat() / summaryTerms.size
+    }
 
     private fun cleanBlocks(value: String): String = Html.fromHtml(
         value.replace("\r\n", "\n").replace(Regex("\n\\s*\n"), "<br><br>")
