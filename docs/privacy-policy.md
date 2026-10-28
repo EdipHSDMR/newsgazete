@@ -18,6 +18,8 @@ Haber, spor, piyasa ve hava durumu istekleri ilgili veri sağlayıcılarının s
 
 Uygulama kullanıcı hesabı, reklam SDK'sı, konum izni veya cihaz reklam kimliği kullanmaz. Bu derlemede Firebase yapılandırması etkin olmadığından uzak push bildirimleri etkin değildir; yerel bildirimler cihazda hazırlanır. Uygulamada hesap oluşturma veya sunucuda kullanıcı profili bulunmaz.
 
+Haber detayındaki “Haberde sorun bildir” seçeneği, e-posta uygulamasında alıcı, haber başlığı ve kaynak bağlantısı doldurulmuş bir taslak açar. Taslak yalnızca kullanıcı e-posta uygulamasından gönderirse paylaşılır; uygulama bu bildirimi kendi sunucusuna kaydetmez.
+
 ## Saklama ve silme
 
 “Verileri ve Önbelleği Temizle” seçeneği uygulamanın cihazda tuttuğu haber ve tercihleri temizler. Dışa aktarılan JSON dosyaları seçtiğiniz konumda kalır; dosyayı Android dosya yöneticisinden silebilirsiniz.
@@ -33,3 +35,4 @@ Uygulamanın ağ istekleri HTTPS kullanır. Cihaz içindeki kayıtlar uygulaman�
 ## İletişim
 
 Gizlilik soruları için geliştirici profiline ulaşabilirsiniz: [github.com/EdipHSDMR](https://github.com/EdipHSDMR).
+
