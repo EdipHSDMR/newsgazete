@@ -4,6 +4,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import android.widget.Toast
@@ -214,6 +215,30 @@ fun HaberDetayScreen(
                 Box {
                     IconButton({ showMenu = true }, Modifier.size(48.dp)) { Icon(Icons.Outlined.MoreHoriz, "Diğer işlemler") }
                     DropdownMenu(showMenu, { showMenu = false }) {
+                        DropdownMenuItem(text = { Text("Haberde sorun bildir") }, leadingIcon = { Icon(Icons.Outlined.ReportProblem, null) }, onClick = {
+                            showMenu = false
+                            val reportBody = buildString {
+                                appendLine("Haberle ilgili sorun bildirimi")
+                                appendLine()
+                                appendLine("Sorun türü: ")
+                                appendLine("Açıklama: ")
+                                appendLine()
+                                appendLine("Başlık: ${story.title}")
+                                appendLine("Yayıncı: ${story.publisher}")
+                                append("Kaynak: ${story.canonicalUrl}")
+                            }
+                            val mailUri = Uri.Builder()
+                                .scheme("mailto")
+                                .opaquePart("ediphasd3434@gmail.com")
+                                .appendQueryParameter("subject", "Çizgi haber bildirimi: ${story.title}")
+                                .appendQueryParameter("body", reportBody)
+                                .build()
+                            try {
+                                context.startActivity(Intent(Intent.ACTION_SENDTO, mailUri))
+                            } catch (_: android.content.ActivityNotFoundException) {
+                                Toast.makeText(context, "Bu cihazda e-posta uygulaması bulunamadı", Toast.LENGTH_LONG).show()
+                            }
+                        })
                         DropdownMenuItem(text = { Text("Bağlantıyı kopyala") }, enabled = story.canonicalUrl.isNotBlank(), leadingIcon = { Icon(Icons.Outlined.Link, null) }, onClick = {
                             showMenu = false
                             if (story.canonicalUrl.isNotBlank()) {
@@ -314,3 +339,4 @@ fun HaberDetayScreen(
         }
     }
 }
+
