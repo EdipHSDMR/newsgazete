@@ -21,6 +21,19 @@ const requestCounts = new Map();
 const CACHE_MS = 2 * 60 * 1000;
 const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 const MAX_ARTICLE_BYTES = 1024 * 1024;
+const RSS_NEWS_FEEDS = [
+  ["https://www.ensonhaber.com/rss/ensonhaber.xml", "Ensonhaber", "Gündem"],
+  ["https://feeds.bbci.co.uk/turkce/rss.xml", "BBC Türkçe", "Dünya"],
+  ["https://www.ntv.com.tr/gundem.rss", "NTV", "Gündem"],
+  ["https://www.ntv.com.tr/ekonomi.rss", "NTV", "Ekonomi"],
+  ["https://www.ntv.com.tr/spor.rss", "NTV", "Spor"],
+  ["https://www.trthaber.com/sondakika.rss", "TRT Haber", "Gündem"],
+  ["https://www.trthaber.com/spor_articles.rss", "TRT Spor", "Spor"],
+  ["https://www.haberturk.com/rss", "Habertürk", "Gündem"],
+  ["https://www.aa.com.tr/tr/rss/default?cat=guncel", "Anadolu Ajansı", "Gündem"],
+  ["https://www.aa.com.tr/tr/rss/default?cat=ekonomi", "Anadolu Ajansı", "Ekonomi"],
+  ["https://www.aa.com.tr/tr/rss/default?cat=spor", "Anadolu Ajansı", "Spor"],
+];
 
 http("cizgiApi", async (req, res) => {
   applyCors(req, res);
@@ -52,7 +65,8 @@ http("cizgiApi", async (req, res) => {
 });
 
 async function handleNews(req, res) {
-  const key = requireSecret("PRESS_API_KEY");
+  const key = process.env.PRESS_API_KEY?.trim();
+  if (!key) return await handleRssNews(req, res);
   const url = new URL(PHA_API);
   const page = parseInteger(req.query.page, 1, 1, 100_000);
   const limit = parseInteger(req.query.limit, 100, 1, 100);
@@ -71,6 +85,82 @@ async function handleNews(req, res) {
     signal: AbortSignal.timeout(12_000),
   });
   return forwardJson(response, res, cacheKey, 60_000);
+}
+
+async function handleRssNews(req, res) {
+  const page = parseInteger(req.query.page, 1, 1, 100_000);
+  const limit = parseInteger(req.query.limit, 100, 1, 100);
+  const cacheKey = "rss:news";
+  let stories = getCache(cacheKey);
+  if (!stories) {
+    const reports = await Promise.allSettled(RSS_NEWS_FEEDS.map(async ([feedUrl, publisher, topic]) => {
+      const response = await fetch(feedUrl, {
+        headers: {
+          Accept: "application/rss+xml, application/atom+xml, application/xml, text/xml;q=0.9, */*;q=0.8",
+          "User-Agent": "CizgiNews/1.0 (news reader)",
+        },
+        signal: AbortSignal.timeout(8_000),
+      });
+      if (!response.ok) return [];
+      const xml = await readTextLimited(response, 2 * 1024 * 1024);
+      return parseRssItems(xml, publisher, topic);
+    }));
+    stories = reports.flatMap((result) => result.status === "fulfilled" ? result.value : []);
+    const unique = new Map();
+    for (const story of stories) {
+      const key = story.url || story.title.toLocaleLowerCase("tr-TR");
+      if (!unique.has(key)) unique.set(key, story);
+    }
+    stories = [...unique.values()].sort((a, b) => Date.parse(b.date_published) - Date.parse(a.date_published));
+    if (stories.length) putCache(cacheKey, stories, 60_000);
+  }
+  const start = (page - 1) * limit;
+  return sendJson(res, 200, {
+    items: stories.slice(start, start + limit),
+    page,
+    total: stories.length,
+    total_pages: Math.max(1, Math.ceil(stories.length / limit)),
+    source: "publisher_rss",
+  });
+}
+
+function parseRssItems(xml, publisher, topic) {
+  const items = [];
+  const pattern = /<(?:[\w.-]+:)?(?:item|entry)\b[^>]*>([\s\S]*?)<\/(?:[\w.-]+:)?(?:item|entry)\s*>/gi;
+  for (const match of xml.matchAll(pattern)) {
+    const block = match[1];
+    const readTag = (...names) => {
+      for (const name of names) {
+        const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        const found = block.match(new RegExp(`<(?:[\\w.-]+:)?${escaped}\\b[^>]*>([\\s\\S]*?)<\\/(?:[\\w.-]+:)?${escaped}\\s*>`, "i"));
+        if (found) return found[1].replace(/^<!\[CDATA\[/i, "").replace(/\]\]>$/, "").trim();
+      }
+      return "";
+    };
+    const title = stripHtml(readTag("title"));
+    if (title.length < 5) continue;
+    let url = readTag("link").trim();
+    if (!url) url = block.match(/<(?:[\w.-]+:)?link\b[^>]*href=["']([^"']+)["']/i)?.[1] || "";
+    const summary = stripHtml(readTag("description", "summary", "content:encoded", "content"));
+    const published = readTag("pubDate", "published", "updated", "date");
+    const timestamp = Date.parse(published);
+    const datePublished = Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : "";
+    const image = block.match(/<(?:media:content|media:thumbnail|enclosure)\b[^>]*\burl=["']([^"']+)["']/i)?.[1] ||
+      block.match(/<img\b[^>]*\bsrc=["']([^"']+)["']/i)?.[1] || "";
+    items.push({
+      id: url || title,
+      title,
+      summary,
+      content_html: summary,
+      url,
+      date_published: datePublished,
+      organization: publisher,
+      image,
+      sectors: [{ name: topic, slug: topic.toLocaleLowerCase("tr-TR") }],
+      is_breaking: /son dakika|flaş gelişme/i.test(title),
+    });
+  }
+  return items;
 }
 
 async function handleWeather(req, res) {

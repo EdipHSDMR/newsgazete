@@ -20,6 +20,8 @@ From the repository root, deploy `backend/` as a second-generation Node.js 22 HT
 
 The function exposes `/health`, `/v1/news`, `/v1/football/{endpoint}`, `/v1/volleyball/{endpoint}`, and `/v1/weather`. It limits provider endpoints, bounds response sizes, rate limits callers, caches provider responses, and only fetches article pages from the configured news domains.
 
+When `PRESS_API_KEY` is present, `/v1/news` reads the PHA paged archive. Without it, the endpoint aggregates the configured publisher RSS feeds so fresh headlines still reach every app installation; this fallback is a current-news feed and does not imply that hundreds of thousands of historical records exist upstream.
+
 Volleyball fixture responses are cached for five minutes; league and standings responses are cached for six hours. The Android client refreshes only the selected competition and uses a slower interval for volleyball to preserve API-Sports' free daily request quota.
 
 PHA currently exposes its archive through page-based requests. The function forwards pages up to 100 items, and the Android archive stores and loads up to 100,000 articles. A larger total is only available when the upstream provider actually has more records.
